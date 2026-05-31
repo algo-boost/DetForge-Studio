@@ -1,12 +1,13 @@
-# Python
+# =============================================================================
+# DetForge-Studio — 本地运行时、敏感配置、大文件不入库
+# =============================================================================
+
+# --- Python ---
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
-venv/
-ENV/
 build/
 develop-eggs/
 dist/
@@ -22,30 +23,90 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.venv/
+venv/
+ENV/
+env/
 
-# Flask
+# --- Flask ---
 instance/
 .webassets-cache
 
-# 导出文件
+# --- 测试与覆盖率 ---
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# --- 日志 ---
+*.log
+logs/
+
+# --- 敏感配置（含加密口令 / Token，勿提交）---
+config.json
+.config.key
+config.json.*
+!.env.example
+!.config.json.example
+
+# --- 同步数据集（本地图片体积大）---
+datasets/
+
+# --- 上传的客户图（人工质检等）---
+uploads/
+
+# --- 查询/预测导出产物 ---
 exports/
 *.csv
 
-# 配置文件（包含敏感信息，建议不提交到版本控制）
-# 如果需要保留配置，可以注释掉下面这行
-# config.json
+# --- 用户在查询页保存的个人策略（内置见 _builtin/、templates/）---
+strategies/saved_*.json
+strategies/*.json
+!strategies/_builtin/
+!strategies/_builtin/**
+!strategies/templates/
+!strategies/templates/**
 
-# IDE
+# --- 数据库 dump ---
+*_dump.sql
+vision_backend_dump.sql
+*.sql.bak
+
+# --- 前端（frontend/.gitignore 双保险）---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# --- 打包产物 ---
+packaging/dist/
+packaging/build/
+*.spec.bak
+
+# --- Cursor 本地状态（skills 可提交）---
+.cursor/projects/
+.cursor/plans/
+.cursor/rules/
+
+# --- Agent 本地 ---
+.reasonix/
+
+# --- 环境变量 ---
+.env
+.env.local
+.env.*.local
+
+# --- IDE / OS ---
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
 Thumbs.db
 
-# 环境变量文件
-.env
-.env.local
+# --- 临时文件 ---
+*.tmp
+*.temp
+*.bak
+*.backup

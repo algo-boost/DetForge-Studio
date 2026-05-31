@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "id": "defect_all",
+  "name": "缺陷全量捞取",
+  "description": "捞取指定时间范围内所有已确认 NG 的图片",
+  "category": "默认策略",
+  "sql_template": "SELECT * FROM `product_detection_detail_result` WHERE check_status='1' AND c_time BETWEEN '${START_TIME}' AND '${END_TIME}'",
+  "sample_size": 300,
+  "filter_mode": "code",
+  "python_code": "def process_data(df):\n    return df",
+  "flow": { "version": 2, "nodes": [] },
+  "created_at": "2026-05-29T00:00:00",
+  "updated_at": "2026-05-29T00:00:00"
+}

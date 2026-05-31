@@ -1,81 +1,84 @@
-# 图片查询与导出系统
+# DefectLoop Studio
 
-基于 Flask 的 Web 应用，用于查询数据库中的图片数据并导出为 COCO 格式。
+**工业缺陷检测数据闭环系统** — 查询筛选、训练平台同步、在线/批量预测、人工质检、COCO/CSV 导出。
 
-## 安装
+> **产品名**：DefectLoop Studio  
+> **代码目录名**：`DetForge-Studio`（Git submodule）  
+> **产品文档入口**：[`../picture-collection/README.md`](../picture-collection/README.md)
+
+## 安装与运行
 
 ```bash
+cd tools/DetForge-Studio
 pip install -r requirements.txt
-```
 
-## 配置
-
-### Web 界面配置
-
-1. 启动应用后，点击右上角的"配置"按钮
-2. 填写数据库连接信息（主机、用户名、密码、数据库名）
-3. 设置图片基础路径
-4. 可选：设置默认 SQL 查询语句
-5. 点击"测试连接"验证数据库连接
-6. 点击"保存配置"保存设置
-
-配置会保存到 `config.json` 文件，下次启动时自动加载。
-
-### 环境变量配置（可选）
-
-```bash
-export DB_HOST=localhost
-export DB_USER=root
-export DB_PASSWORD=12345678
-export DB_DATABASE=vision_backend
-export IMG_BASE_PATH=E:/path/to/images/
-```
-
-环境变量优先级高于配置文件。
-
-## 运行
-
-```bash
+cd frontend && npm install && npm run build && cd ..
 python app.py
+# http://localhost:5050
 ```
 
-应用启动在 `http://localhost:5050`
+开发模式：`python app.py` + `cd frontend && npm run dev`（5173 代理 API）。
 
-## 使用
+## 集成组件
 
-1. 输入 SQL 查询语句，使用 `${START_TIME}` 和 `${END_TIME}` 作为时间变量
-2. 选择开始时间和结束时间
-3. 点击"执行查询"
-4. 查看图片：点击图片卡片打开查看器，使用左右箭头键切换
-5. 导出数据：点击"导出 COCO"或"导出 CSV"
+| 组件 | 挂载 | 入口 |
+|------|------|------|
+| COCOVisualizer | `/viz` | 侧栏「样本图库」 |
+| DetUnify-Studio | `/unify` | 侧栏「在线预测」 |
+| Magic-Fox API | 内置 `studio/sync/vendor/` | 侧栏「训练平台」 |
 
-## 项目结构
+
+## 用户文档
+
+- 完整手册：[`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)
+- 配置说明：[`CONFIG_README.md`](CONFIG_README.md)
+- 应用内：**设置 → 使用手册**
+
+## 架构
 
 ```
-picture-collection/
-├── app.py                 # Flask 应用主文件
-├── connect.py             # 数据库连接脚本
-├── csv2coco.py            # CSV 转 COCO 格式转换
-├── requirements.txt       # Python 依赖
-├── config.json            # 配置文件（自动生成）
-├── templates/
-│   ├── index.html         # 主界面
-│   └── config.html        # 配置界面
-└── exports/               # 导出文件目录（自动创建）
+DetForge-Studio/
+├── app.py                 # 入口
+├── worker.py              # 后台作业
+├── server/                # Flask（factory、routes、viz/unify 挂载）
+├── studio/
+│   ├── flow/              # 策略编译
+│   ├── query/             # 查询筛选
+│   ├── sync/              # Magic-Fox 同步（vendor 脚本）
+│   ├── export/            # COCO/CSV
+│   └── forge/             # 预测、质检、写库
+├── frontend/              # React + Vite
+├── docs/                  # 用户手册
+├── strategies/            # 策略 JSON
+├── config.json            # 本地配置（gitignore，敏感字段加密）
+└── .config.key            # 配置密钥（gitignore）
 ```
 
-## API 接口
+## 配置与安全
 
-- `POST /api/query` - 执行 SQL 查询
-- `GET /api/config` - 获取配置
-- `POST /api/config` - 保存配置
-- `POST /api/config/test-connection` - 测试数据库连接
-- `GET /api/image/<filename>?path=<full_path>` - 获取图片
-- `GET /api/export/<task_id>` - 导出 COCO 文件
-- `GET /api/export-csv/<task_id>` - 导出 CSV 文件
+在 **设置**（`/config`）配置数据库、图片路径、Magic-Fox、DetUnify 预测环境等。
 
-## 注意事项
+**敏感字段加密**（保存时自动）：`db_password`、`magic_fox_password`、`magic_fox_access_token`、`api_token` → `enc:v1:...` 写入 `config.json`，密钥在 `.config.key`。
 
-- SQL 查询必须包含 `origin_object_key` 字段才能生成图片路径
-- 配置文件包含敏感信息，注意保护
-- 导出的文件保存在 `exports/` 目录，每个查询任务有独立文件夹
+依赖：`cryptography`（见 `requirements.txt`）。
+
+**勿提交 git**：`config.json`、`.config.key`、`exports/`、`uploads/`、`datasets/`。
+
+## 侧栏导航（当前）
+
+查询 · 查询历史 · 模型 · **在线预测** · 预测任务 · 训练平台 · 人工质检 · 样本图库 · 设置
+
+## 测试
+
+```bash
+python -m pytest tests/ -q
+```
+
+## Windows 打包
+
+```powershell
+cd frontend; npm run build; cd ..
+.\packaging\build.ps1
+```
+
+预测仍走外部 Python：设置页 `detunify_studio_root` + `predict_python_executable`。

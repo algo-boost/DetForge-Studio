@@ -1,0 +1,11 @@
+{
+  "id": "random_sample",
+  "name": "随机采样",
+  "description": "从结果中随机抽取指定数量的样本",
+  "icon": "shuffle",
+  "params_schema": [
+    { "key": "max_rows", "label": "最大条数", "type": "number", "default": 300, "min": 1, "max": 10000, "step": 1 },
+    { "key": "random_seed", "label": "随机种子", "type": "number", "default": 42, "min": 0, "max": 9999, "step": 1 }
+  ],
+  "python_code": "def filter(df, params):\n    max_rows = params.get('max_rows', 300)\n    seed = params.get('random_seed', 42)\n    if len(df) <= max_rows:\n        return df\n    return df.sample(n=int(max_rows), random_state=int(seed)).reset_index(drop=True)"
+}

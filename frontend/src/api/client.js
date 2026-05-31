@@ -1,0 +1,284 @@
+const BASE = '';
+
+// 可选 API Token（后端配置 api_token 时启用）；存于 localStorage.pc_api_token
+export function getApiToken() {
+  try { return localStorage.getItem('pc_api_token') || ''; } catch { return ''; }
+}
+export function setApiToken(token) {
+  try { token ? localStorage.setItem('pc_api_token', token) : localStorage.removeItem('pc_api_token'); } catch { /* ignore */ }
+}
+function authHeaders() {
+  const t = getApiToken();
+  return t ? { 'X-API-Token': t } : {};
+}
+
+async function request(path, options = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...authHeaders(), ...(options.headers || {}) },
+    ...options,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok && data.success !== true) {
+    const err = new Error(data.error || data.message || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+async function importPlatformModelsFallback(body = {}) {
+  const approachId = body.approach_id;
+  if (!approachId) throw new Error('缺少 approach_id');
+  const includeDeploy = body.include_deploy !== false;
+  const includeTrain = body.include_train !== false;
+  const limit = body.limit || 100;
+  const imported = [];
+  const skipped = [];
+  const failed = [];
+
+  const importOne = async (payload, meta) => {
+    try {
+      const r = await request('/api/forge/models', { method: 'POST', body: JSON.stringify(payload) });
+      imported.push({ ...meta, registry_id: r.id });
+    } catch (e) {
+      failed.push({ ...meta, error: e.message });
+    }
+  };
+
+  if (includeDeploy) {
+    const d = await request(`/api/deployed-models?approach_id=${approachId}&limit=${limit}`);
+    for (const m of d.models || []) {
+      const meta = { source: 'modeldeploy', id: m.id, name: m.deploy_name };
+      if (!m.path_resolvable || !m.full_path) {
+        skipped.push({ ...meta, reason: '路径不可用' });
+        continue;
+      }
+      await importOne({
+        name: m.deploy_name,
+        checkpoint_path: m.full_path,
+        model_type: m.model_type,
+        labels: m.labels,
+        source: 'modeldeploy',
+        source_ref: String(m.id),
+        approach_id: m.approach_id || approachId,
+      }, meta);
+    }
+  }
+
+  if (includeTrain) {
+    const t = await request(`/api/training-models?approach_id=${approachId}&limit=${limit}`);
+    for (const m of t.models || []) {
+      const meta = { source: 'modeltrainconfig', id: m.id, name: m.model_name };
+      const path = m.full_path || m.hint_path;
+      if (!m.path_resolvable || !path) {
+        skipped.push({ ...meta, reason: '权重文件不存在' });
+        continue;
+      }
+      await importOne({
+        name: m.model_name,
+        checkpoint_path: path,
+        model_type: m.model_type,
+        labels: m.labels,
+        source: 'modeltrainconfig',
+        source_ref: String(m.id),
+        approach_id: m.approach_id || approachId,
+      }, meta);
+    }
+  }
+
+  return {
+    success: true,
+    imported,
+    skipped,
+    failed,
+    imported_count: imported.length,
+    skipped_count: skipped.length,
+    failed_count: failed.length,
+    fallback: true,
+  };
+}
+
+export const api = {
+  getConfig: () => request('/api/config'),
+  getUserGuide: () => request('/api/docs/user-guide'),
+  saveConfig: (config) => request('/api/config', { method: 'POST', body: JSON.stringify({ config }) }),
+  testConnection: (body) => request('/api/config/test-connection', { method: 'POST', body: JSON.stringify(body) }),
+  testMagicFoxConnection: (body) => request('/api/config/test-magic-fox', { method: 'POST', body: JSON.stringify(body || {}) }),
+
+  query: (body) => request('/api/query', { method: 'POST', body: JSON.stringify(body) }),
+  previewFilter: (body) => request('/api/preview-filter', { method: 'POST', body: JSON.stringify(body) }),
+  runPython: (body) => request('/api/run-python-code', { method: 'POST', body: JSON.stringify(body) }),
+
+  getStrategies: () => request('/api/strategies'),
+  getStrategy: (id) => request(`/api/strategies/${id}`),
+  saveStrategy: (body) => request('/api/strategies', { method: 'POST', body: JSON.stringify(body) }),
+  deleteStrategy: (id) => request(`/api/strategies/${id}`, { method: 'DELETE' }),
+  executeStrategy: (body) => request('/api/strategies/execute', { method: 'POST', body: JSON.stringify(body) }),
+
+  getTemplates: () => request('/api/templates'),
+  saveTemplate: (body) => request('/api/templates', { method: 'POST', body: JSON.stringify(body) }),
+  deleteTemplate: (id) => request(`/api/templates/${id}`, { method: 'DELETE' }),
+
+  getFlowNodes: () => request('/api/flow/nodes'),
+  compileFlow: (body) => request('/api/flow/compile', { method: 'POST', body: JSON.stringify(body) }),
+
+  getPipelines: (limit = 50) => request(`/api/pipelines?limit=${limit}`),
+  getPipelineNodes: (id) => request(`/api/pipelines/${id}/nodes`),
+  getPipelineRules: (id, params = '') => request(`/api/pipelines/${id}/filter-rules${params}`),
+
+  getDefectCategories: (refresh = false, approachId) => {
+    const q = new URLSearchParams();
+    if (refresh) q.set('refresh', '1');
+    if (approachId != null) q.set('approach_id', String(approachId));
+    const qs = q.toString();
+    return request(`/api/defect-categories${qs ? `?${qs}` : ''}`);
+  },
+  getPlatformPaths: (drive) => request(`/api/platform-paths${drive ? `?drive=${encodeURIComponent(drive)}` : ''}`),
+  syncPlatformPaths: (body) => request('/api/platform-paths/sync', { method: 'POST', body: JSON.stringify(body || {}) }),
+
+  getDeployedModels: (params = '') => request(`/api/deployed-models${params}`),
+  getTrainingModels: (params = '') => request(`/api/training-models${params}`),
+
+  // ── 写库 detforge：模型注册 / 作业 / 人工质检 ──
+  forgeSchemaStatus: () => request('/api/forge/schema/status'),
+  forgeSchemaInit: () => request('/api/forge/schema/init', { method: 'POST' }),
+
+  forgeModels: (enabledOnly = false) => request(`/api/forge/models${enabledOnly ? '?enabled=1' : ''}`),
+  forgeCreateModel: (body) => request('/api/forge/models', { method: 'POST', body: JSON.stringify(body) }),
+  forgeDeleteModel: (id) => request(`/api/forge/models/${id}`, { method: 'DELETE' }),
+  forgeSetModelEnabled: (id, enabled) => request(`/api/forge/models/${id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+
+  forgeJobs: (params = '') => request(`/api/forge/jobs${params}`),
+  forgeJob: (id) => request(`/api/forge/jobs/${id}`),
+  forgeJobLog: (id) => request(`/api/forge/jobs/${id}/log`),
+  forgeExportDownloadUrl: (relPath) => {
+    const t = getApiToken();
+    const q = new URLSearchParams({ path: relPath });
+    if (t) q.set('token', t);
+    return `/api/forge/exports/download?${q.toString()}`;
+  },
+  forgeEnqueuePredict: (body) => request('/api/forge/jobs/predict', { method: 'POST', body: JSON.stringify(body) }),
+  // 批量预测与单模型共用 /predict（旧服务无 /predict/batch 时也能工作）
+  forgeEnqueuePredictBatch: (body) => request('/api/forge/jobs/predict', { method: 'POST', body: JSON.stringify(body) }),
+  forgeImportAllPlatformModels: async (body) => {
+    try {
+      return await request('/api/forge/platform/models/import-all', { method: 'POST', body: JSON.stringify(body) });
+    } catch (e) {
+      if (e.status !== 404) throw e;
+      return importPlatformModelsFallback(body);
+    }
+  },
+  forgeControlJob: (id, action) => request(`/api/forge/jobs/${id}/control`, { method: 'POST', body: JSON.stringify({ action }) }),
+  forgeJobItems: (id, params = '') => request(`/api/forge/jobs/${id}/items${params}`),
+  forgeJobResults: (id, params = '') => request(`/api/forge/jobs/${id}/results${params}`),
+  forgeJobOpenViz: (id, body = {}) => request(`/api/forge/jobs/${id}/viz`, { method: 'POST', body: JSON.stringify(body) }),
+  forgePredictResultPreviewUrl: (id) => {
+    const t = getApiToken();
+    return `/api/forge/predict-result/${id}/preview${t ? `?token=${encodeURIComponent(t)}` : ''}`;
+  },
+  forgeModelHealth: (id, device) => request(`/api/forge/models/${id}/health`, { method: 'POST', body: JSON.stringify(device ? { device } : {}) }),
+  forgePredictResultSource: () => request('/api/forge/predict-result/source'),
+
+  forgeManualQcLookup: (sn) => request(`/api/forge/manual-qc/lookup?sn=${encodeURIComponent(sn)}`),
+  forgeManualQcList: (params = '') => request(`/api/forge/manual-qc${params}`),
+  forgeManualQcArchive: (body) => request('/api/forge/manual-qc', { method: 'POST', body: JSON.stringify(body) }),
+  forgeManualQcCategories: () => request('/api/forge/manual-qc/categories'),
+  forgeManualQcSaveCategories: (body) => request('/api/forge/manual-qc/categories', { method: 'POST', body: JSON.stringify(body) }),
+  forgeManualQcExport: (body) => request('/api/forge/manual-qc/export', { method: 'POST', body: JSON.stringify(body) }),
+  forgeManualQcUpdate: (id, body) => request(`/api/forge/manual-qc/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  forgeManualQcDelete: (id) => request(`/api/forge/manual-qc/${id}`, { method: 'DELETE' }),
+  forgeManualQcCleanupUploads: (dryRun = true) => request('/api/forge/manual-qc/cleanup-uploads', { method: 'POST', body: JSON.stringify({ dry_run: dryRun }) }),
+  forgeManualQcExportZip: async (body) => {
+    const res = await fetch('/api/forge/manual-qc/export', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ ...body, as_zip: true }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `HTTP ${res.status}`); }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const cd = res.headers.get('Content-Disposition') || '';
+    a.href = url; a.download = (cd.match(/filename="?([^"]+)"?/) || [])[1] || 'manual_qc_export.zip';
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  },
+  forgeManualQcUpload: async (fileList) => {
+    const fd = new FormData();
+    Array.from(fileList || []).forEach((f) => fd.append('files', f));
+    const res = await fetch('/api/forge/manual-qc/upload', { method: 'POST', body: fd, headers: { ...authHeaders() } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok && data.success !== true) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  },
+
+  forgeSyncTestAuth: () => request('/api/forge/sync/test-auth', { method: 'POST' }),
+  forgeSyncDiscover: (body) => request('/api/forge/sync/discover', { method: 'POST', body: JSON.stringify(body) }),
+  forgeSyncDiscoverImport: (body) => request('/api/forge/sync/discover/import', { method: 'POST', body: JSON.stringify(body) }),
+  forgeSyncProjects: () => request('/api/forge/sync/projects'),
+  forgeSyncSaveProject: (body) => request('/api/forge/sync/projects', { method: 'POST', body: JSON.stringify(body) }),
+  forgeSyncDeleteProject: (id) => request(`/api/forge/sync/projects/${id}`, { method: 'DELETE' }),
+  forgeSyncDatasets: (params = '') => request(`/api/forge/sync/datasets${params}`),
+  forgeSyncSaveDataset: (body) => request('/api/forge/sync/datasets', { method: 'POST', body: JSON.stringify(body) }),
+  forgeSyncDeleteDataset: (id) => request(`/api/forge/sync/datasets/${id}`, { method: 'DELETE' }),
+  forgeSyncDatasetStatus: (id) => request(`/api/forge/sync/datasets/${id}/status`),
+  forgeSyncRun: (id, body = {}) => request(`/api/forge/sync/datasets/${id}/run`, { method: 'POST', body: JSON.stringify(body) }),
+  forgeSyncOpenViz: (id) => request(`/api/forge/sync/datasets/${id}/viz`, { method: 'POST' }),
+  forgeSyncDatasetItems: (id, params = '') => request(`/api/forge/sync/datasets/${id}/items${params}`),
+  forgeSyncDatasetRetrace: (id) => request(`/api/forge/sync/datasets/${id}/retrace`, { method: 'POST' }),
+  forgeSyncTrainModels: (projectId, force = false) => request('/api/forge/sync/train-models', {
+    method: 'POST',
+    body: JSON.stringify({ project_id: projectId, force }),
+  }),
+  forgeListTrainModels: (projectId) => request(`/api/forge/sync/train-models?project_id=${projectId}`),
+
+  imageUrl: (name, path) => {
+    const t = getApiToken();
+    return `/api/image/${encodeURIComponent(name)}?path=${encodeURIComponent(path || '')}${t ? `&token=${encodeURIComponent(t)}` : ''}`;
+  },
+  exportCocoUrl: (taskId) => `/api/export/${taskId}`,
+  exportCsvUrl: (taskId) => `/api/export-csv/${taskId}`,
+  archive: (taskId, body) => request(`/api/archive/${taskId}`, { method: 'POST', body: JSON.stringify(body) }),
+
+  vizStatus: () => request('/api/viz/status'),
+  vizOpen: (body) => request('/api/viz/open', { method: 'POST', body: JSON.stringify(body) }),
+  vizSession: (sessionId) => request(`/api/viz/session/${encodeURIComponent(sessionId)}`),
+};
+
+import { appNavigate } from '../lib/appNavigate';
+
+/** 样本图库页内路由（/viewer） */
+export function sampleGalleryViewerPath(record) {
+  if (typeof record === 'string') {
+    if (record.startsWith('/viewer')) return record;
+    return `/viewer?src=${encodeURIComponent(record)}`;
+  }
+  const vizUrl = record?.viz_url
+    || (record?.session_id ? `/viz/?defectloop_session=${record.session_id}` : null);
+  if (vizUrl) return `/viewer?src=${encodeURIComponent(vizUrl)}`;
+  if (record?.viewer_url?.startsWith('/viewer')) return record.viewer_url;
+  return '/viewer';
+}
+
+/** 在应用内打开样本图库（同窗口 iframe 页） */
+export function openSampleGallery(record) {
+  const path = sampleGalleryViewerPath(record);
+  if (!appNavigate(path)) {
+    window.location.assign(path);
+  }
+}
+
+/** 准备样本图库会话后直接跳转看图页 */
+export async function openSampleGalleryWhenReady(prepare) {
+  const record = await prepare();
+  openSampleGallery(record);
+  return { record };
+}
+
+export function formatSqlTime(dtLocal, end = false) {
+  if (!dtLocal) return '';
+  const s = dtLocal.replace('T', ' ');
+  return end && s.length === 16 ? `${s}:59` : s.length === 16 ? `${s}:00` : s;
+}
+
+export function toast(msg, type = 'info') {
+  window.dispatchEvent(new CustomEvent('pc-toast', { detail: { msg, type } }));
+}

@@ -1,0 +1,49 @@
+{
+  "schema_version": 2,
+  "id": "category_export",
+  "name": "按缺陷分类导出",
+  "description": "按指定缺陷类型筛选（默认脏污+划伤），去重采样 500 张",
+  "category": "分类统计",
+  "sql_template": "SELECT * FROM `product_detection_detail_result` WHERE check_status='1' AND c_time BETWEEN '${START_TIME}' AND '${END_TIME}'",
+  "sample_size": 500,
+  "filter_mode": "code",
+  "flow": {
+    "version": 2,
+    "nodes": [
+      {
+        "id": "s1",
+        "type": "template.category_filter",
+        "template_id": "category_filter",
+        "params": {
+          "categories": [
+            "脏污",
+            "划伤",
+            "破损"
+          ],
+          "mode": "include"
+        }
+      },
+      {
+        "id": "s2",
+        "type": "template.dedup",
+        "template_id": "dedup",
+        "params": {
+          "column": "product_no"
+        }
+      },
+      {
+        "id": "s3",
+        "type": "template.random_sample",
+        "template_id": "random_sample",
+        "params": {
+          "max_rows": 500,
+          "random_seed": 42
+        }
+      }
+    ]
+  },
+  "created_at": "2026-05-29T00:00:00",
+  "updated_at": "2026-05-30T12:16:26.085365",
+  "python_code": "def _tpl_category_filter_s1(df, params):\n    import json\n    cats = params.get('categories', [])\n    if not cats:\n        return df\n    mode = params.get('mode', 'include')\n    def get_names(ext_val):\n        try:\n            obj = json.loads(ext_val) if isinstance(ext_val, str) else ext_val\n            preds = obj.get('original_predictions', []) if isinstance(obj, dict) else obj\n            if isinstance(preds, list):\n                return [p.get('name','') for p in preds if isinstance(p, dict)]\n            return []\n        except:\n            return []\n    df['_names'] = df['ext'].apply(get_names)\n    mask = df['_names'].apply(lambda ns: any(c in ns for c in cats))\n    result = df[mask] if mode == 'include' else df[~mask]\n    return result.drop(columns=['_names'], errors='ignore')\n\ndef _tpl_dedup_s2(df, params):\n    col = params.get('column', 'product_no')\n    if col in df.columns:\n        return df.drop_duplicates(subset=[col], keep='first').reset_index(drop=True)\n    return df\n\n\ndef process_data(df):\n    # [s1] 缺陷类型过滤\n    df = _tpl_category_filter_s1(df, {'categories': ['脏污', '划伤', '破损'], 'mode': 'include'})\n    # [s2] 按列去重\n    df = _tpl_dedup_s2(df, {'column': 'product_no'})\n    # [s3] 随机采样\n    df = apply_random_sample_rows(df)\n    return df\n",
+  "sample_code": "def apply_random_sample_rows(df, max_rows=500, random_seed=42):\n    \"\"\"随机采样；行数不足时返回全部。\"\"\"\n    max_rows = int(max_rows)\n    seed = int(random_seed)\n    if max_rows <= 0 or len(df) <= max_rows:\n        return df.reset_index(drop=True)\n    return df.sample(n=max_rows, random_state=seed).reset_index(drop=True)\n"
+}

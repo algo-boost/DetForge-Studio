@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "id": "fp_eval_set",
+  "name": "误检水平评测集（按款型分层）",
+  "description": "从预测结果表按 product_type 分层，每个款型随机取定量，构建覆盖各款型的误检评测集",
+  "category": "评测集",
+  "sql_template": "SELECT * FROM detforge.predict_result WHERE c_time BETWEEN '${START_TIME}' AND '${END_TIME}'",
+  "sample_size": 0,
+  "filter_mode": "code",
+  "flow": {
+    "version": 2,
+    "nodes": []
+  },
+  "created_at": "2026-05-30T00:00:00",
+  "updated_at": "2026-05-30T00:00:00",
+  "python_code": "def process_data(df):\n    # 按款型分层采样：每个 product_type 随机取 10 张，覆盖各款型\n    df = stratified_sample_by_type(df, n=10, type_col='product_type', seed=42)\n    return df\n"
+}

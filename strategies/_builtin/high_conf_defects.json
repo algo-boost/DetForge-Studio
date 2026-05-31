@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "id": "high_conf_defects",
+  "name": "高置信度缺陷筛选",
+  "description": "置信度 ≥ 0.5 的缺陷图片，按产品去重后随机采样 300 张",
+  "category": "质量分析",
+  "sql_template": "SELECT * FROM `product_detection_detail_result` WHERE check_status='1' AND c_time BETWEEN '${START_TIME}' AND '${END_TIME}'",
+  "sample_size": 300,
+  "filter_mode": "code",
+  "flow": {
+    "version": 2,
+    "nodes": [
+      {
+        "id": "s1",
+        "type": "template.confidence_filter",
+        "template_id": "confidence_filter",
+        "params": {
+          "min_conf": 0.5,
+          "max_conf": 1.0
+        }
+      },
+      {
+        "id": "s2",
+        "type": "template.dedup",
+        "template_id": "dedup",
+        "params": {
+          "column": "product_no"
+        }
+      },
+      {
+        "id": "s3",
+        "type": "template.random_sample",
+        "template_id": "random_sample",
+        "params": {
+          "max_rows": 300,
+          "random_seed": 42
+        }
+      }
+    ]
+  },
+  "created_at": "2026-05-29T00:00:00",
+  "updated_at": "2026-05-30T12:16:26.085935",
+  "python_code": "def _tpl_confidence_filter_s1(df, params):\n    import json\n    min_c = params.get('min_conf', 0)\n    max_c = params.get('max_conf', 1)\n    def max_conf(ext_val):\n        try:\n            obj = json.loads(ext_val) if isinstance(ext_val, str) else ext_val\n            preds = obj.get('original_predictions', []) if isinstance(obj, dict) else obj\n            if isinstance(preds, list):\n                confs = [p.get('confidence',0) for p in preds if isinstance(p, dict)]\n                return max(confs) if confs else 0\n            return 0\n        except:\n            return 0\n    df['_max_conf'] = df['ext'].apply(max_conf)\n    result = df[(df['_max_conf'] >= min_c) & (df['_max_conf'] <= max_c)]\n    return result.drop(columns=['_max_conf'], errors='ignore')\n\ndef _tpl_dedup_s2(df, params):\n    col = params.get('column', 'product_no')\n    if col in df.columns:\n        return df.drop_duplicates(subset=[col], keep='first').reset_index(drop=True)\n    return df\n\n\ndef process_data(df):\n    # [s1] 置信度过滤\n    df = _tpl_confidence_filter_s1(df, {'min_conf': 0.5, 'max_conf': 1.0})\n    # [s2] 按列去重\n    df = _tpl_dedup_s2(df, {'column': 'product_no'})\n    # [s3] 随机采样\n    df = apply_random_sample_rows(df)\n    return df\n",
+  "sample_code": "def apply_random_sample_rows(df, max_rows=300, random_seed=42):\n    \"\"\"随机采样；行数不足时返回全部。\"\"\"\n    max_rows = int(max_rows)\n    seed = int(random_seed)\n    if max_rows <= 0 or len(df) <= max_rows:\n        return df.reset_index(drop=True)\n    return df.sample(n=max_rows, random_state=seed).reset_index(drop=True)\n"
+}
