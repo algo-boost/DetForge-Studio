@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, toast } from '../../api/client';
+import {
+  registryMatchesApproaches,
+  resolveLocalApproachId,
+  resolveMagicFoxApproachId,
+} from '../../lib/approachIds';
 
 function ModelCheckRow({ checked, onToggle, title, meta, badge, disabled }) {
   return (
@@ -62,24 +67,34 @@ export default function PlatformPredictPanel({
   const [threshold, setThreshold] = useState('0.1');
   const [device, setDevice] = useState('');
   const [intra, setIntra] = useState(1);
+  const [localApproachId, setLocalApproachId] = useState(null);
 
-  const approachId = project?.approach_id;
+  const magicFoxApproachId = resolveMagicFoxApproachId(project);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api.getConfig();
+        if (alive && res.success) {
+          setLocalApproachId(resolveLocalApproachId(res.config));
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   const loadRegistry = useCallback(async () => {
     try {
       const rRes = await api.forgeModels(true);
       if (rRes.success) {
         const all = rRes.data || [];
-        if (!approachId) {
-          setRegistryModels(all);
-        } else {
-          setRegistryModels(
-            all.filter((m) => !m.approach_id || Number(m.approach_id) === Number(approachId)),
-          );
-        }
+        setRegistryModels(
+          all.filter((m) => registryMatchesApproaches(m, localApproachId, magicFoxApproachId)),
+        );
       }
     } catch { /* ignore */ }
-  }, [approachId]);
+  }, [localApproachId, magicFoxApproachId]);
 
   useEffect(() => {
     if (preselectedDatasetId) setDatasetId(String(preselectedDatasetId));
@@ -104,15 +119,16 @@ export default function PlatformPredictPanel({
   }, [datasets, datasetId]);
 
   const loadTrainModels = useCallback(async (force = false) => {
-    if (!project?.id || !approachId) {
+    if (!project?.id) {
       setTrainModels([]);
       return;
     }
     setSyncingTrain(true);
     try {
+      const mfQs = magicFoxApproachId ? `&approach_id=${magicFoxApproachId}` : '';
       const res = force
         ? await api.forgeSyncTrainModels(project.id, true)
-        : await api.getTrainingModels(`?project_id=${project.id}&approach_id=${approachId}&limit=200`);
+        : await api.getTrainingModels(`?project_id=${project.id}${mfQs}&limit=200`);
       if (res.success) {
         setTrainModels(res.models || res.data || []);
         setTrainSyncMeta(res.meta || { count: (res.models || []).length, synced_count: res.synced_count });
@@ -122,12 +138,11 @@ export default function PlatformPredictPanel({
     } finally {
       setSyncingTrain(false);
     }
-  }, [project?.id, approachId]);
+  }, [project?.id, magicFoxApproachId]);
 
   useEffect(() => {
-    if (!approachId) {
+    if (!localApproachId) {
       setDeployModels([]);
-      setTrainModels([]);
       loadRegistry();
       return;
     }
@@ -135,16 +150,23 @@ export default function PlatformPredictPanel({
     setLoadingModels(true);
     (async () => {
       try {
-        const dRes = await api.getDeployedModels(`?approach_id=${approachId}&limit=100`);
+        const dRes = await api.getDeployedModels(`?approach_id=${localApproachId}&limit=100`);
         if (!alive) return;
         if (dRes.success) setDeployModels(dRes.models || dRes.data || []);
         await loadRegistry();
-        await loadTrainModels(false);
       } catch { /* ignore */ }
       finally { if (alive) setLoadingModels(false); }
     })();
     return () => { alive = false; };
-  }, [approachId, loadRegistry, loadTrainModels]);
+  }, [localApproachId, loadRegistry]);
+
+  useEffect(() => {
+    if (!project?.id) {
+      setTrainModels([]);
+      return;
+    }
+    loadTrainModels(false);
+  }, [project?.id, magicFoxApproachId, loadTrainModels]);
 
   useEffect(() => {
     if (!datasetId) {
@@ -223,9 +245,16 @@ export default function PlatformPredictPanel({
       toast('请至少选择一个模型', 'error');
       return;
     }
-    const needsApproach = deploySelections.length > 0 || trainSelections.length > 0;
-    if (needsApproach && !approachId) {
-      toast('部署/训练模型需要关联含 Approach ID 的项目，请在上方的「关联项目」中选择', 'error');
+    if (deploySelections.length && !localApproachId) {
+      toast('部署模型需要在 设置 → 检测项目 配置本地总控 Approach（defect_approach_id）', 'error');
+      return;
+    }
+    if (trainSelections.length && !project?.id) {
+      toast('训练模型需要关联 Magic-Fox 项目', 'error');
+      return;
+    }
+    if (trainSelections.length && !magicFoxApproachId) {
+      toast('所选 Magic-Fox 项目未配置 Approach ID，请在训练平台编辑项目', 'error');
       return;
     }
     if (usingSyncDataset && !datasetStatus?.local_count) {
@@ -302,7 +331,7 @@ export default function PlatformPredictPanel({
             <span className="platform-step-num">0</span>
             <div>
               <h4>关联项目</h4>
-              <p className="muted">部署/训练模型列表按项目的 Approach 筛选；本地目录预测可跳过</p>
+              <p className="muted">部署模型按设置中的本地总控 Approach；训练模型按 Magic-Fox 项目</p>
             </div>
           </div>
           <div className="forge-form-grid platform-predict-form">
@@ -315,7 +344,7 @@ export default function PlatformPredictPanel({
                 <option value="">不关联项目（仅已注册模型）</option>
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name}{p.approach_id ? ` · approach ${p.approach_id}` : ' · 未配置 Approach'}
+                    {p.name}{p.approach_id ? ` · MF approach ${p.approach_id}` : ' · 未配置 MF Approach'}
                   </option>
                 ))}
               </select>
@@ -324,24 +353,33 @@ export default function PlatformPredictPanel({
         </section>
       )}
 
-      {!approachId && project && (deploySelections.length > 0 || trainSelections.length > 0) && (
+      {deploySelections.length > 0 && !localApproachId && (
         <div className="platform-surface-card platform-predict-alert">
           <p>
-            当前项目未配置 Approach ID，无法使用部署/训练模型。
-            请在 <Link to="/training">训练平台</Link> 编辑项目补充 Approach ID，或改用「已注册」Tab 选本地模型。
+            部署模型需要在 <Link to="/settings">设置 → 检测项目</Link> 配置
+            <code> defect_approach_id</code>（本地总控 Approach），或改用「已注册」Tab。
           </p>
         </div>
       )}
 
-      {!project && standalone && (deploySelections.length > 0 || trainSelections.length > 0) && (
+      {trainSelections.length > 0 && project && !magicFoxApproachId && (
         <div className="platform-surface-card platform-predict-alert">
-          <p>使用部署/训练模型请先在上方的「关联项目」中选择一个已配置 Approach ID 的 Magic-Fox 项目。</p>
+          <p>
+            训练模型需要 Magic-Fox 项目的 Approach ID。
+            请在 <Link to="/training">训练平台</Link> 编辑项目补充，或改用「已注册」Tab。
+          </p>
         </div>
       )}
 
-      {!approachId && !project && standalone && totalSelected > 0 && deploySelections.length === 0 && trainSelections.length === 0 && (
+      {trainSelections.length > 0 && !project && standalone && (
+        <div className="platform-surface-card platform-predict-alert">
+          <p>使用训练模型请先在上方的「关联项目」中选择一个 Magic-Fox 项目。</p>
+        </div>
+      )}
+
+      {!project && standalone && totalSelected > 0 && trainSelections.length === 0 && deploySelections.length === 0 && (
         <div className="platform-surface-card platform-predict-alert platform-predict-alert-info">
-          <p>仅使用「已注册」模型时可不关联项目；部署/训练模型需选择 Magic-Fox 项目。</p>
+          <p>仅使用「已注册」或「部署模型」时可不关联 Magic-Fox 项目；训练模型需选择项目。</p>
         </div>
       )}
 
@@ -518,7 +556,13 @@ export default function PlatformPredictPanel({
           {modelTab === 'deploy' && (
             <div className="platform-model-pane">
               <div className="platform-model-section-head">
-                <span className="muted">{deployModels.length} 个部署模型（本地加载权重）</span>
+                <span className="muted">
+                  {deployModels.length
+                    ? `${deployModels.length} 个部署模型（本地总控 Approach ${localApproachId}）`
+                    : localApproachId
+                      ? '暂无部署模型'
+                      : '未配置本地总控 Approach'}
+                </span>
                 {!!deployModels.length && (
                   <span className="platform-model-actions">
                     <button type="button" className="btn sm btn-ghost" onClick={() => selectAllDeploy(true)}>全选</button>
@@ -528,7 +572,11 @@ export default function PlatformPredictPanel({
               </div>
               {loadingModels && <p className="muted platform-model-empty">加载模型列表…</p>}
               {!loadingModels && !deployModels.length && (
-                <p className="muted platform-model-empty">{approachId ? '该项目暂无可用部署模型' : '请先配置 Approach ID'}</p>
+                <p className="muted platform-model-empty">
+                  {localApproachId
+                    ? `本地总控 Approach ${localApproachId} 下暂无可用部署模型`
+                    : '请先在 设置 → 检测项目 配置 defect_approach_id'}
+                </p>
               )}
               <div className="platform-model-list">
                 {deployModels.map((m) => {
@@ -553,7 +601,11 @@ export default function PlatformPredictPanel({
             <div className="platform-model-pane">
               <div className="platform-model-section-head">
                 <span className="muted">
-                  {trainModels.length ? `${trainModels.length} 个训练模型（Magic-Fox 线上 API）` : '暂无训练模型'}
+                  {trainModels.length
+                    ? `${trainModels.length} 个训练模型（Magic-Fox${magicFoxApproachId ? ` · approach ${magicFoxApproachId}` : ''}）`
+                    : project?.id
+                      ? '暂无训练模型'
+                      : '请先关联 Magic-Fox 项目'}
                   {trainSyncMeta?.synced_count != null && !syncingTrain && (
                     <> · 已同步 {trainSyncMeta.synced_count} 个</>
                   )}
@@ -654,6 +706,7 @@ export default function PlatformPredictPanel({
           className="btn primary"
           disabled={busy || !canSubmit}
           onClick={submit}
+          data-testid="predict-submit"
         >
           {busy ? '创建中…' : `创建预测任务（${totalSelected} 个模型）`}
         </button>

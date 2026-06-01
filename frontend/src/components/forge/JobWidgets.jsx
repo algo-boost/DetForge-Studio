@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, openSampleGallery, toast } from '../../api/client';
+import { formatSampleGalleryError } from '../../lib/sampleGallery';
 import StatusPill from './jobs/StatusPill';
 
 export { STATUS_LABEL } from './jobs/jobUtils';
@@ -177,7 +178,7 @@ export function JobDetail({ job }) {
       });
       openSampleGallery(record);
     } catch (e) {
-      toast(e.message, 'error');
+      toast(formatSampleGalleryError(e, `作业 #${job.id}`), 'error');
     } finally {
       setOpeningViz(false);
     }
@@ -212,6 +213,9 @@ export function JobDetail({ job }) {
             </button>
             <Link className="btn btn-sm btn-ghost" to={`/?predict_job=${job.id}`}>
               查询页筛选
+            </Link>
+            <Link className="btn btn-sm btn-ghost" to={`/curation?replay=1&job_id=${job.id}`}>
+              回跑筛选批次
             </Link>
           </span>
         )}

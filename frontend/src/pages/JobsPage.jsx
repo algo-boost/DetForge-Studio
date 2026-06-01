@@ -254,7 +254,7 @@ export default function JobsPage() {
           <div className="topbar-title">预测任务</div>
           <p className="pjobs-header-desc">
             模型预测后台作业（写库 <code>{schema.database}</code>）· 批量预测请前往
-            {' '}<Link to="/platform">训练平台</Link> · 数据集同步见训练平台「同步任务」
+            {' '}<Link to="/training">训练平台</Link> · 数据集同步见训练平台「同步任务」
           </p>
         </div>
         <div className="pjobs-header-stats">
@@ -308,7 +308,7 @@ export default function JobsPage() {
               detailId={detailId}
               setDetailId={setDetailId}
               onControl={control}
-              emptyText="暂无预测作业。可在「新建预测」创建，或从训练平台批量提交。"
+              emptyText="暂无预测作业。可在「在线预测」发起批量任务，或从训练平台提交。"
             />
           </SurfaceCard>
         )}

@@ -3,6 +3,7 @@ import re
 from urllib.parse import parse_qs, urlparse
 
 from studio.sync import magic_fox_bridge as mf
+from studio.sync.dataset_catalog import resolve_dataset_candidates
 
 MF_ORIGIN = 'https://www.ai.magic-fox.com'
 _PAGE_TYPES = ('datasets', 'training', 'enhance', 'datasets/dataView')
@@ -120,9 +121,27 @@ def _api_session_and_headers(config=None):
     base, token = mf.get_api_token(config)
     m = mf.ensure_moli_module()
     session = m._api_session()
-    headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Accept': 'application/json',
+        'Origin': MF_ORIGIN,
+        'Referer': f'{MF_ORIGIN}/',
+    }
     proxies = m._direct_proxies()
     return base.rstrip('/'), session, headers, proxies
+
+
+def _is_permission_denied_response(data):
+    if not isinstance(data, dict):
+        return False
+    code = data.get('code')
+    msg = str(data.get('message') or data.get('msg') or '')
+    return code == 1000000001 or '权限' in msg or 'permission' in msg.lower()
+
+
+def _is_permission_denied_error(exc):
+    msg = str(exc or '').lower()
+    return 'permission' in msg or '权限' in msg or 'not enough' in msg
 
 
 def _check_api_response(data, context='Magic-Fox API'):
@@ -130,15 +149,98 @@ def _check_api_response(data, context='Magic-Fox API'):
     if code == 200:
         return
     msg = data.get('message') or data.get('msg') or str(data)
-    if code == 1000000001 or '权限' in str(msg):
-        raise RuntimeError(
+    if _is_permission_denied_response(data):
+        raise PermissionError(
             f'{context} 权限不足（{msg}）。'
-            '请在「设置 → Magic-Fox 训练平台」改用账号密码模式，或更换有项目访问权限的 Token。'
+            '当前 Token 可能仅有 dataset_items 读取权限，无法调用列表接口。'
         )
     raise RuntimeError(f'{context} 失败: {msg}')
 
 
-def fetch_all_datasets(approach_id, subject_id=None, config=None):
+def _probe_dataset_via_items(session, base, headers, proxies, dataset_id):
+    """受限 Token 可用：GET /dataset_items/page 探测单个数据集。"""
+    r = session.get(
+        f'{base}/dataset_items/page',
+        headers=headers,
+        params={
+            'dataset_id': int(dataset_id),
+            'limit': 1,
+            'skip': 0,
+            'annotator_id': 0,
+            'sort_type': 'm_time',
+            'fuzzy_name': '',
+        },
+        proxies=proxies,
+        timeout=60,
+    )
+    r.raise_for_status()
+    data = r.json()
+    if data.get('code') != 200:
+        return None
+    payload = data.get('data') or {}
+    total = int(payload.get('total_count') or 0)
+    return {'count': total}
+
+
+def fetch_datasets_via_catalog_probe(
+    approach_id,
+    subject_id=None,
+    config=None,
+    candidate_ids=None,
+    url_dataset_id=None,
+):
+    """
+    当 datasets/page 无权限时，按 catalog 候选 ID 逐个用 dataset_items/page 探测。
+    """
+    base, session, headers, proxies = _api_session_and_headers(config)
+    candidates = resolve_dataset_candidates(
+        approach_id,
+        config=config,
+        extra_ids=candidate_ids,
+        url_dataset_id=url_dataset_id,
+    )
+    if not candidates:
+        raise PermissionError(
+            '拉取数据集列表 权限不足，且未找到可探测的数据集 catalog。'
+            '请在 config.json 的 magic_fox_dataset_catalog 中配置 approach 的数据集 ID，'
+            '或在发现请求中传入 dataset_ids。'
+        )
+
+    rows = []
+    skipped = []
+    for item in candidates:
+        did = int(item['id'])
+        probed = _probe_dataset_via_items(session, base, headers, proxies, did)
+        if probed is None:
+            skipped.append(did)
+            continue
+        rows.append({
+            'id': did,
+            'dataset_name': item['name'],
+            'count': probed['count'],
+        })
+
+    if not rows:
+        raise PermissionError(
+            f'拉取数据集列表 权限不足，catalog 中 {len(candidates)} 个数据集 ID 均无法通过 dataset_items/page 访问。'
+            '请确认 Token 对该 approach 的数据集有读取权限，或改用账号密码登录。'
+        )
+
+    meta_note = (
+        f'列表接口无权限，已通过 dataset_items 探测 {len(rows)} 个数据集'
+        + (f'（跳过 {len(skipped)} 个无权限 ID）' if skipped else '')
+    )
+    normalized = _normalize_datasets(rows, approach_id, subject_id)
+    return normalized, meta_note
+
+
+def fetch_all_datasets(
+    approach_id,
+    subject_id=None,
+    config=None,
+    candidate_ids=None,
+    url_dataset_id=None,
+):
     base, session, headers, proxies = _api_session_and_headers(config)
     rows = []
     offset = 0
@@ -151,6 +253,15 @@ def fetch_all_datasets(approach_id, subject_id=None, config=None):
         r = session.get(f'{base}/datasets/page', headers=headers, params=params, proxies=proxies, timeout=60)
         r.raise_for_status()
         data = r.json()
+        if _is_permission_denied_response(data):
+            probed, note = fetch_datasets_via_catalog_probe(
+                approach_id,
+                subject_id=subject_id,
+                config=config,
+                candidate_ids=candidate_ids,
+                url_dataset_id=url_dataset_id,
+            )
+            return probed, note
         _check_api_response(data, '拉取数据集列表')
         payload = data.get('data') or {}
         chunk = payload.get('datasets') or []
@@ -160,7 +271,7 @@ def fetch_all_datasets(approach_id, subject_id=None, config=None):
         if not chunk or (total and len(rows) >= total):
             break
         offset += len(chunk)
-    return _normalize_datasets(rows, approach_id, subject_id)
+    return _normalize_datasets(rows, approach_id, subject_id), None
 
 
 def fetch_all_snapshots(approach_id, config=None):
@@ -187,6 +298,8 @@ def fetch_all_snapshots(approach_id, config=None):
         )
         r.raise_for_status()
         data = r.json()
+        if _is_permission_denied_response(data):
+            return [], '训练快照列表接口无权限，已跳过（不影响底库数据集发现）'
         _check_api_response(data, '拉取训练快照列表')
         payload = data.get('data') or {}
         chunk = payload.get('gen_datasets') or []
@@ -203,7 +316,7 @@ def fetch_all_snapshots(approach_id, config=None):
         if not chunk or added == 0 or (total and len(rows) >= total):
             break
         offset += len(chunk)
-    return _normalize_snapshots(rows)
+    return _normalize_snapshots(rows), None
 
 
 def _normalize_datasets(rows, approach_id, subject_id):
@@ -255,14 +368,17 @@ def discover_resources(
     include_datasets=True,
     include_snapshots=True,
     config=None,
+    dataset_ids=None,
 ):
     """发现 Magic-Fox 项目资源。"""
     parsed = {}
+    url_dataset_id = None
     if url:
         parsed = parse_magic_fox_url(url)
         approach_id = parsed['approach_id']
         if subject_id is None:
             subject_id = parsed.get('subject_id')
+        url_dataset_id = parsed.get('dataset_id')
     if approach_id is None:
         raise ValueError('请提供 Magic-Fox URL 或 approach_id')
 
@@ -273,8 +389,23 @@ def discover_resources(
     pages = build_page_urls(approach_id, subject_id)
     source_url = parsed.get('source_url') or pages['datasets']
 
-    datasets = fetch_all_datasets(approach_id, subject_id, config) if include_datasets else []
-    snapshots = fetch_all_snapshots(approach_id, config) if include_snapshots else []
+    warnings = []
+    datasets = []
+    snapshots = []
+    if include_datasets:
+        datasets, ds_note = fetch_all_datasets(
+            approach_id,
+            subject_id,
+            config=config,
+            candidate_ids=dataset_ids,
+            url_dataset_id=url_dataset_id,
+        )
+        if ds_note:
+            warnings.append(ds_note)
+    if include_snapshots:
+        snapshots, sn_note = fetch_all_snapshots(approach_id, config=config)
+        if sn_note:
+            warnings.append(sn_note)
 
     return {
         'approach_id': approach_id,
@@ -283,6 +414,7 @@ def discover_resources(
         'pages': pages,
         'datasets': datasets,
         'snapshots': snapshots,
+        'warnings': warnings,
         'counts': {
             'datasets': len(datasets),
             'snapshots': len(snapshots),

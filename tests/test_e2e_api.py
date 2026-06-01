@@ -122,6 +122,14 @@ class ForgeE2ETests(unittest.TestCase):
         self.assertTrue(data.get('success'))
         self.assertIn('path_checks', data)
 
+    def test_predict_result_source(self):
+        data = _get('/api/forge/predict-result/source')
+        self.assertTrue(data.get('success'), data.get('error'))
+        self.assertIn('table', data)
+        sql = data.get('default_sql') or ''
+        self.assertIn('predict_result', sql)
+        self.assertNotIn('BETWEEN', sql.upper())
+
 
 if __name__ == '__main__':
     unittest.main()

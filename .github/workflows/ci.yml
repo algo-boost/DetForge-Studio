@@ -1,0 +1,71 @@
+# DefectLoop Studio — 单元测试与前端构建
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装 Python 依赖
+        run: pip install -r requirements.txt
+
+      - name: pytest
+        run: python -m pytest tests/ -q --tb=short
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 前端单测
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+
+      - name: 构建前端
+        working-directory: frontend
+        run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装 Python 依赖
+        run: pip install -r requirements.txt
+
+      - name: 安装 E2E 依赖
+        working-directory: e2e
+        run: npm ci
+
+      - name: 安装 Chromium
+        working-directory: e2e
+        run: npx playwright install chromium
+
+      - name: Playwright E2E
+        working-directory: e2e
+        run: npm test

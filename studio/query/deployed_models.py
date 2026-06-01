@@ -1,7 +1,8 @@
-"""查询 vision_backend 部署/训练模型及路径信息。"""
+"""查询 vision_backend 部署/训练模型及路径信息（本地总控，非 Magic-Fox 线上）。"""
 import json
 import os
 
+from studio.query.approach_context import resolve_local_approach_id
 from studio.query.defect_categories import DETECTION_TRAIN_TYPES, is_detection_model_type
 from studio.query.platform_paths import build_deploy_full_path, resolve_platform_paths
 
@@ -32,7 +33,7 @@ def fetch_deployed_models(client, config=None, approach_id=None, limit=30, drive
 
     paths = resolve_platform_paths(client, config)
     local_file_base = paths.get('local_file_base', '')
-    aid = int(approach_id or config.get('defect_approach_id') or 18)
+    aid = resolve_local_approach_id(config, override=approach_id)
     limit = max(1, min(int(limit or 30), 100))
 
     rows = []
@@ -113,7 +114,7 @@ def fetch_training_models(client, config=None, approach_id=None, limit=30):
     model_store_key 仅为相对路径（如 ckpts/...），库内无法拼出可靠绝对路径。
     """
     config = dict(config or {})
-    aid = int(approach_id or config.get('defect_approach_id') or 18)
+    aid = resolve_local_approach_id(config, override=approach_id)
     limit = max(1, min(int(limit or 30), 100))
     paths = resolve_platform_paths(client, config)
     platform_root = paths.get('platform_root', '')

@@ -70,12 +70,16 @@ def _base_url(cfg):
     return str(cfg.get('magic_fox_api_base') or 'https://www.ai.magic-fox.com/api/v1').strip()
 
 
+def normalize_access_token(token):
+    return str(token or '').replace('\n', '').replace('\r', '').replace(' ', '').strip()
+
+
 def _env_token():
-    return (
+    return normalize_access_token(
         os.environ.get('MAGIC_FOX_TOKEN')
         or os.environ.get('MAGIC_FOX_ACCESS_TOKEN')
         or ''
-    ).strip()
+    )
 
 
 def _env_password_creds():
@@ -151,7 +155,7 @@ def merge_auth_overrides(cfg, overrides=None):
     if pw:
         base['magic_fox_password'] = pw
 
-    tok = str(ov.get('magic_fox_access_token') or '').strip()
+    tok = normalize_access_token(ov.get('magic_fox_access_token'))
     if tok:
         base['magic_fox_access_token'] = tok
 
@@ -177,7 +181,7 @@ def resolve_magic_fox_credentials(config=None):
     mode = str(cfg.get('magic_fox_auth_mode') or 'password').strip().lower()
 
     if mode == 'token':
-        token = str(cfg.get('magic_fox_access_token') or '').strip() or _env_token()
+        token = normalize_access_token(cfg.get('magic_fox_access_token')) or _env_token()
         if token:
             return base_url, token
         raise ValueError(

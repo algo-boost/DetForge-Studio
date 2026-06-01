@@ -107,3 +107,53 @@ CREATE TABLE IF NOT EXISTS detforge.manual_qc (
   KEY idx_category (qc_category),
   KEY idx_archived (archived_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 6. 筛选批次（捞图 → 外部筛选 → 归档 → 训练交接）
+CREATE TABLE IF NOT EXISTS detforge.curation_batch (
+  id                BIGINT AUTO_INCREMENT PRIMARY KEY,
+  batch_code        VARCHAR(64)  NOT NULL,
+  source_task_id    VARCHAR(64)  NOT NULL,
+  strategy_id       VARCHAR(128) DEFAULT NULL,
+  strategy_name     VARCHAR(255) DEFAULT NULL,
+  data_source       VARCHAR(32)  DEFAULT 'detail',
+  status            VARCHAR(32)  NOT NULL DEFAULT 'created',
+  reviewer          VARCHAR(128) DEFAULT NULL,
+  note              TEXT         DEFAULT NULL,
+  total_count       INT          DEFAULT 0,
+  keep_count        INT          DEFAULT 0,
+  reject_count      INT          DEFAULT 0,
+  pending_count     INT          DEFAULT 0,
+  export_dir        TEXT         DEFAULT NULL,
+  archive_dir       TEXT         DEFAULT NULL,
+  handoff_dir       TEXT         DEFAULT NULL,
+  sync_dataset_id   BIGINT       DEFAULT NULL,
+  created_at        DATETIME     DEFAULT CURRENT_TIMESTAMP,
+  exported_at       DATETIME     DEFAULT NULL,
+  imported_at       DATETIME     DEFAULT NULL,
+  archived_at       DATETIME     DEFAULT NULL,
+  handoff_at        DATETIME     DEFAULT NULL,
+  UNIQUE KEY uk_batch_code (batch_code),
+  KEY idx_status (status),
+  KEY idx_task (source_task_id),
+  KEY idx_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS detforge.curation_item (
+  id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+  batch_id            BIGINT       NOT NULL,
+  batch_row_id        VARCHAR(96)  NOT NULL,
+  seq                 INT          DEFAULT 0,
+  img_name            VARCHAR(512) DEFAULT NULL,
+  img_path            TEXT         DEFAULT NULL,
+  product_no          VARCHAR(128) DEFAULT NULL,
+  product_type        VARCHAR(128) DEFAULT NULL,
+  check_status        VARCHAR(32)  DEFAULT NULL,
+  categories_summary  VARCHAR(512) DEFAULT NULL,
+  decision            VARCHAR(16)  DEFAULT 'pending' COMMENT 'keep|reject|pending',
+  reject_reason       VARCHAR(255) DEFAULT NULL,
+  note                TEXT         DEFAULT NULL,
+  source_meta         JSON         DEFAULT NULL,
+  KEY idx_batch (batch_id),
+  KEY idx_decision (batch_id, decision),
+  UNIQUE KEY uk_batch_row (batch_id, batch_row_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

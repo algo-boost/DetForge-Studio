@@ -1,0 +1,9 @@
+{
+  "id": "daily_trawl_default",
+  "name": "日常捞图默认",
+  "description": "Stage1 历史查询默认参数（可按策略扩展变量）",
+  "strategy_hints": ["daily_trawl"],
+  "vars": [],
+  "created_at": "2026-05-30T12:00:00",
+  "updated_at": "2026-05-30T12:00:00"
+}

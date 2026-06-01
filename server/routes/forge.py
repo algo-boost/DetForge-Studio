@@ -103,14 +103,20 @@ def set_model_enabled(model_id):
 
 @forge_bp.route('/api/forge/platform/models/import-all', methods=['POST'])
 def import_all_platform_models():
-    """批量导入当前 approach 的部署/训练模型到注册表。"""
+    """批量导入本地总控部署/训练模型到注册表。"""
     try:
         data = request.json or {}
         approach_id = data.get('approach_id')
-        if not approach_id:
-            return jsonify({'success': False, 'error': '缺少 approach_id'}), 400
+        deploy_approach_id = data.get('deploy_approach_id')
+        train_approach_id = data.get('train_approach_id')
+        if not any([approach_id, deploy_approach_id, train_approach_id]):
+            from server.core import load_config
+            from studio.query.approach_context import resolve_local_approach_id
+            deploy_approach_id = resolve_local_approach_id(load_config())
         result = forge_service.import_all_platform_models(
-            approach_id=int(approach_id),
+            approach_id=int(approach_id) if approach_id else None,
+            deploy_approach_id=int(deploy_approach_id) if deploy_approach_id else None,
+            train_approach_id=int(train_approach_id) if train_approach_id else None,
             include_deploy=bool(data.get('include_deploy', True)),
             include_train=bool(data.get('include_train', True)),
             limit=int(data.get('limit') or 200),
@@ -481,6 +487,7 @@ def manual_qc_list():
             categories=cats,
             defect_types=defects,
             match_status=request.args.get('match_status') or None,
+            training_status=request.args.get('training_status') or None,
         )
         limit = request.args.get('limit', default=200, type=int)
         offset = request.args.get('offset', default=0, type=int)
@@ -561,6 +568,7 @@ def sync_discover():
             subject_id=data.get('subject_id'),
             include_datasets=data.get('include_datasets', True),
             include_snapshots=data.get('include_snapshots', True),
+            dataset_ids=data.get('dataset_ids'),
         )
         return jsonify({'success': True, 'data': result})
     except ValueError as e:
@@ -783,5 +791,343 @@ def sync_dataset_retrace(dataset_id):
         from studio.sync import dataset_provenance
         result = dataset_provenance.retrace_dataset_items(int(dataset_id))
         return jsonify({'success': True, **result})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+# ── 筛选批次（捞图 → 外部筛选 → 归档）────────────────────────────
+
+@forge_bp.route('/api/forge/curation', methods=['GET'])
+def curation_list():
+    try:
+        status = request.args.get('status')
+        limit = min(int(request.args.get('limit', 50)), 200)
+        offset = int(request.args.get('offset', 0))
+        data = forge_db.list_curation_batches(status=status or None, limit=limit, offset=offset)
+        total = forge_db.count_curation_batches(status=status or None)
+        return jsonify({'success': True, 'data': data, 'total': total})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/replay-eval/preview', methods=['GET', 'POST'])
+def replay_eval_preview():
+    try:
+        from studio.curation import replay_eval_service
+        if request.method == 'POST':
+            body = request.json or {}
+            job_id = body.get('job_id')
+        else:
+            body = {
+                'filter_mode': request.args.get('filter_mode'),
+                'min_max_score': request.args.get('min_max_score'),
+                'max_max_score': request.args.get('max_max_score'),
+                'product_type': request.args.get('product_type'),
+                'product_no': request.args.get('product_no'),
+            }
+            job_id = request.args.get('job_id', type=int)
+        if not job_id:
+            return _err('缺少 job_id', 400)
+        data = replay_eval_service.preview(int(job_id), body=body)
+        return jsonify({'success': True, **data})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/replay-eval/create', methods=['POST'])
+def replay_eval_create():
+    try:
+        from studio.curation import replay_eval_service
+        body = request.json or {}
+        job_id = body.get('job_id')
+        if not job_id:
+            return _err('缺少 job_id', 400)
+        result = replay_eval_service.create_replay_batch(
+            int(job_id),
+            body=body,
+            reviewer=body.get('reviewer'),
+            note=body.get('note'),
+            limit=body.get('limit') or 50000,
+        )
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return _err(e, 400)
+    except RuntimeError as e:
+        return _err(e, 503)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/replay-runs/variables', methods=['GET', 'POST'])
+def replay_runs_variables():
+    try:
+        from studio.curation import replay_run_service
+        body = request.json if request.method == 'POST' else {}
+        if request.method == 'GET':
+            body = {
+                'stage1': {'strategy_id': request.args.get('stage1_id')},
+                'stage2': {'strategy_id': request.args.get('stage2_id')},
+                'time_window': {'preset': request.args.get('preset') or 'yesterday'},
+                'predict': {'threshold': request.args.get('threshold', type=float)},
+            }
+        data = replay_run_service.describe_workflow_variables(body)
+        return jsonify({'success': True, **data})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/replay-runs/preview', methods=['POST'])
+def replay_runs_preview():
+    try:
+        from studio.curation import replay_run_service
+        body = request.json or {}
+        data = replay_run_service.preview(body)
+        return jsonify({'success': True, **data})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/replay-runs', methods=['GET'])
+def replay_runs_list():
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
+        data = forge_db.list_replay_runs(limit=limit, offset=offset)
+        return jsonify({'success': True, 'data': data, 'total': len(data)})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/replay-runs', methods=['POST'])
+def replay_runs_create():
+    try:
+        from studio.curation import replay_run_service
+        from flask import current_app
+        body = request.json or {}
+        run = replay_run_service.start_run(body, app=current_app._get_current_object())
+        return jsonify({'success': True, 'data': run})
+    except ValueError as e:
+        return _err(e, 400)
+    except RuntimeError as e:
+        return _err(e, 503)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/replay-runs/<int:run_id>', methods=['GET'])
+def replay_runs_get(run_id):
+    try:
+        from studio.curation import replay_run_service
+        run = replay_run_service.get_run(run_id)
+        return jsonify({'success': True, 'data': run})
+    except ValueError as e:
+        return _err(e, 404)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/curation', methods=['POST'])
+def curation_create():
+    try:
+        from studio.curation import curation_service
+        body = request.json or {}
+        task_id = (body.get('task_id') or '').strip()
+        if not task_id:
+            return _err('缺少 task_id', 400)
+        batch = curation_service.create_from_task(
+            task_id,
+            strategy_id=body.get('strategy_id'),
+            strategy_name=body.get('strategy_name'),
+            reviewer=body.get('reviewer'),
+            note=body.get('note'),
+            data_source=body.get('data_source'),
+            intent_type=body.get('intent_type'),
+        )
+        return jsonify({'success': True, 'data': batch})
+    except ValueError as e:
+        return _err(e, 400)
+    except RuntimeError as e:
+        return _err(e, 503)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/curation/<int:batch_id>', methods=['GET'])
+def curation_get(batch_id):
+    try:
+        batch = forge_db.get_curation_batch(batch_id)
+        if not batch:
+            return _err('批次不存在', 404)
+        return jsonify({'success': True, 'data': batch})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/curation/<int:batch_id>', methods=['DELETE'])
+def curation_delete(batch_id):
+    try:
+        from studio.curation import curation_service
+        result = curation_service.delete_batch(batch_id)
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return _err(e, 404)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/curation/<int:batch_id>/items', methods=['GET'])
+def curation_items(batch_id):
+    try:
+        decision = request.args.get('decision')
+        limit = min(int(request.args.get('limit', 500)), 5000)
+        offset = int(request.args.get('offset', 0))
+        items = forge_db.list_curation_items(batch_id, decision=decision or None, limit=limit, offset=offset)
+        total = forge_db.count_curation_items(batch_id, decision=decision or None)
+        return jsonify({'success': True, 'data': items, 'total': total})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/curation/<int:batch_id>/export', methods=['POST'])
+def curation_export(batch_id):
+    try:
+        from studio.curation import curation_service
+        body = request.json or {}
+        result = curation_service.export_batch(
+            batch_id, include_images=body.get('include_images', True),
+        )
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/curation/<int:batch_id>/import', methods=['POST'])
+def curation_import(batch_id):
+    try:
+        from studio.curation import curation_service
+        file_text = None
+        filename = ''
+        if request.files and 'file' in request.files:
+            f = request.files['file']
+            file_text = f.read().decode('utf-8-sig', errors='replace')
+            filename = f.filename or ''
+        elif request.is_json:
+            body = request.get_json(silent=True) or {}
+            file_text = body.get('coco_json') or body.get('csv_text') or body.get('manifest')
+            filename = body.get('filename') or ('.json' if body.get('coco_json') else '.csv')
+        if not file_text:
+            return _err('请上传 _annotations.coco.json 或提供 coco_json', 400)
+        result = curation_service.import_filter_result(batch_id, file_text, filename=filename)
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/curation/<int:batch_id>/archive', methods=['POST'])
+def curation_archive(batch_id):
+    try:
+        from studio.curation import curation_service
+        body = request.json or {}
+        result = curation_service.archive_batch(
+            batch_id,
+            archive_dir=body.get('archive_dir'),
+            copy_images=body.get('copy_images', True),
+            treat_pending_as=body.get('treat_pending_as', 'reject'),
+        )
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/curation/<int:batch_id>/handoff', methods=['POST'])
+def curation_handoff(batch_id):
+    try:
+        from studio.curation import curation_service
+        body = request.json or {}
+        result = curation_service.generate_handoff(
+            batch_id, handoff_note=body.get('note'), split=body.get('split', 'both'),
+        )
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/curation/<int:batch_id>/handoff-done', methods=['POST'])
+def curation_handoff_done(batch_id):
+    try:
+        from studio.curation import curation_service
+        body = request.json or {}
+        batch = curation_service.mark_handoff_done(
+            batch_id,
+            sync_dataset_id=body.get('sync_dataset_id'),
+            note=body.get('note'),
+        )
+        return jsonify({'success': True, 'data': batch})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/curation/<int:batch_id>/download', methods=['GET'])
+def curation_download(batch_id):
+    """下载出站包 ZIP。"""
+    import shutil
+    try:
+        batch = forge_db.get_curation_batch(batch_id)
+        if not batch:
+            return _err('批次不存在', 404)
+        out_dir = batch.get('export_dir')
+        if not out_dir or not os.path.isdir(out_dir):
+            return _err('请先执行「生成出站包」', 400)
+        zip_base = out_dir.rstrip('/\\')
+        zip_path = shutil.make_archive(zip_base, 'zip', root_dir=out_dir)
+        return send_file(zip_path, as_attachment=True, download_name=f"{batch['batch_code']}.zip")
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/archive-handoff', methods=['GET'])
+def archive_handoff_list():
+    """统一筛选归档视图：批次列表 + 人工质检汇总。"""
+    try:
+        from studio.curation import curation_service
+        limit = min(int(request.args.get('limit', 50)), 200)
+        data = curation_service.list_archive_handoff(limit=limit)
+        return jsonify({'success': True, **data})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/handoff', methods=['POST'])
+def manual_qc_handoff():
+    """人工质检 → 标准训练交接包。"""
+    try:
+        body = request.json or {}
+        result = forge_manual_qc.generate_training_handoff(
+            start=body.get('start'),
+            end=body.get('end'),
+            categories=body.get('categories'),
+            batch_id=body.get('batch_id'),
+            training_status=body.get('training_status', 'pending'),
+            note=body.get('note'),
+        )
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return _err(e, 400)
     except Exception as e:  # noqa: BLE001
         return _err(e)

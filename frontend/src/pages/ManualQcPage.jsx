@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, toast } from '../api/client';
+import SceneHubNav from '../components/SceneHubNav';
 import ManualQcTabBar from '../components/forge/manual-qc/ManualQcTabBar';
 import { MATCH_LABEL, MATCH_PILL_CLASS } from '../components/forge/manual-qc/manualQcUtils';
 import { buildArchiveEntries, toSqlTime } from '../utils/format';
@@ -490,8 +491,8 @@ function QueryExport({ categories, reloadKey }) {
         <label>导出目录<input value={outDir} onChange={(e) => setOutDir(e.target.value)} placeholder="留空 = exports/manual_qc_export/<时间戳>" /></label>
       </div>
       <div className="mqc-action-bar">
-        <button type="button" className="btn btn-sm btn-ghost" onClick={() => query(0)} disabled={busy}>查询</button>
-        <button type="button" className="btn btn-sm btn-primary" onClick={exportDir} disabled={busy}>导出到目录</button>
+        <button type="button" className="btn btn-sm btn-ghost" onClick={() => query(0)} disabled={busy} data-testid="mqc-query-export-query">查询</button>
+        <button type="button" className="btn btn-sm btn-primary" onClick={exportDir} disabled={busy} data-testid="mqc-query-export-dir">导出到目录</button>
         <button type="button" className="btn btn-sm btn-ghost" onClick={exportZip} disabled={busy}>下载 ZIP</button>
         <button type="button" className="btn btn-sm btn-ghost" onClick={exportAsync} disabled={busy}>后台导出</button>
       </div>
@@ -676,6 +677,7 @@ export default function ManualQcPage() {
 
   return (
     <div className="panel active mqc-page">
+      <SceneHubNav variant="query" />
       <header className="mqc-header">
         <div>
           <div className="topbar-title">人工质检</div>

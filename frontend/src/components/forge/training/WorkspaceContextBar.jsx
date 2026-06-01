@@ -25,7 +25,7 @@ export default function WorkspaceContextBar({
           <div>
             <div className="platform-context-name">{project.name}</div>
             <div className="platform-context-meta">
-              {project.approach_id != null ? `Approach ${project.approach_id}` : '未配置 Approach'}
+              {project.approach_id != null ? `MF Approach ${project.approach_id}` : '未配置 MF Approach'}
               <span className="platform-context-dot">·</span>
               {datasetCount} 个数据集
             </div>

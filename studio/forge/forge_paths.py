@@ -81,12 +81,20 @@ def safe_read_path(path):
 
 def allowed_export_roots():
     """允许导出写入的根目录（默认仅 exports/，可经 manual_qc_export_roots 扩展）。"""
-    from server.core import load_config
+    from server.core import load_config, DEFAULT_CONFIG
     cfg = load_config()
     roots = [os.path.join(BASE_DIR, 'exports')]
     for r in (cfg.get('manual_qc_export_roots') or []):
         if str(r).strip():
             roots.append(str(r).strip())
+    arch = str(cfg.get('archive_base_path') or '').strip()
+    if arch:
+        p = arch if os.path.isabs(arch) else os.path.join(BASE_DIR, arch)
+        roots.append(os.path.abspath(os.path.expanduser(p)))
+    handoff = str(cfg.get('handoff_root') or cfg.get('dataset_sync_root') or DEFAULT_CONFIG.get('dataset_sync_root') or '').strip()
+    if handoff:
+        p = handoff if os.path.isabs(handoff) else os.path.join(BASE_DIR, handoff)
+        roots.append(os.path.abspath(os.path.expanduser(p)))
     return roots
 
 

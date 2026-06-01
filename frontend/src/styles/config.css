@@ -1,7 +1,8 @@
 /* Settings page — aligned with platform / mqc / pjobs design system */
 
 .config-page.settings-page {
-  min-height: 100%;
+  flex: 1;
+  min-height: 0;
   background: var(--bg);
   display: flex;
   flex-direction: column;
@@ -152,7 +153,9 @@
 
 /* Settings hub — 系统设置 / 查询策略 / 使用手册 */
 .settings-hub {
-  min-height: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   background: var(--bg);

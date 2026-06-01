@@ -7,6 +7,8 @@ import { useRulesStudio } from '../hooks/useRulesStudio';
 import { TemplateEditor } from '../components/TemplateEditor';
 import { Modal } from '../components/Modal';
 import { mergeFlowForSave, uiFilterMode } from '../lib/flowMerge';
+import StrategyEnvSchemaEditor from '../components/StrategyEnvSchemaEditor';
+import { envDefaultsFromSchema, parseEnvRandomSeed, parseEnvSampleSize } from '../lib/envVars';
 import { FILTER_MODE_LABEL, STRATEGY_EDITOR_TABS, isBuiltinStrategy } from '../components/strategy/strategyUtils';
 
 function StrategyEditorTabBar({ activeTab, onTabChange, hideRules }) {
@@ -93,7 +95,11 @@ export default function AdminPage({ embedded = false }) {
       id, name: '新策略', category: 'custom', filter_mode: 'split',
       sql_template: "SELECT * FROM product_detection_detail_result\nWHERE c_time BETWEEN '${START_TIME}' AND '${END_TIME}'",
       python_code: 'def process_data(df):\n    df = apply_filter_rules(df)\n    return df',
-      flow: { version: 2, nodes: [] }, sample_size: 300,
+      flow: { version: 2, nodes: [] },
+      env_schema: [
+        { key: 'SAMPLE_SIZE', label: '随机采样数量', type: 'number', default: '300' },
+        { key: 'RANDOM_SEED', label: '随机种子', type: 'number', default: '42' },
+      ],
     };
     setEditing({ type: 'strategy', id });
     setDraft(s);
@@ -116,9 +122,12 @@ export default function AdminPage({ embedded = false }) {
   const saveDraft = async () => {
     if (!draft) return;
     const mode = draft.filter_mode === 'flow' ? 'rules' : (draft.filter_mode || 'split');
+    const envDefaults = envDefaultsFromSchema(draft.env_schema);
     const payload = {
       ...draft,
       filter_mode: mode,
+      sample_size: parseEnvSampleSize(envDefaults, draft.sample_size || 300),
+      random_seed: parseEnvRandomSeed(envDefaults, draft.random_seed ?? 42),
       flow: mergeFlowForSave(originalFlowRef.current, studio.flow),
       filter_rules_code: await studio.compile(),
     };
@@ -286,7 +295,7 @@ export default function AdminPage({ embedded = false }) {
                     {isBuiltin && <span className="strategy-pill strategy-pill-muted">内置</span>}
                     <span className="strategy-pill strategy-pill-info">{FILTER_MODE_LABEL[filterMode] || filterMode}</span>
                   </div>
-                  <p className="strategy-editor-sub"><code>{draft.id}</code> · 采样 {draft.sample_size || 300}</p>
+                  <p className="strategy-editor-sub"><code>{draft.id}</code></p>
                 </div>
                 <div className="strategy-editor-toolbar-actions">
                   <button type="button" className="btn btn-sm btn-primary" onClick={saveDraft}>保存</button>
@@ -306,10 +315,9 @@ export default function AdminPage({ embedded = false }) {
                   <div className="strategy-meta-form">
                     <div className="form-row">
                       <div className="form-group"><label>ID</label><input className="form-input" value={draft.id} readOnly={isBuiltin} onChange={(e) => setDraft({ ...draft, id: e.target.value })} /></div>
-                      <div className="form-group"><label>采样数量</label><input type="number" className="form-input" value={draft.sample_size || 300} onChange={(e) => setDraft({ ...draft, sample_size: +e.target.value })} /></div>
+                      <div className="form-group"><label>名称</label><input className="form-input" value={draft.name || ''} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></div>
                     </div>
                     <div className="form-row">
-                      <div className="form-group"><label>名称</label><input className="form-input" value={draft.name || ''} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></div>
                       <div className="form-group"><label>筛选模式</label>
                         <select className="form-select" value={filterMode} onChange={(e) => setDraft({ ...draft, filter_mode: e.target.value })}>
                           <option value="split">规则 + 代码</option>
@@ -317,12 +325,16 @@ export default function AdminPage({ embedded = false }) {
                           <option value="code">仅代码</option>
                         </select>
                       </div>
+                      <div className="form-group"><label>分类</label><input className="form-input" value={draft.category || ''} onChange={(e) => setDraft({ ...draft, category: e.target.value })} /></div>
                     </div>
                     <div className="form-row">
-                      <div className="form-group"><label>分类</label><input className="form-input" value={draft.category || ''} onChange={(e) => setDraft({ ...draft, category: e.target.value })} /></div>
-                      <div className="form-group"><label>描述</label><input className="form-input" value={draft.description || ''} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></div>
+                      <div className="form-group form-group-wide"><label>描述</label><input className="form-input" value={draft.description || ''} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></div>
                     </div>
+                    <p className="muted strategy-panel-hint">采样数量、随机种子等业务参数请在「可调参数」页配置（如 SAMPLE_SIZE、RANDOM_SEED）。</p>
                   </div>
+                )}
+                {editorTab === 'params' && (
+                  <StrategyEnvSchemaEditor draft={draft} onChange={setDraft} />
                 )}
                 {editorTab === 'sql' && (
                   <div className="strategy-code-panel">

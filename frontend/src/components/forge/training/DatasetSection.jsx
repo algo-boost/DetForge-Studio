@@ -36,7 +36,7 @@ function ProjectForm({ project, onSaved, onCancel }) {
       <div className="forge-card-title">{project?.id ? '编辑项目' : '新建项目'}</div>
       <div className="forge-form-grid">
         <label>项目名称<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
-        <label>Approach ID<input value={form.approach_id} onChange={(e) => setForm({ ...form, approach_id: e.target.value })} placeholder="如 598" /></label>
+        <label>Magic-Fox Approach ID<input value={form.approach_id} onChange={(e) => setForm({ ...form, approach_id: e.target.value })} placeholder="如 598（线上训练/数据集）" /></label>
         <label className="forge-span2">训练页 URL<input value={form.training_page_url} onChange={(e) => setForm({ ...form, training_page_url: e.target.value })} placeholder="#/training?approachId=…" /></label>
         <label className="forge-span2">本地根目录（可选）<input value={form.local_root} onChange={(e) => setForm({ ...form, local_root: e.target.value })} placeholder="留空则用 config.dataset_sync_root" /></label>
         <label className="forge-span2">备注<input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></label>

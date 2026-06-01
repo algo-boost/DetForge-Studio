@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, toast, openSampleGalleryWhenReady } from '../api/client';
-import { PAGE_SIZE, PREVIEW_LIMIT } from '../lib/constants';
+import { PAGE_SIZE, PREVIEW_LIMIT, LARGE_RESULT_THRESHOLD } from '../lib/constants';
 import {
   DEFAULT_RESULT_FILTER,
   collectFilterOptions,
@@ -35,6 +35,7 @@ function writeBool(key, val) {
 
 export function ResultsPanel({
   visible, rawData, taskId, executionDetail, onArchive, dataSource = 'detail',
+  strategyId = '', strategyName = '',
 }) {
   const navigate = useNavigate();
   const [filtered, setFiltered] = useState([]);
@@ -153,6 +154,29 @@ export function ResultsPanel({
     navigate(`/online-predict?${params.toString()}`);
   };
 
+  const [curationBusy, setCurationBusy] = useState(false);
+  const createCurationBatch = async () => {
+    if (!taskId) {
+      toast('无查询任务', 'error');
+      return;
+    }
+    setCurationBusy(true);
+    try {
+      const r = await api.forgeCurationCreate({
+        task_id: taskId,
+        strategy_id: strategyId || undefined,
+        strategy_name: strategyName || undefined,
+        data_source: dataSource,
+      });
+      toast(`已创建筛选批次 ${r.data?.batch_code || ''}`, 'success');
+      navigate(`/curation?id=${r.data?.id}`);
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setCurationBusy(false);
+    }
+  };
+
   const openInViewer = async () => {
     if (!taskId) {
       toast('无查询任务，无法打开样本图库', 'error');
@@ -168,7 +192,7 @@ export function ResultsPanel({
         task_id: taskId,
         selected_indices: indices,
         dataset_name: executionDetail?.summary || `query-${taskId}`,
-      }));
+      }), '查询结果');
       toast('样本图库已在新窗口打开', 'success');
     } catch (e) {
       toast(e.message, 'error');
@@ -294,6 +318,9 @@ export function ResultsPanel({
               <span className="result-summary is-clickable" onClick={() => setDetailOpen(true)} title="点击查看完整执行详情">{summaryText}</span>
             )}
             {inPreview && <span className="result-preview-hint">预览 {PREVIEW_LIMIT} 张</span>}
+            {filtered.length >= LARGE_RESULT_THRESHOLD && (
+              <span className="result-large-hint">共 {filtered.length} 条，建议用筛选缩小范围或使用详情视图</span>
+            )}
             {selected.size > 0 && <span className="result-selected">已选 <strong>{selected.size}</strong></span>}
           </div>
           <div className="toolbar-right">
@@ -309,17 +336,28 @@ export function ResultsPanel({
             <button type="button" className="btn btn-sm btn-primary" disabled={viewerOpening} onClick={openInViewer} title="在新窗口打开样本图库，浏览、筛选与标注">{viewerOpening ? '打开中…' : '打开样本图库'}</button>
             <button
               type="button"
+              className="btn btn-sm btn-ghost"
+              disabled={curationBusy || !taskId}
+              onClick={createCurationBatch}
+              data-testid="results-create-curation"
+              title="创建筛选批次，导出 COCO 给外部筛选后回传"
+            >
+              {curationBusy ? '创建中…' : '归档此批'}
+            </button>
+            <button
+              type="button"
               className="btn btn-sm btn-primary"
               onClick={goPredict}
               title={selected.size ? `对选中的 ${selected.size} 条发起预测` : '对全部查询结果发起预测'}
+              data-testid="results-predict"
             >
               预测{selected.size > 0 ? ` (${selected.size})` : ''}
             </button>
             <div className="export-dropdown">
-              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setExportOpen(!exportOpen)}>导出 ▾</button>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setExportOpen(!exportOpen)} data-testid="results-export-toggle">导出 ▾</button>
               {exportOpen && (
                 <div className="export-menu">
-                  <button type="button" onClick={() => exportCoco(selected.size ? [...selected] : null)}>下载 COCO (ZIP)</button>
+                  <button type="button" data-testid="results-export-coco" onClick={() => exportCoco(selected.size ? [...selected] : null)}>下载 COCO (ZIP)</button>
                   <button type="button" onClick={() => { window.open(api.exportCsvUrl(taskId), '_blank'); setExportOpen(false); }}>下载 CSV</button>
                   <div className="export-menu-divider" />
                   <button type="button" onClick={() => { setArchiveOpen(true); setExportOpen(false); }}>归档 COCO 到目录…</button>

@@ -67,11 +67,17 @@ function ManualRegister({ onDone }) {
   );
 }
 
-function EmptyTable({ loading, text, action }) {
+function EmptyTable({ loading, text, action, predictLink = false }) {
   return (
     <div className="models-empty-state">
       <p>{loading ? '加载中…' : text}</p>
       {action}
+      {predictLink && !loading && (
+        <div className="models-empty-actions">
+          <Link className="btn btn-sm btn-primary" to="/online-predict">去发起预测</Link>
+          <Link className="btn btn-sm btn-ghost" to="/jobs">查看预测任务</Link>
+        </div>
+      )}
     </div>
   );
 }
@@ -225,8 +231,8 @@ export default function ModelsPage() {
     platform: projects.length
       ? '该平台项目尚无缓存模型。点击「从 Magic-Fox 同步」拉取训练页列表。'
       : '请先在训练平台创建并同步项目，再查看线上训练模型。',
-    deploy: '无部署模型数据，请检查数据库连接与 Approach 配置。',
-    train: '无训练配置数据，请检查数据库连接与 Approach 配置。',
+    deploy: '无部署模型数据，请检查数据库连接与 设置 → 检测项目 中的 defect_approach_id。',
+    train: '无本地训练配置数据，请检查数据库连接与 defect_approach_id；Magic-Fox 训练模型请用「平台训练」Tab。',
   };
 
   const selectedProject = projects.find((p) => String(p.id) === String(projectId));
@@ -238,6 +244,7 @@ export default function ModelsPage() {
           <EmptyTable
             loading={loading}
             text={tabEmptyText.platform}
+            predictLink
             action={<Link to="/training" className="btn btn-sm btn-primary">前往训练平台</Link>}
           />
         );
@@ -282,7 +289,7 @@ export default function ModelsPage() {
     }
 
     const rows = tab === 'deploy' ? deploy : tab === 'train' ? train : registry;
-    if (!rows.length) return <EmptyTable loading={loading} text={tabEmptyText[tab]} />;
+    if (!rows.length) return <EmptyTable loading={loading} text={tabEmptyText[tab]} predictLink={tab === 'registry'} />;
 
     return (
       <div className="models-table-wrap">
@@ -352,7 +359,7 @@ export default function ModelsPage() {
   const tableDesc = {
     registry: '本地权重注册表，用于本地加载预测',
     platform: '从 Magic-Fox 训练页同步的模型列表，预测走线上 model_validation API（无需导入权重）',
-    deploy: '从 vision_backend 读取部署权重，可导入注册表做本地预测',
+    deploy: '从 vision_backend.modeldeploy 读取本地总控部署权重（defect_approach_id），可导入注册表做本地预测',
     train: '从 modeltrainconfig 读取训练权重参考路径，可导入注册表',
   }[tab];
 
@@ -419,7 +426,7 @@ export default function ModelsPage() {
                 <select value={projectId} onChange={(e) => setProjectId(e.target.value)} disabled={!projects.length}>
                   {!projects.length && <option value="">暂无项目 — 请先在训练平台创建</option>}
                   {projects.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}（approach {p.approach_id}）</option>
+                    <option key={p.id} value={p.id}>{p.name}（MF approach {p.approach_id}）</option>
                   ))}
                 </select>
               </label>

@@ -17,7 +17,14 @@ from studio.flow.flow_schema import prepare_strategy, validate_flow, FLOW_IR_VER
 from studio.flow.flow_registry import build_node_registry
 from studio.query.deployed_models import fetch_deployed_models, fetch_training_models
 from studio.query.pipeline_rules import fetch_pipelines, fetch_pipeline_filter_rules, fetch_pipeline_nodes
-from studio.query.platform_paths import sync_img_base_path
+from studio.query.strategy_loader import (
+    STRATEGIES_DIR,
+    TEMPLATES_DIR,
+    get_all_strategies as _get_all_strategies,
+    get_all_templates as _get_all_templates,
+)
+from studio.query.strategy_executor import execute_strategy_ref
+from studio.query.env_context import build_stage_context, describe_strategy_variables, find_unresolved_template_vars, format_unresolved_vars_error, substitute_template
 from studio.forge import forge_paths
 from studio.brand import PRODUCT_NAME, PRODUCT_TAGLINE
 
@@ -225,8 +232,6 @@ def query_database():
         sql_template = data.get('sql', '')
         start_time = data.get('start_time', '')
         end_time = data.get('end_time', '')
-        sample_size = parse_sample_size(data.get('sample_size'))
-        random_seed = parse_random_seed(data.get('random_seed'))
         templates = _get_all_templates()
         flow = data.get('flow')
         filter_mode = data.get('filter_mode', '')
@@ -238,16 +243,32 @@ def query_database():
         
         if not sql_template:
             return jsonify({'success': False, 'error': 'SQL 查询语句不能为空'}), 400
-        
-        # 替换 SQL 中的时间变量
-        sql = sql_template.replace('${START_TIME}', start_time).replace('${END_TIME}', end_time)
+
+        env_ctx = build_stage_context(
+            data,
+            start_time=start_time,
+            end_time=end_time,
+            job_id=data.get('predict_job_id') or data.get('job_id'),
+        )
+        sample_size = sample_size_from_env(env_ctx)
+        random_seed = parse_random_seed(env_ctx.get('RANDOM_SEED'))
+        sql = substitute_template(sql_template, env_ctx)
+        unresolved = find_unresolved_template_vars(sql)
+        if unresolved:
+            return jsonify({
+                'success': False,
+                'error': format_unresolved_vars_error(unresolved),
+                'unresolved_vars': unresolved,
+            }), 400
         
         # 执行查询
         client = get_db_client()
         df = client.query(sql)
         
         if df is None:
-            return jsonify({'success': False, 'error': '查询失败，请检查 SQL 语句和数据库连接'}), 500
+            detail = getattr(client, 'last_query_error', None) or ''
+            msg = f'查询失败：{detail}' if detail else '查询失败，请检查 SQL 语句和数据库连接'
+            return jsonify({'success': False, 'error': msg}), 500
         
         if df.empty:
             return jsonify({'success': True, 'data': [], 'count': 0, 'message': '查询结果为空'})
@@ -260,7 +281,7 @@ def query_database():
         if python_code and python_code.strip():
             try:
                 df, console_output, execution_time = execute_python_filter(
-                    df, python_code, capture_output=True
+                    df, python_code, capture_output=True, env_context=env_ctx,
                 )
             except Exception as e:
                 return jsonify({
@@ -279,7 +300,7 @@ def query_database():
 
         rows_before_sample = len(df)
         flow_payload = flow if flow and flow.get('nodes') else None
-        skip_post_sample = has_inline_sampling(python_code, flow_payload)
+        skip_post_sample = has_inline_sampling(python_code, flow_payload) or sample_size is None
         if not skip_post_sample:
             df = apply_random_sample(df, sample_size, random_seed)
 
@@ -340,17 +361,33 @@ def preview_filter():
         sql_template = data.get('sql', '')
         start_time = data.get('start_time', '')
         end_time = data.get('end_time', '')
-        sample_size = parse_sample_size(data.get('sample_size'))
         preview_mode = data.get('preview_mode', 'rules')  # rules | full
 
         if not sql_template:
             return jsonify({'success': False, 'error': 'SQL 查询语句不能为空'}), 400
 
-        sql = sql_template.replace('${START_TIME}', start_time).replace('${END_TIME}', end_time)
+        env_ctx = build_stage_context(
+            data,
+            start_time=start_time,
+            end_time=end_time,
+            job_id=data.get('predict_job_id') or data.get('job_id'),
+        )
+        sample_size = sample_size_from_env(env_ctx)
+        random_seed = parse_random_seed(env_ctx.get('RANDOM_SEED'))
+        sql = substitute_template(sql_template, env_ctx)
+        unresolved = find_unresolved_template_vars(sql)
+        if unresolved:
+            return jsonify({
+                'success': False,
+                'error': format_unresolved_vars_error(unresolved),
+                'unresolved_vars': unresolved,
+            }), 400
         client = get_db_client()
         df = client.query(sql)
         if df is None:
-            return jsonify({'success': False, 'error': '查询失败'}), 500
+            detail = getattr(client, 'last_query_error', None) or ''
+            msg = f'查询失败：{detail}' if detail else '查询失败'
+            return jsonify({'success': False, 'error': msg}), 500
 
         sql_rows = len(df)
         if df.empty:
@@ -374,7 +411,9 @@ def preview_filter():
                 return jsonify({'success': False, 'error': str(e)}), 400
             if python_code:
                 try:
-                    df, _, execution_time = execute_python_filter(df, python_code, capture_output=True)
+                    df, _, execution_time = execute_python_filter(
+                        df, python_code, capture_output=True, env_context=env_ctx,
+                    )
                     filter_rows = len(df)
                 except Exception as e:
                     return jsonify({
@@ -404,8 +443,10 @@ def preview_filter():
                 python_for_check = _resolve_query_python(data, templates) or ''
             except ValueError:
                 python_for_check = (data.get('python_code') or '').strip()
-        skip_post_sample = has_inline_sampling(python_for_check, flow_payload)
+        skip_post_sample = has_inline_sampling(python_for_check, flow_payload) or sample_size is None
         if skip_post_sample and preview_mode == 'full':
+            after_sample = filter_rows
+        elif sample_size is None:
             after_sample = filter_rows
         else:
             after_sample = min(sample_size, filter_rows) if filter_rows else 0
@@ -797,9 +838,6 @@ def get_coco_data(task_id):
 
 # ── 策略与模板管理 ──────────────────────────────────────────────
 
-STRATEGIES_DIR = os.path.join(BASE_DIR, 'strategies')
-TEMPLATES_DIR = os.path.join(STRATEGIES_DIR, 'templates')
-
 def _load_json_dir(directory):
     """加载目录下所有 JSON 文件，返回 {id: data} 字典"""
     items = {}
@@ -837,44 +875,6 @@ def _delete_json(directory, item_id):
                 except Exception:
                     pass
     return False
-
-def _load_templates_raw():
-    return _load_json_dir(TEMPLATES_DIR)
-
-
-def _get_all_templates():
-    raw = _load_templates_raw()
-    bundle = get_defect_categories_bundle()
-    return apply_categories_to_templates(raw, bundle.get('categories'))
-
-def _get_all_strategies():
-    items = {}
-    if not os.path.isdir(STRATEGIES_DIR):
-        return items
-    for entry in os.listdir(STRATEGIES_DIR):
-        epath = os.path.join(STRATEGIES_DIR, entry)
-        if os.path.isdir(epath) and entry == 'templates':
-            continue  # 跳过模板目录
-        if os.path.isdir(epath):
-            for root, _, files in os.walk(epath):
-                for fname in files:
-                    if fname.endswith('.json'):
-                        try:
-                            with open(os.path.join(root, fname), 'r', encoding='utf-8') as f:
-                                data = json.load(f)
-                                if 'id' in data:
-                                    items[data['id']] = data
-                        except Exception as e:
-                            print(f"⚠️ 加载策略失败: {fname}: {e}")
-        elif entry.endswith('.json'):
-            try:
-                with open(epath, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    if 'id' in data:
-                        items[data['id']] = data
-            except Exception as e:
-                print(f"⚠️ 加载策略失败: {entry}: {e}")
-    return items
 
 # ── 模板 API ────────────────────────────────────────────────────
 
@@ -933,6 +933,84 @@ def get_strategy(strategy_id):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@api_bp.route('/api/strategies/<strategy_id>/variables', methods=['GET'])
+def get_strategy_variables(strategy_id):
+    """返回策略可用环境变量（系统 + 自定义 schema / 模板推断）。"""
+    try:
+        strategies = _get_all_strategies()
+        if strategy_id not in strategies:
+            return jsonify({'success': False, 'error': '策略不存在'}), 404
+        templates = _get_all_templates()
+        strategy = normalize_strategy(dict(strategies[strategy_id]), templates)
+        return jsonify({'success': True, 'data': describe_strategy_variables(strategy)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ── 环境变量模版 ────────────────────────────────────────────────
+
+@api_bp.route('/api/env-profiles', methods=['GET'])
+def list_env_profiles():
+    try:
+        from studio.query import env_profile_store
+        return jsonify({'success': True, 'data': env_profile_store.list_profiles()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@api_bp.route('/api/env-profiles/<profile_id>', methods=['GET'])
+def get_env_profile(profile_id):
+    try:
+        from studio.query import env_profile_store
+        row = env_profile_store.get_profile(profile_id)
+        if not row:
+            return jsonify({'success': False, 'error': '模版不存在'}), 404
+        return jsonify({'success': True, 'data': row})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@api_bp.route('/api/env-profiles', methods=['POST'])
+def save_env_profile():
+    try:
+        from studio.query import env_profile_store
+        data = request.json or {}
+        profile = env_profile_store.save_profile(data)
+        return jsonify({'success': True, 'data': profile})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@api_bp.route('/api/env-profiles/<profile_id>', methods=['DELETE'])
+def delete_env_profile(profile_id):
+    try:
+        from studio.query import env_profile_store
+        if env_profile_store.delete_profile(profile_id):
+            return jsonify({'success': True})
+        return jsonify({'success': False, 'error': '模版不存在'}), 404
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@api_bp.route('/api/env-profiles/suggest', methods=['POST'])
+def suggest_env_profile_vars():
+    try:
+        from studio.query import env_profile_store
+        body = request.json or {}
+        strategy_ids = body.get('strategy_ids') or []
+        if body.get('strategy_id'):
+            strategy_ids = list({*strategy_ids, body['strategy_id']})
+        rows = env_profile_store.suggest_vars(strategy_ids)
+        return jsonify({'success': True, 'data': rows})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @api_bp.route('/api/strategies', methods=['POST'])
 def save_strategy():
     try:
@@ -979,89 +1057,55 @@ def delete_strategy(strategy_id):
 @api_bp.route('/api/strategies/execute', methods=['POST'])
 def execute_strategy():
     try:
-        data = request.json
+        data = request.json or {}
         strategy_id = data.get('strategy_id', '')
-        start_time = data.get('start_time', '')
-        end_time = data.get('end_time', '')
 
-        strategies = _get_all_strategies()
-        strategy = strategies.get(strategy_id)
-        if not strategy:
-            return jsonify({'success': False, 'error': '策略不存在'}), 404
-
-        all_templates = _get_all_templates()
-        strategy = normalize_strategy(dict(strategy), all_templates)
-
-        sql = strategy.get('sql_template', '')
-        if not sql:
-            return jsonify({'success': False, 'error': '策略无 SQL 模板'}), 400
-
-        sql = sql.replace('${START_TIME}', start_time).replace('${END_TIME}', end_time)
-
-        client = get_db_client()
-        df = client.query(sql)
-        if df is None:
-            return jsonify({'success': False, 'error': '数据库查询失败'}), 500
-        if df.empty:
-            return jsonify({'success': True, 'data': [], 'count': 0})
-
-        input_rows, input_cols = len(df), len(df.columns)
-        python_code = ''
-        console_output = ''
-        execution_time = 0.0
-        try:
-            python_code, exec_mode = resolve_strategy_python(strategy, all_templates)
-            if python_code:
-                df, console_output, execution_time = execute_python_filter(
-                    df, python_code, capture_output=True,
-                )
-        except Exception as e:
-            return jsonify({'success': False, 'error': str(e)}), 500
-
-        if df.empty:
-            return jsonify({'success': True, 'data': [], 'count': 0})
-
-        sample_size = parse_sample_size(
-            data.get('sample_size', strategy.get('sample_size'))
+        env_ctx = build_stage_context(
+            data,
+            start_time=data.get('start_time', ''),
+            end_time=data.get('end_time', ''),
+            sample_size=data.get('sample_size'),
+            random_seed=data.get('random_seed'),
         )
-        random_seed = parse_random_seed(data.get('random_seed'))
-        rows_before_sample = len(df)
-        skip_post_sample = has_inline_sampling(python_code, strategy.get('flow'))
-        if not skip_post_sample:
-            df = apply_random_sample(df, sample_size, random_seed)
+        if data.get('predict_job_id') or data.get('job_id'):
+            jid = data.get('predict_job_id') or data.get('job_id')
+            env_ctx['JOB_ID'] = str(int(jid))
+            env_ctx['PREDICT_JOB_ID'] = str(int(jid))
+            env_ctx['DATA_SOURCE'] = 'predict_result'
 
-        result_data, task_id = build_query_task(df, {
-            'query_sql': strategy.get('sql_template', ''),
-            'query_sql_executed': sql,
-            'python_code': python_code if python_code else strategy.get('python_code', ''),
-            'flow': strategy.get('flow'),
-            'filter_mode': strategy.get('filter_mode', ''),
-            'start_time': start_time,
-            'end_time': end_time,
-            'strategy_id': strategy_id,
-            'strategy_name': strategy.get('name', ''),
-            'sample_size': sample_size,
-            'random_seed': random_seed,
-            'rows_before_sample': rows_before_sample,
-            'query_mode': exec_mode if python_code else 'strategy',
-        })
+        stage_spec = {'strategy_id': strategy_id}
+        if data.get('strategy_snapshot'):
+            stage_spec = {'snapshot': data['strategy_snapshot']}
+
+        result = execute_strategy_ref(
+            stage_spec,
+            context=env_ctx,
+            sample_size=data.get('sample_size'),
+            random_seed=data.get('random_seed'),
+            data_source=data.get('data_source'),
+            build_task=True,
+        )
+        if result is None:
+            return jsonify({'success': False, 'error': '策略不存在'}), 404
 
         return jsonify({
             'success': True,
-            'data': result_data,
-            'count': len(result_data),
-            'task_id': task_id,
-            'sample_size': sample_size,
-            'random_seed': random_seed,
-            'rows_before_sample': rows_before_sample,
-            'post_sample_skipped': skip_post_sample,
-            'input_rows': input_rows,
-            'input_cols': input_cols,
-            'output_rows': rows_before_sample,
-            'filter_mode': strategy.get('filter_mode', ''),
-            'console_output': console_output or None,
-            'execution_time': execution_time or None,
+            'data': result.get('data', []),
+            'count': result.get('count', 0),
+            'task_id': result.get('task_id'),
+            'sample_size': result.get('sample_size'),
+            'random_seed': result.get('random_seed'),
+            'rows_before_sample': result.get('rows_before_sample'),
+            'post_sample_skipped': result.get('post_sample_skipped'),
+            'input_rows': result.get('input_rows'),
+            'input_cols': result.get('input_cols'),
+            'output_rows': result.get('rows_before_sample'),
+            'filter_mode': result.get('filter_mode', ''),
+            'console_output': result.get('console_output'),
+            'execution_time': result.get('execution_time'),
         })
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 404
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

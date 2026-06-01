@@ -1,6 +1,6 @@
 export const SETTINGS_TABS = [
   { id: 'connection', label: '数据库', desc: 'MySQL 连接' },
-  { id: 'project', label: '检测项目', desc: 'Approach 与类别' },
+  { id: 'project', label: '检测项目', desc: '本地总控 Approach 与类别' },
   { id: 'labels', label: '类别映射', desc: 'id2name / COCO' },
   { id: 'paths', label: '图片路径', desc: '解析与归档' },
   { id: 'viz', label: '样本图库', desc: 'COCOVisualizer' },

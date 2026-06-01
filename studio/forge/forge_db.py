@@ -149,11 +149,82 @@ def schema_statements(db=None):
           position VARCHAR(128) DEFAULT NULL,
           match_status VARCHAR(16) DEFAULT 'matched',
           note TEXT DEFAULT NULL,
+          disposition VARCHAR(32) DEFAULT NULL,
+          training_status VARCHAR(32) DEFAULT 'pending' COMMENT 'pending|handoff_ready|closed',
+          handoff_dir TEXT DEFAULT NULL,
           archived_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           KEY idx_sn (product_no),
           KEY idx_batch (batch_id),
           KEY idx_category (qc_category),
-          KEY idx_archived (archived_at)
+          KEY idx_archived (archived_at),
+          KEY idx_training (training_status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+        f"""CREATE TABLE IF NOT EXISTS `{db}`.`curation_batch` (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          batch_code VARCHAR(64) NOT NULL,
+          source_task_id VARCHAR(64) NOT NULL,
+          strategy_id VARCHAR(128) DEFAULT NULL,
+          strategy_name VARCHAR(255) DEFAULT NULL,
+          data_source VARCHAR(32) DEFAULT 'detail',
+          intent_type VARCHAR(32) DEFAULT 'daily_ng' COMMENT 'daily_ng|replay_eval|customer_qc',
+          status VARCHAR(32) NOT NULL DEFAULT 'created',
+          reviewer VARCHAR(128) DEFAULT NULL,
+          note TEXT DEFAULT NULL,
+          total_count INT DEFAULT 0,
+          keep_count INT DEFAULT 0,
+          reject_count INT DEFAULT 0,
+          pending_count INT DEFAULT 0,
+          export_dir TEXT DEFAULT NULL,
+          archive_dir TEXT DEFAULT NULL,
+          handoff_dir TEXT DEFAULT NULL,
+          sync_dataset_id BIGINT DEFAULT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          exported_at DATETIME DEFAULT NULL,
+          imported_at DATETIME DEFAULT NULL,
+          archived_at DATETIME DEFAULT NULL,
+          handoff_at DATETIME DEFAULT NULL,
+          UNIQUE KEY uk_batch_code (batch_code),
+          KEY idx_status (status),
+          KEY idx_task (source_task_id),
+          KEY idx_created (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+        f"""CREATE TABLE IF NOT EXISTS `{db}`.`curation_item` (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          batch_id BIGINT NOT NULL,
+          batch_row_id VARCHAR(96) NOT NULL,
+          seq INT DEFAULT 0,
+          img_name VARCHAR(512) DEFAULT NULL,
+          img_path TEXT DEFAULT NULL,
+          product_no VARCHAR(128) DEFAULT NULL,
+          product_type VARCHAR(128) DEFAULT NULL,
+          check_status VARCHAR(32) DEFAULT NULL,
+          categories_summary VARCHAR(512) DEFAULT NULL,
+          decision VARCHAR(16) DEFAULT 'pending' COMMENT 'keep|reject|pending',
+          disposition VARCHAR(32) DEFAULT NULL COMMENT 'ng_confirmed|need_label|fp_model|fn_missed|…',
+          need_platform_label TINYINT DEFAULT 0,
+          reject_reason VARCHAR(255) DEFAULT NULL,
+          note TEXT DEFAULT NULL,
+          source_meta JSON DEFAULT NULL,
+          KEY idx_batch (batch_id),
+          KEY idx_decision (batch_id, decision),
+          KEY idx_disposition (batch_id, disposition),
+          UNIQUE KEY uk_batch_row (batch_id, batch_row_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+        f"""CREATE TABLE IF NOT EXISTS `{db}`.`replay_run` (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          status VARCHAR(32) NOT NULL DEFAULT 'pending',
+          stage VARCHAR(32) DEFAULT NULL,
+          spec_json JSON NOT NULL,
+          stage1_task_id VARCHAR(64) DEFAULT NULL,
+          predict_job_id BIGINT DEFAULT NULL,
+          stage2_task_id VARCHAR(64) DEFAULT NULL,
+          curation_batch_id BIGINT DEFAULT NULL,
+          result_json JSON DEFAULT NULL,
+          error TEXT DEFAULT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          KEY idx_status (status),
+          KEY idx_created (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
         f"""CREATE TABLE IF NOT EXISTS `{db}`.`sync_project` (
           id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -239,6 +310,12 @@ def schema_statements(db=None):
 _EXTRA_COLUMNS = [
     ('manual_qc', 'defect_type', "ADD COLUMN defect_type VARCHAR(128) DEFAULT NULL"),
     ('manual_qc', 'qc_category', "ADD COLUMN qc_category VARCHAR(64) DEFAULT NULL"),
+    ('manual_qc', 'disposition', "ADD COLUMN disposition VARCHAR(32) DEFAULT NULL"),
+    ('manual_qc', 'training_status', "ADD COLUMN training_status VARCHAR(32) DEFAULT 'pending'"),
+    ('manual_qc', 'handoff_dir', "ADD COLUMN handoff_dir TEXT DEFAULT NULL"),
+    ('curation_batch', 'intent_type', "ADD COLUMN intent_type VARCHAR(32) DEFAULT 'daily_ng'"),
+    ('curation_item', 'disposition', "ADD COLUMN disposition VARCHAR(32) DEFAULT NULL"),
+    ('curation_item', 'need_platform_label', "ADD COLUMN need_platform_label TINYINT DEFAULT 0"),
     ('job_item', 'next_retry_at', "ADD COLUMN next_retry_at DATETIME DEFAULT NULL"),
     ('dataset_item', 'source_detail_id', "ADD COLUMN source_detail_id BIGINT DEFAULT NULL"),
     ('dataset_item', 'product_no', "ADD COLUMN product_no VARCHAR(128) DEFAULT NULL"),
@@ -251,6 +328,8 @@ _EXTRA_COLUMNS = [
 
 _EXTRA_INDEXES = [
     ('manual_qc', 'uk_sn_customer_img', 'ADD UNIQUE KEY uk_sn_customer_img (product_no, customer_img_path(255))'),
+    ('manual_qc', 'idx_training', 'ADD KEY idx_training (training_status)'),
+    ('curation_item', 'idx_disposition', 'ADD KEY idx_disposition (batch_id, disposition)'),
     ('dataset_item', 'idx_item_sn', 'ADD KEY idx_item_sn (product_no)'),
     ('dataset_item', 'idx_item_type', 'ADD KEY idx_item_type (product_type)'),
     ('dataset_item', 'idx_item_time', 'ADD KEY idx_item_time (platform_c_time)'),
@@ -329,6 +408,7 @@ def schema_ready(client=None, config=None):
     have = {str(r.get('table_name') or r.get('TABLE_NAME') or '').lower() for r in rows}
     need = {
         'model_registry', 'job', 'job_item', 'predict_result', 'manual_qc',
+        'curation_batch', 'curation_item', 'replay_run',
         'sync_project', 'sync_dataset', 'dataset_item', 'platform_train_model',
     }
     return need.issubset(have)
@@ -693,6 +773,11 @@ def _predict_result_where(job_id, filters=None, result_ids=None):
         args.append(int(f['min_box_count']))
     if f.get('only_with_boxes'):
         where.append('box_count > 0')
+    if f.get('zero_boxes_only'):
+        where.append('box_count = 0')
+    if f.get('product_type'):
+        where.append('product_type LIKE %s')
+        args.append(f'%{f["product_type"]}%')
     if f.get('min_max_score') is not None:
         where.append('max_score IS NOT NULL AND max_score >= %s')
         args.append(float(f['min_max_score']))
@@ -762,8 +847,8 @@ def insert_manual_qc(row):
         INSERT INTO {_t('manual_qc')}
             (batch_id, product_no, customer_img_path, matched_detail_id, matched_img_path,
              matched_object_key, defect_info, defect_type, qc_category,
-             product_type, position, match_status, note)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+             product_type, position, match_status, note, disposition, training_status)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
     """
     args = (
         (row.get('batch_id') or None), str(row.get('product_no') or '').strip(),
@@ -772,7 +857,8 @@ def insert_manual_qc(row):
         _json_dump(row.get('defect_info')), (row.get('defect_type') or None),
         (row.get('qc_category') or None), (row.get('product_type') or None),
         (row.get('position') or None), str(row.get('match_status') or 'matched'),
-        (row.get('note') or None),
+        (row.get('note') or None), (row.get('disposition') or None),
+        str(row.get('training_status') or 'pending'),
     )
     return _client().execute_returning_id(sql, args)
 
@@ -782,7 +868,8 @@ def insert_manual_qc_batch(rows):
 
 
 _MANUAL_QC_EDITABLE = ('defect_type', 'qc_category', 'note', 'product_no',
-                       'customer_img_path', 'match_status')
+                       'customer_img_path', 'match_status', 'disposition',
+                       'training_status', 'handoff_dir')
 
 
 def get_manual_qc(qc_id):
@@ -827,8 +914,8 @@ def referenced_customer_imgs():
 
 def list_manual_qc(batch_id=None, product_no=None, limit=200, offset=0,
                    start=None, end=None, categories=None, defect_types=None,
-                   match_status=None):
-    """支持按批次/SN/时段(archived_at)/成像类别/缺陷类型/匹配状态过滤。"""
+                   match_status=None, training_status=None):
+    """支持按批次/SN/时段(archived_at)/成像类别/缺陷类型/匹配状态/训练状态过滤。"""
     where, args = [], []
     if batch_id:
         where.append("batch_id=%s")
@@ -855,6 +942,9 @@ def list_manual_qc(batch_id=None, product_no=None, limit=200, offset=0,
     if match_status:
         where.append("match_status=%s")
         args.append(match_status)
+    if training_status:
+        where.append("training_status=%s")
+        args.append(training_status)
     sql = f"SELECT * FROM {_t('manual_qc')}"
     if where:
         sql += " WHERE " + " AND ".join(where)
@@ -871,8 +961,38 @@ def list_manual_qc(batch_id=None, product_no=None, limit=200, offset=0,
     return rows
 
 
+def manual_qc_training_summary():
+    """按 training_status 汇总 manual_qc 数量。"""
+    rows = _client().fetchall(
+        f"SELECT training_status, COUNT(*) AS c FROM {_t('manual_qc')} GROUP BY training_status"
+    )
+    summary = {'pending': 0, 'handoff_ready': 0, 'closed': 0, 'total': 0}
+    for r in rows:
+        st = str(r.get('training_status') or 'pending')
+        n = int(r.get('c') or 0)
+        if st in summary:
+            summary[st] = n
+        summary['total'] += n
+    return summary
+
+
+def update_manual_qc_training_batch(qc_ids, training_status, handoff_dir=None):
+    if not qc_ids:
+        return 0
+    ids = [int(x) for x in qc_ids]
+    placeholders = ','.join(['%s'] * len(ids))
+    if handoff_dir is not None:
+        sql = f"UPDATE {_t('manual_qc')} SET training_status=%s, handoff_dir=%s WHERE id IN ({placeholders})"
+        args = [training_status, handoff_dir] + ids
+    else:
+        sql = f"UPDATE {_t('manual_qc')} SET training_status=%s WHERE id IN ({placeholders})"
+        args = [training_status] + ids
+    return _client().execute(sql, tuple(args))
+
+
 def count_manual_qc(batch_id=None, product_no=None, start=None, end=None,
-                    categories=None, defect_types=None, match_status=None):
+                    categories=None, defect_types=None, match_status=None,
+                    training_status=None):
     where, args = [], []
     if batch_id:
         where.append("batch_id=%s"); args.append(batch_id)
@@ -892,6 +1012,8 @@ def count_manual_qc(batch_id=None, product_no=None, start=None, end=None,
             where.append(f"defect_type IN ({','.join(['%s'] * len(dts))})"); args.extend(dts)
     if match_status:
         where.append("match_status=%s"); args.append(match_status)
+    if training_status:
+        where.append("training_status=%s"); args.append(training_status)
     sql = f"SELECT COUNT(*) AS n FROM {_t('manual_qc')}"
     if where:
         sql += " WHERE " + " AND ".join(where)
@@ -1184,6 +1306,189 @@ def dataset_item_trace_summary(dataset_id):
     return summary
 
 
+# ── 筛选批次（捞图 → 外部筛选 → 归档）────────────────────────────
+
+CURATION_STATUSES = (
+    'created', 'exported', 'imported', 'archived',
+    'handoff_ready', 'handoff_done', 'closed',
+)
+CURATION_DECISIONS = ('pending', 'keep', 'reject')
+
+
+def insert_curation_batch(row):
+    sql = f"""
+        INSERT INTO {_t('curation_batch')}
+            (batch_code, source_task_id, strategy_id, strategy_name, data_source, intent_type,
+             status, reviewer, note, total_count, keep_count, reject_count, pending_count)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """
+    args = (
+        row['batch_code'], row['source_task_id'],
+        row.get('strategy_id'), row.get('strategy_name'), row.get('data_source') or 'detail',
+        row.get('intent_type') or 'daily_ng',
+        row.get('status') or 'created', row.get('reviewer'), row.get('note'),
+        int(row.get('total_count') or 0), int(row.get('keep_count') or 0),
+        int(row.get('reject_count') or 0), int(row.get('pending_count') or 0),
+    )
+    return _client().execute_returning_id(sql, args)
+
+
+def update_curation_batch(batch_id, **fields):
+    allowed = {
+        'status', 'reviewer', 'note', 'total_count', 'keep_count', 'reject_count',
+        'pending_count', 'export_dir', 'archive_dir', 'handoff_dir', 'sync_dataset_id',
+        'exported_at', 'imported_at', 'archived_at', 'handoff_at', 'intent_type',
+    }
+    sets, args = [], []
+    for k, v in fields.items():
+        if k not in allowed:
+            continue
+        sets.append(f"`{k}`=%s")
+        args.append(v)
+    if not sets:
+        return 0
+    args.append(int(batch_id))
+    return _client().execute(
+        f"UPDATE {_t('curation_batch')} SET {', '.join(sets)} WHERE id=%s",
+        tuple(args),
+    )
+
+
+def get_curation_batch(batch_id):
+    return _client().fetchone(f"SELECT * FROM {_t('curation_batch')} WHERE id=%s", (int(batch_id),))
+
+
+def get_curation_batch_by_code(batch_code):
+    return _client().fetchone(
+        f"SELECT * FROM {_t('curation_batch')} WHERE batch_code=%s",
+        (str(batch_code),),
+    )
+
+
+def list_curation_batches(status=None, limit=100, offset=0):
+    sql = f"SELECT * FROM {_t('curation_batch')}"
+    args = []
+    if status:
+        sql += " WHERE status=%s"
+        args.append(status)
+    sql += " ORDER BY id DESC LIMIT %s OFFSET %s"
+    args.extend([int(limit), int(offset)])
+    return _client().fetchall(sql, tuple(args))
+
+
+def count_curation_batches(status=None):
+    sql = f"SELECT COUNT(*) AS c FROM {_t('curation_batch')}"
+    args = []
+    if status:
+        sql += " WHERE status=%s"
+        args.append(status)
+    row = _client().fetchone(sql, tuple(args) if args else None)
+    return int(row.get('c') or 0) if row else 0
+
+
+def insert_curation_items_batch(rows):
+    if not rows:
+        return 0
+    sql = f"""
+        INSERT INTO {_t('curation_item')}
+            (batch_id, batch_row_id, seq, img_name, img_path, product_no, product_type,
+             check_status, categories_summary, decision, disposition, need_platform_label, source_meta)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """
+    args_list = []
+    for r in rows:
+        args_list.append((
+            int(r['batch_id']), r['batch_row_id'], int(r.get('seq') or 0),
+            r.get('img_name'), r.get('img_path'), r.get('product_no'),
+            r.get('product_type'), r.get('check_status'), r.get('categories_summary'),
+            r.get('decision') or 'pending', r.get('disposition'), 1 if r.get('need_platform_label') else 0,
+            _json_dump(r.get('source_meta')),
+        ))
+    return _client().executemany(sql, args_list)
+
+
+def list_curation_items(batch_id, decision=None, limit=5000, offset=0):
+    sql = f"SELECT * FROM {_t('curation_item')} WHERE batch_id=%s"
+    args = [int(batch_id)]
+    if decision:
+        sql += " AND decision=%s"
+        args.append(decision)
+    sql += " ORDER BY seq ASC LIMIT %s OFFSET %s"
+    args.extend([int(limit), int(offset)])
+    rows = _client().fetchall(sql, tuple(args))
+    for r in rows:
+        r['source_meta'] = _json_load(r.get('source_meta'))
+    return rows
+
+
+def count_curation_items(batch_id, decision=None):
+    sql = f"SELECT COUNT(*) AS c FROM {_t('curation_item')} WHERE batch_id=%s"
+    args = [int(batch_id)]
+    if decision:
+        sql += " AND decision=%s"
+        args.append(decision)
+    row = _client().fetchone(sql, tuple(args))
+    return int(row.get('c') or 0) if row else 0
+
+
+def delete_curation_items_by_batch(batch_id):
+    return _client().execute(
+        f"DELETE FROM {_t('curation_item')} WHERE batch_id=%s",
+        (int(batch_id),),
+    )
+
+
+def delete_curation_batch(batch_id):
+    return _client().execute(
+        f"DELETE FROM {_t('curation_batch')} WHERE id=%s",
+        (int(batch_id),),
+    )
+
+
+def update_curation_item_decision(
+    batch_id, batch_row_id, decision, reject_reason=None, note=None,
+    disposition=None, need_platform_label=None,
+):
+    sets = ['decision=%s', 'reject_reason=%s', 'note=%s']
+    args = [decision, reject_reason, note]
+    if disposition is not None:
+        sets.append('disposition=%s')
+        args.append(disposition)
+    if need_platform_label is not None:
+        sets.append('need_platform_label=%s')
+        args.append(1 if need_platform_label else 0)
+    args.extend([int(batch_id), batch_row_id])
+    return _client().execute(
+        f"""UPDATE {_t('curation_item')}
+            SET {', '.join(sets)}
+            WHERE batch_id=%s AND batch_row_id=%s""",
+        tuple(args),
+    )
+
+
+def recompute_curation_counts(batch_id):
+    client = _client()
+    bid = int(batch_id)
+    rows = client.fetchall(
+        f"SELECT decision, COUNT(*) AS c FROM {_t('curation_item')} WHERE batch_id=%s GROUP BY decision",
+        (bid,),
+    )
+    counts = {'keep': 0, 'reject': 0, 'pending': 0}
+    for r in rows:
+        d = str(r.get('decision') or 'pending')
+        if d in counts:
+            counts[d] = int(r.get('c') or 0)
+    total = counts['keep'] + counts['reject'] + counts['pending']
+    update_curation_batch(
+        bid,
+        total_count=total,
+        keep_count=counts['keep'],
+        reject_count=counts['reject'],
+        pending_count=counts['pending'],
+    )
+    return {'total': total, **counts}
+
+
 # ── 平台训练模型缓存（Magic-Fox 训练页抓取）────────────────────────
 
 def list_platform_train_models(project_id):
@@ -1240,3 +1545,57 @@ def replace_platform_train_models(project_id, rows):
         )
         n += 1
     return n
+
+
+# ── 历史回跑编排 ───────────────────────────────────────────────────
+
+def create_replay_run(spec_json):
+    client = _client()
+    client.execute(
+        f"""INSERT INTO {_t('replay_run')} (status, stage, spec_json)
+            VALUES ('pending', 'init', %s)""",
+        (_json_dump(spec_json),),
+    )
+    return client.last_insert_id()
+
+
+def get_replay_run(run_id):
+    row = _client().fetchone(f"SELECT * FROM {_t('replay_run')} WHERE id=%s", (int(run_id),))
+    if row:
+        row['spec_json'] = _json_load(row.get('spec_json'))
+        row['result_json'] = _json_load(row.get('result_json'))
+    return row
+
+
+def update_replay_run(run_id, **fields):
+    allowed = {
+        'status', 'stage', 'stage1_task_id', 'predict_job_id', 'stage2_task_id',
+        'curation_batch_id', 'result_json', 'error', 'spec_json',
+    }
+    sets, args = [], []
+    for key, val in fields.items():
+        if key not in allowed:
+            continue
+        sets.append(f"`{key}`=%s")
+        if key in ('result_json', 'spec_json') and val is not None and not isinstance(val, str):
+            args.append(_json_dump(val))
+        else:
+            args.append(val)
+    if not sets:
+        return 0
+    args.append(int(run_id))
+    return _client().execute(
+        f"UPDATE {_t('replay_run')} SET {', '.join(sets)} WHERE id=%s",
+        tuple(args),
+    )
+
+
+def list_replay_runs(limit=50, offset=0):
+    rows = _client().fetchall(
+        f"SELECT * FROM {_t('replay_run')} ORDER BY id DESC LIMIT %s OFFSET %s",
+        (int(limit), int(offset)),
+    )
+    for r in rows:
+        r['spec_json'] = _json_load(r.get('spec_json'))
+        r['result_json'] = _json_load(r.get('result_json'))
+    return rows

@@ -27,6 +27,7 @@ export default function ManualQcTabBar({ activeTab, onTabChange, counts = {} }) 
           type="button"
           className={`mqc-tab-bar-item${activeTab === t.id ? ' is-active' : ''}`}
           onClick={() => onTabChange(t.id)}
+          data-testid={`mqc-tab-${t.id}`}
           aria-current={activeTab === t.id ? 'page' : undefined}
         >
           <span className="mqc-tab-bar-icon">{TAB_ICONS[t.id]}</span>

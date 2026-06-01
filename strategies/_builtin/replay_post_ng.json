@@ -1,0 +1,30 @@
+{
+  "category": "内置",
+  "created_at": "2026-05-30T00:00:00",
+  "description": "预测结果二次筛选：限定 job_id，保留有框且分数达标的 FP 候选",
+  "env_schema": [
+    {
+      "key": "MIN_SCORE",
+      "label": "最低 max_score",
+      "type": "number",
+      "default": "0.1",
+      "placeholder": "0.25",
+      "stage": "stage2",
+      "description": "SQL 与 Python 均可用 ${MIN_SCORE} 或 get_env('MIN_SCORE')"
+    },
+    {
+      "key": "PRODUCT_TYPE",
+      "label": "款型过滤",
+      "type": "text",
+      "placeholder": "留空表示不限",
+      "stage": "stage2"
+    }
+  ],
+  "filter_mode": "code",
+  "id": "replay_post_ng",
+  "name": "回跑后筛 FP",
+  "python_code": "def process_data(df):\n    min_score = float(get_env('MIN_SCORE', '0'))\n    if min_score > 0 and 'max_score' in df.columns:\n        df = df[df['max_score'].fillna(0).astype(float) >= min_score]\n    if 'box_count' in df.columns:\n        df = df[df['box_count'].fillna(0).astype(float) > 0]\n    elif 'check_status' in df.columns:\n        df = df[df['check_status'].astype(str).isin(['1', 'true', 'True'])]\n    product_type = get_env('PRODUCT_TYPE', '').strip()\n    if product_type and 'product_type' in df.columns:\n        df = df[df['product_type'].astype(str) == product_type]\n    return df.reset_index(drop=True)\n",
+  "schema_version": 2,
+  "sql_template": "SELECT * FROM `detforge`.`predict_result` WHERE job_id = ${JOB_ID} AND max_score >= ${MIN_SCORE}",
+  "updated_at": "2026-05-30T00:00:00"
+}

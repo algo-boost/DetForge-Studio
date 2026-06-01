@@ -6,7 +6,7 @@
 |------|------|
 | `config.json` | 主配置（**勿提交 git**） |
 | `.config.key` | Fernet 解密密钥（**勿提交 git**） |
-| `config.json.export` | 无敏感信息的示例模板 |
+| `config.json.example` | 无敏感信息的示例模板（可复制为 `config.json`） |
 
 ## 敏感字段加密
 

@@ -26,6 +26,25 @@ DEFAULT_TIMEOUT = 120
 DEFAULT_RETRIES = 2
 
 
+def _is_permission_denied_error(exc: BaseException) -> bool:
+    msg = str(exc or '').lower()
+    return 'permission' in msg or '权限' in msg or 'not enough' in msg
+
+
+def _fetch_dataset_meta_optional(base_url, token, source_id, flat, log_fn):
+    """GET /datasets/{id}；部分账号仅有 dataset_items/page 权限时降级为空 meta。"""
+    try:
+        return flat['fetch_dataset_meta'](base_url, token, source_id)
+    except RuntimeError as e:
+        if _is_permission_denied_error(e):
+            log_fn(
+                f'警告: GET /datasets/{source_id} 无权限（{e}），'
+                f'将仅用 dataset_items/page 继续同步'
+            )
+            return {}
+        raise
+
+
 def resolve_dataset_output_dir(project, dataset, config=None):
     """解析数据集本地绝对路径，并校验白名单。"""
     from server.core import load_config
@@ -153,16 +172,19 @@ def sync_dataset(dataset_id, job_id=None, stop_check=None, on_progress=None, con
             _log(f'警告: 快照声明 {meta_count} 条，详情仅返回 {len(detail_items)} 条')
     else:
         _log(f'拉取底库 dataset_id={source_id} 全量列表 …')
-        meta = flat['fetch_dataset_meta'](base_url, token, source_id)
         page_rows = magic_fox_fetch.fetch_dataset_items_all_pages(base_url, token, source_id)
+        meta = _fetch_dataset_meta_optional(base_url, token, source_id, flat, _log)
         detail_items = flat['dataset_page_rows_to_detail_items'](page_rows)
-        detail_for_approach = meta
+        detail_for_approach = meta or None
         platform_count = int(meta.get('count') or meta.get('total_count') or 0)
-        _log(f'平台 meta 数量={platform_count}，列表拉取={len(page_rows)} 条')
-        if platform_count and len(page_rows) < platform_count:
-            raise RuntimeError(
-                f'底库 {source_id} 应共 {platform_count} 条，实际仅拉取 {len(page_rows)} 条，请检查 API 或重试'
-            )
+        if platform_count:
+            _log(f'平台 meta 数量={platform_count}，列表拉取={len(page_rows)} 条')
+            if len(page_rows) < platform_count:
+                raise RuntimeError(
+                    f'底库 {source_id} 应共 {platform_count} 条，实际仅拉取 {len(page_rows)} 条，请检查 API 或重试'
+                )
+        else:
+            _log(f'列表拉取={len(page_rows)} 条（未获取 datasets/{{id}} meta，以列表为准）')
         if not str(dataset.get('name') or '').strip() and meta.get('dataset_name'):
             forge_db.upsert_sync_dataset({**dataset, 'name': meta['dataset_name']})
 

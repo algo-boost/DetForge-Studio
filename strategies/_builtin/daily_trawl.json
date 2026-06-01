@@ -6,6 +6,22 @@
   "category": "内置",
   "sql_template": "SELECT d.*, r.product_type AS result_product_type FROM `product_detection_detail_result` d LEFT JOIN (SELECT product_no, MAX(product_type) AS product_type FROM product_detection_result GROUP BY product_no) r ON d.product_no = r.product_no WHERE d.c_time BETWEEN '${START_TIME}' AND '${END_TIME}' AND d.ext NOT LIKE '%\"original_predictions\": []%'",
   "sample_size": 200,
+  "env_schema": [
+    {
+      "key": "SAMPLE_SIZE",
+      "label": "随机采样数量",
+      "type": "number",
+      "default": "200",
+      "description": "规则筛选后随机取 N 条"
+    },
+    {
+      "key": "RANDOM_SEED",
+      "label": "随机种子",
+      "type": "number",
+      "default": "42",
+      "description": "相同种子可复现采样结果"
+    }
+  ],
   "filter_mode": "flow",
   "flow": {
     "version": 2,

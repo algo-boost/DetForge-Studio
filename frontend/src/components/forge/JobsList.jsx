@@ -1,6 +1,17 @@
 import { Fragment } from 'react';
+import { Link } from 'react-router-dom';
 import { ProgressBar, JobDetail } from './JobWidgets';
 import StatusPill from './jobs/StatusPill';
+
+function JobEmptyActions() {
+  return (
+    <div className="pjobs-empty-actions">
+      <Link className="btn btn-sm btn-primary" to="/online-predict">发起批量预测</Link>
+      <Link className="btn btn-sm btn-ghost" to="/models">管理模型</Link>
+      <Link className="btn btn-sm btn-ghost" to="/training">训练平台</Link>
+    </div>
+  );
+}
 
 function JobActions({ job, detailId, setDetailId, onControl }) {
   const isExpanded = detailId === job.id;
@@ -41,6 +52,7 @@ export default function JobsList({
     return (
       <div className="pjobs-empty-state">
         <p>{emptyText}</p>
+        <JobEmptyActions />
       </div>
     );
   }

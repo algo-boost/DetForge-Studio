@@ -1,0 +1,21 @@
+# DefectLoop Studio — 本地 MySQL + 应用（需自备 config.json）
+# 用法：cp config.json.example config.json 并编辑后
+#       docker compose up -d mysql
+#       pip install -r requirements.txt && cd frontend && npm run build
+#       PC_NO_WORKER=0 python app.py  # 另开终端 python worker.py
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: vision_backend
+    ports:
+      - "3306:3306"
+    volumes:
+      - detforge_mysql_data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4
+
+volumes:
+  detforge_mysql_data:

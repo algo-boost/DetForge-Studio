@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { api, formatSqlTime, toast, openSampleGalleryWhenReady } from '../api/client';
 import { SqlEditor, PythonEditor } from '../components/Editors';
@@ -13,10 +13,20 @@ import { Modal } from '../components/Modal';
 import { useRulesStudio } from '../hooks/useRulesStudio';
 import { useEditorWorkspace, FullscreenIcon } from '../hooks/useEditorWorkspace';
 import { DEFAULT_PY, DEFAULT_SAMPLE, DEFAULT_SEED, DEFAULT_SQL, DEFAULT_DETAIL_SQL, DEFAULT_PREDICT_SQL, buildPredictJobSql, buildSampleFunction } from '../lib/constants';
-import { fetchRecentPredictJobs, parsePredictJobIdFromSql, resolvePredictJobId } from '../lib/predictJob';
+import { fetchRecentPredictJobs, formatPredictJobLabel, parsePredictJobIdFromSql, resolvePredictJobId } from '../lib/predictJob';
 import { buildHistoryEntry, saveHistoryEntry } from '../lib/history';
 import { setTimePreset } from '../lib/time';
-import { backendFilterMode, hasComplexFlow, mergeFlowForSave, uiFilterMode } from '../lib/flowMerge';
+import { backendFilterMode, hasComplexFlow, mergeFlowForSave, pythonNeedsFilterRules, uiFilterMode } from '../lib/flowMerge';
+import StrategyEnvFields from '../components/StrategyEnvFields';
+import {
+  buildStrategyEnvDefaults,
+  extractSqlTemplateVars,
+  loadStrategyEnv,
+  parseEnvRandomSeed,
+  parseEnvSampleSizeOptional,
+  saveStrategyEnv,
+  RUNTIME_VAR_LABELS,
+} from '../lib/envVars';
 import {
   extractSampleFromSampleCode,
   hasInlineSampling,
@@ -68,18 +78,15 @@ export default function QueryPage() {
   const [filterMode, setFilterMode] = useState('rules');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
-  const [sampleSize, setSampleSize] = useState(DEFAULT_SAMPLE);
-  const [randomSeed, setRandomSeed] = useState(() => {
-    const saved = parseInt(localStorage.getItem('pc_random_seed') || '', 10);
-    return Number.isFinite(saved) ? saved : DEFAULT_SEED;
-  });
   const [strategies, setStrategies] = useState([]);
   const [dataSource, setDataSource] = useState(initialQuery.dataSource);
   const [predictJobId, setPredictJobId] = useState(null);
   const [predictJobs, setPredictJobs] = useState([]);
   const [predictJobsLoading, setPredictJobsLoading] = useState(false);
+  const [pendingAutoExecJobId, setPendingAutoExecJobId] = useState(null);
   const [loadedPresetId, setLoadedPresetId] = useState('');
   const originalFlowRef = useRef(null);
+  const savedFilterRulesCodeRef = useRef('');
   const [loading, setLoading] = useState(false);
   const [previewStats, setPreviewStats] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -93,6 +100,8 @@ export default function QueryPage() {
   const [saveName, setSaveName] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
   const [deleteId, setDeleteId] = useState('');
+  const [queryEnv, setQueryEnv] = useState({});
+  const [envSchema, setEnvSchema] = useState([]);
   const importRef = useRef(null);
   const pythonFileRef = useRef(null);
   const skipSampleSyncRef = useRef(false);
@@ -105,6 +114,40 @@ export default function QueryPage() {
   const markStale = useCallback(() => setPreviewStale(true), []);
   const studio = useRulesStudio(markStale);
   const editorWs = useEditorWorkspace();
+
+  const sampleSize = useMemo(() => parseEnvSampleSizeOptional(queryEnv), [queryEnv]);
+  const randomSeed = useMemo(() => parseEnvRandomSeed(queryEnv, DEFAULT_SEED), [queryEnv]);
+  const hasPostSample = sampleSize != null;
+
+  const patchQueryEnv = useCallback((patch, { save = true } = {}) => {
+    setQueryEnv((prev) => {
+      const next = { ...prev, ...patch };
+      if (save && loadedPresetId) saveStrategyEnv(loadedPresetId, next);
+      return next;
+    });
+    markStale();
+  }, [loadedPresetId, markStale]);
+
+  const patchQueryEnvSample = useCallback(({ sampleSize: ss, randomSeed: rs }) => {
+    const patch = {};
+    if (ss != null) patch.SAMPLE_SIZE = String(ss);
+    if (rs != null) patch.RANDOM_SEED = String(rs);
+    if (Object.keys(patch).length) patchQueryEnv(patch);
+  }, [patchQueryEnv]);
+
+  const resolveFilterRulesCode = useCallback(async () => {
+    const compiled = studio.rules.length ? (await studio.compile()) : '';
+    if (compiled?.trim()) return compiled;
+    return savedFilterRulesCodeRef.current?.trim() || '';
+  }, [studio]);
+
+  const ensureFilterRulesReady = useCallback(async () => {
+    if (!pythonNeedsFilterRules(pythonCode)) return true;
+    const rulesCode = await resolveFilterRulesCode();
+    if (rulesCode.trim()) return true;
+    toast('代码调用了 apply_filter_rules()，但未找到规则。请在「规则」页添加筛选条件，或加载含规则的策略。', 'error');
+    return false;
+  }, [pythonCode, resolveFilterRulesCode]);
 
   const reloadStrategies = useCallback(async () => {
     const r = await api.getStrategies();
@@ -123,6 +166,7 @@ export default function QueryPage() {
     const m = snap.filter_mode;
     if (m) setFilterMode(uiFilterMode(m));
     if (snap.flow) studio.setFlow(snap.flow);
+    savedFilterRulesCodeRef.current = snap.filter_rules_code || '';
     const sample = resolveSampleSettings({
       pythonCode: split.processCode,
       sampleCode: snap.sample_code || split.sampleCode,
@@ -132,11 +176,10 @@ export default function QueryPage() {
     });
     skipSampleSyncRef.current = true;
     prevSampleRef.current = { sampleSize: sample.sampleSize, randomSeed: sample.randomSeed };
-    setSampleSize(sample.sampleSize);
-    setRandomSeed(sample.randomSeed);
+    patchQueryEnvSample({ sampleSize: sample.sampleSize, randomSeed: sample.randomSeed });
     queueMicrotask(() => { skipSampleSyncRef.current = false; });
     markStale();
-  }, [studio, markStale]);
+  }, [studio, markStale, patchQueryEnvSample]);
 
   const refreshPathChecks = useCallback(async (trySync = false) => {
     let res = await api.getConfig();
@@ -167,10 +210,21 @@ export default function QueryPage() {
     setStartTime(p.start);
     setEndTime(p.end);
     refreshPathChecks(true);
-    reloadStrategies();
-    const last = localStorage.getItem('pc_last_preset');
-    if (last && last !== '__free__') loadStrategy(last);
-    else loadStrategy('daily_trawl');
+    reloadStrategies().then(() => {
+      const urlStrategy = searchParams.get('strategy');
+      const urlDs = searchParams.get('data_source');
+      if (urlDs === 'detail' || urlDs === 'predict_result') {
+        setDataSource(urlDs);
+      }
+      if (urlStrategy) {
+        loadStrategy(urlStrategy);
+        return;
+      }
+      const last = localStorage.getItem('pc_last_preset');
+      if (last && last !== '__free__') loadStrategy(last);
+      else loadStrategy('daily_trawl');
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -181,8 +235,12 @@ export default function QueryPage() {
     if (item.end_raw) setEndTime(item.end_raw);
     if (item.snapshot) applySnapshot(item.snapshot);
     else if (item.strategy_id) loadStrategy(item.strategy_id);
-    if (item.sample_size != null) setSampleSize(item.sample_size);
-    if (item.random_seed != null) setRandomSeed(item.random_seed);
+    if (item.sample_size != null || item.random_seed != null) {
+      patchQueryEnv({
+        ...(item.sample_size != null ? { SAMPLE_SIZE: String(item.sample_size) } : {}),
+        ...(item.random_seed != null ? { RANDOM_SEED: String(item.random_seed) } : {}),
+      }, { save: false });
+    }
     if (location.state.autoExecute) setTimeout(() => onExecuteRef.current?.(), 300);
     toast(`已恢复：${item.strategy}`);
   }, [location.state]);
@@ -223,7 +281,7 @@ export default function QueryPage() {
 
   const ensurePredictBatchReady = useCallback(async ({ silent = true } = {}) => {
     if (dataSource !== 'predict_result') return null;
-    const recent = predictJobs.length ? predictJobs : await fetchRecentPredictJobs();
+    const recent = predictJobs.length ? predictJobs : await fetchRecentPredictJobs(api);
     if (!predictJobs.length && recent.length) setPredictJobs(recent);
     const jobId = await resolvePredictJobId({
       urlJobId: searchParams.get('predict_job'),
@@ -256,8 +314,6 @@ export default function QueryPage() {
     if (parsed && parsed !== predictJobId) setPredictJobId(parsed);
   }, [sql, dataSource, predictJobId]);
   useEffect(() => { localStorage.setItem('pc_python', pythonCode); markStale(); }, [pythonCode, markStale]);
-
-  useEffect(() => { localStorage.setItem('pc_random_seed', String(randomSeed)); markStale(); }, [randomSeed, markStale]);
 
   const uiBackendMode = backendFilterMode(filterMode);
   const flowPayload = filterMode === 'code' ? null : studio.flow;
@@ -318,8 +374,7 @@ export default function QueryPage() {
 
     const timer = setTimeout(() => {
       skipSampleSyncRef.current = true;
-      if (extracted.sampleSize !== sampleSize) setSampleSize(extracted.sampleSize);
-      if (extracted.randomSeed !== randomSeed) setRandomSeed(extracted.randomSeed);
+      patchQueryEnvSample({ sampleSize: extracted.sampleSize, randomSeed: extracted.randomSeed });
       prevSampleRef.current = { sampleSize: extracted.sampleSize, randomSeed: extracted.randomSeed };
       if (originalFlowRef.current && hasInlineSamplingInFlow(originalFlowRef.current)) {
         originalFlowRef.current = patchFlowSample(originalFlowRef.current, extracted);
@@ -344,17 +399,17 @@ export default function QueryPage() {
       sql: overrides.sql ?? sql,
       start_time: formatSqlTime(startTime, false),
       end_time: formatSqlTime(endTime, true),
-      sample_size: sampleSize,
-      random_seed: randomSeed,
       filter_mode: uiBackendMode === 'code' ? 'code' : 'flow',
       flow: flowForRequest,
       python_code: pythonCode,
       sample_code: effectiveSample,
-      filter_rules_code: await studio.compile(),
+      filter_rules_code: await resolveFilterRulesCode(),
       preview_mode: wantsInline || filterMode === 'code' ? 'full' : 'rules',
       data_source: dataSource,
+      env: queryEnv,
+      ...(dataSource === 'predict_result' && predictJobId ? { predict_job_id: predictJobId } : {}),
     };
-  }, [sql, startTime, endTime, sampleSize, randomSeed, uiBackendMode, filterMode, resolvedFlow, pythonCode, sampleCode, studio, dataSource]);
+  }, [sql, startTime, endTime, uiBackendMode, filterMode, resolvedFlow, pythonCode, sampleCode, studio, dataSource, queryEnv, predictJobId, sampleSize, randomSeed, resolveFilterRulesCode]);
 
   const onPreview = async () => {
     let batch = null;
@@ -368,6 +423,7 @@ export default function QueryPage() {
       toast('请选择查询时段', 'error');
       return;
     }
+    if (!(await ensureFilterRulesReady())) return;
     setPreviewLoading(true);
     try {
       const res = await api.previewFilter(await buildBody(batch ? { sql: batch.sql } : {}));
@@ -397,6 +453,7 @@ export default function QueryPage() {
       toast('请选择查询时段', 'error');
       return;
     }
+    if (!(await ensureFilterRulesReady())) return;
     if (previewStale && studio.rules.length && !window.confirm('筛选条件未预览，仍要执行？')) return;
     setLoading(true);
     setRawResults([]);
@@ -470,6 +527,15 @@ export default function QueryPage() {
   onExecuteRef.current = onExecute;
 
   useEffect(() => {
+    if (!pendingAutoExecJobId || dataSource !== 'predict_result') return undefined;
+    if (predictJobId !== pendingAutoExecJobId) return undefined;
+    if (!sql.includes(`job_id = ${pendingAutoExecJobId}`)) return undefined;
+    setPendingAutoExecJobId(null);
+    const timer = setTimeout(() => onExecuteRef.current?.(), 80);
+    return () => clearTimeout(timer);
+  }, [pendingAutoExecJobId, predictJobId, sql, dataSource]);
+
+  useEffect(() => {
     const onKey = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); onExecute(); } };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -484,6 +550,9 @@ export default function QueryPage() {
       setFilterMode('rules');
       setPythonCode(DEFAULT_PY);
       setSampleCode('');
+      setQueryEnv({});
+      setEnvSchema([]);
+      savedFilterRulesCodeRef.current = '';
       return;
     }
     const res = await api.getStrategy(id);
@@ -491,8 +560,13 @@ export default function QueryPage() {
     const s = res.data;
     setLoadedPresetId(id);
     originalFlowRef.current = s.flow ? JSON.parse(JSON.stringify(s.flow)) : null;
+    savedFilterRulesCodeRef.current = s.filter_rules_code || '';
     localStorage.setItem('pc_last_preset', id);
     setSql(s.sql_template || DEFAULT_SQL);
+    const varsRes = await api.getStrategyVariables(id).catch(() => null);
+    const schema = varsRes?.data?.custom_vars || [];
+    setEnvSchema(schema);
+    setQueryEnv(buildStrategyEnvDefaults(schema, s, loadStrategyEnv(id)));
     const split = splitStrategyPython({
       pythonCode: s.python_code,
       sampleCode: s.sample_code,
@@ -513,8 +587,10 @@ export default function QueryPage() {
       randomSeed: s.random_seed,
     });
     skipSampleSyncRef.current = true;
-    setSampleSize(sampleSettings.sampleSize);
-    setRandomSeed(sampleSettings.randomSeed);
+    patchQueryEnvSample({
+      sampleSize: sampleSettings.sampleSize,
+      randomSeed: sampleSettings.randomSeed,
+    });
     prevSampleRef.current = { sampleSize: sampleSettings.sampleSize, randomSeed: sampleSettings.randomSeed };
     queueMicrotask(() => { skipSampleSyncRef.current = false; });
     setFilterMode(uiFilterMode(s.filter_mode || 'flow'));
@@ -533,9 +609,10 @@ export default function QueryPage() {
     sample_code: resolveSampleCodeForExecution(sampleCode, { sampleSize, randomSeed }, inlineSample),
     sample_size: sampleSize,
     random_seed: randomSeed,
+    env_schema: envSchema,
     filter_mode: uiBackendMode,
     flow: resolvedFlow || { version: 2, nodes: [] },
-    filter_rules_code: await studio.compile(),
+    filter_rules_code: await resolveFilterRulesCode(),
   });
 
   const confirmSave = async () => {
@@ -580,7 +657,7 @@ export default function QueryPage() {
     setConsole({ text: '运行中…', type: 'run' });
     try {
       const parts = [];
-      if (filterMode !== 'code') parts.push(await studio.compile());
+      if (filterMode !== 'code') parts.push(await resolveFilterRulesCode());
       const sampleForRun = resolveSampleCodeForExecution(
         sampleCode,
         { sampleSize, randomSeed },
@@ -632,7 +709,7 @@ export default function QueryPage() {
     if (value === 'predict_result') {
       try {
         setPredictJobsLoading(true);
-        const recent = await fetchRecentPredictJobs();
+        const recent = await fetchRecentPredictJobs(api);
         setPredictJobs(recent);
         const jobId = await resolvePredictJobId({ urlJobId: searchParams.get('predict_job'), recentJobs: recent });
         await applyPredictBatchSql(jobId, { silent: !jobId });
@@ -652,7 +729,7 @@ export default function QueryPage() {
     (async () => {
       setPredictJobsLoading(true);
       try {
-        const recent = await fetchRecentPredictJobs();
+        const recent = await fetchRecentPredictJobs(api);
         if (cancelled) return;
         setPredictJobs(recent);
         const jobId = await resolvePredictJobId({
@@ -661,7 +738,13 @@ export default function QueryPage() {
           recentJobs: recent,
         });
         if (!jobId) return;
-        await applyPredictBatchSql(jobId, { silent: true });
+        await applyPredictBatchSql(jobId, { silent: !searchParams.get('predict_job') });
+        const urlJob = searchParams.get('predict_job');
+        if (urlJob) {
+          const job = recent.find((j) => j.id === jobId);
+          toast(`已载入预测批次 ${formatPredictJobLabel(job || { id: jobId })}`);
+          setPendingAutoExecJobId(jobId);
+        }
       } catch { /* keep current SQL */ }
       finally {
         if (!cancelled) setPredictJobsLoading(false);
@@ -673,7 +756,17 @@ export default function QueryPage() {
 
   const complexFlow = hasComplexFlow(originalFlowRef.current);
 
+  const selectedPredictJob = useMemo(
+    () => predictJobs.find((j) => j.id === predictJobId) || null,
+    [predictJobs, predictJobId],
+  );
+
   const queryModeHint = (() => {
+    if (dataSource === 'predict_result' && predictJobId) {
+      const j = selectedPredictJob;
+      const progress = j ? `${j.done ?? '?'}/${j.total ?? '?'}` : '';
+      return `预测结果 · 批次 #${predictJobId}${progress ? ` · ${progress} 张` : ''}`;
+    }
     const modeLabel = { rules: '规则筛选', code: 'Python 筛选', split: '规则 / 代码对照' }[filterMode];
     const prefix = loadedPresetId
       ? (strategies.find((s) => s.id === loadedPresetId)?.name || '策略')
@@ -682,13 +775,42 @@ export default function QueryPage() {
   })();
 
   const sampleSizeHint = inlineSample
-    ? `代码内采样 ${sampleSize} 条 · 种子 ${randomSeed} · 参数在 apply_random_sample_rows 函数中`
-    : filterMode !== 'code'
-      ? `规则筛选后随机取 ${sampleSize} 条 · 种子 ${randomSeed} · 先预览再行数再执行`
-      : `筛选后随机取 ${sampleSize} 条 · 种子 ${randomSeed} · 不足则全量`;
+    ? `代码内采样 · 见策略参数 SAMPLE_SIZE / RANDOM_SEED`
+    : !hasPostSample
+      ? '未配置 SAMPLE_SIZE · SQL/Python 之后不再二次随机采样（限流请用 ${NUM} 等）'
+      : filterMode !== 'code'
+        ? `规则筛选后采样 · SAMPLE_SIZE=${sampleSize} · RANDOM_SEED=${randomSeed}`
+        : `筛选后采样 · SAMPLE_SIZE=${sampleSize} · RANDOM_SEED=${randomSeed}`;
+
+  const sqlVarHint = useMemo(() => {
+    const used = extractSqlTemplateVars(sql);
+    const parts = [];
+    for (const key of used) {
+      if (RUNTIME_VAR_LABELS[key]) {
+        parts.push(`${RUNTIME_VAR_LABELS[key].replace(/（.*?）/, '')}→\${${key}}`);
+      } else {
+        const row = envSchema.find((r) => r.key === key);
+        const label = row?.label && row.label !== key ? row.label : key;
+        parts.push(`${label}→\${${key}}`);
+      }
+    }
+    if (!parts.length) {
+      return '${START_TIME} · ${END_TIME} · 策略参数…';
+    }
+    return parts.join(' · ');
+  }, [sql, envSchema]);
+
+  const replayStage = searchParams.get('replay_stage');
+  const replayStageLabel = replayStage === '1' ? '历史回跑 · Stage1 历史查询'
+    : replayStage === '2' ? '历史回跑 · Stage2 预测后筛选' : null;
 
   return (
     <div className="panel active" id="panel-query">
+      {replayStageLabel && (
+        <div className="query-replay-banner" data-testid="query-replay-banner">
+          {replayStageLabel} — 在此调整 SQL / 筛选规则；时段在工具栏，其余参数见策略可调参数
+        </div>
+      )}
       <div className="topbar">
         <div className="topbar-left-group">
           <SceneHubNav variant="query" className="scene-hub-nav-inline" />
@@ -743,12 +865,16 @@ export default function QueryPage() {
                   {!predictJobs.length && <option value="">暂无预测作业</option>}
                   {predictJobs.map((j) => (
                     <option key={j.id} value={j.id}>
-                      #{j.id} · {j.name || 'predict'} · {j.done}/{j.total || '?'}
+                      {formatPredictJobLabel(j)}
                     </option>
                   ))}
                 </select>
                 <span className="muted predict-job-hint">
-                  {predictJobsLoading ? '匹配中…' : '自动匹配最近批次，可手动切换'}
+                  {predictJobsLoading
+                    ? '匹配中…'
+                    : selectedPredictJob
+                      ? `${formatPredictJobLabel(selectedPredictJob)} · 无需时段`
+                      : '自动匹配最近批次，可手动切换'}
                 </span>
               </div>
             )}
@@ -768,16 +894,19 @@ export default function QueryPage() {
             </div>
             </>
             )}
-            <div className="control-inline control-sample">
-              <label htmlFor="sample-size">随机采样</label>
-              <input id="sample-size" type="number" min={1} title="筛选后随机取 N 条" value={sampleSize} onChange={(e) => { setSampleSize(+e.target.value || DEFAULT_SAMPLE); markStale(); }} />
-            </div>
-            <div className="control-inline control-seed">
-              <label htmlFor="random-seed">随机种子</label>
-              <input id="random-seed" type="number" min={0} step={1} title="采样随机种子，相同种子可复现" value={randomSeed} onChange={(e) => { setRandomSeed(parseInt(e.target.value, 10) || 0); markStale(); }} />
-            </div>
+            <StrategyEnvFields
+              strategyId={loadedPresetId}
+              values={queryEnv}
+              onChange={(env) => {
+                setQueryEnv(env);
+                if (loadedPresetId) saveStrategyEnv(loadedPresetId, env);
+                markStale();
+              }}
+              compact
+              testId="query-env-section"
+            />
             <button type="button" className={`btn btn-secondary${previewStale ? ' is-recommended' : ''}`} disabled={previewLoading} onClick={onPreview}>{previewLoading ? '预览中…' : '预览筛选'}</button>
-            <button type="button" className={`btn btn-primary${previewStale && studio.rules.length ? ' needs-preview' : ''}`} disabled={loading || previewLoading} onClick={onExecute}>{loading ? '执行中…' : '执行查询'}</button>
+            <button type="button" className={`btn btn-primary${previewStale && studio.rules.length ? ' needs-preview' : ''}`} disabled={loading || previewLoading} onClick={onExecute} data-testid="query-execute">{loading ? '执行中…' : '执行查询'}</button>
             {previewLoading && <div className="preview-progress" aria-hidden><div className="preview-progress-bar" /></div>}
           </div>
 
@@ -807,7 +936,7 @@ export default function QueryPage() {
                   <div className="editor-pane-header">
                     <span className="ep-title">SQL 查询</span>
                     <div className="ep-header-right">
-                      <span className="ep-hint">${'{START_TIME}'} · ${'{END_TIME}'}</span>
+                      <span className="ep-hint">{sqlVarHint}</span>
                       <button type="button" className="ep-btn ep-icon" title={editorWs.fullscreenPane === 'sql' ? '退出全屏' : '全屏编辑'} onClick={() => editorWs.toggleFullscreen('sql')}>
                         <FullscreenIcon />
                       </button>
@@ -912,7 +1041,16 @@ export default function QueryPage() {
         <ConsolePanel visible={!!console} content={console} onClear={() => setConsole(null)} />
       </div>
 
-      <ResultsPanel visible={rawResults.length > 0} rawData={rawResults} taskId={taskId} executionDetail={executionDetail} onArchive={() => toast('归档完成')} dataSource={dataSource} />
+      <ResultsPanel
+        visible={rawResults.length > 0}
+        rawData={rawResults}
+        taskId={taskId}
+        executionDetail={executionDetail}
+        onArchive={() => toast('归档完成')}
+        dataSource={dataSource}
+        strategyId={loadedPresetId}
+        strategyName={loadedPresetId ? (strategies.find((s) => s.id === loadedPresetId)?.name || loadedPresetId) : ''}
+      />
 
       <Modal open={saveOpen} title="保存为策略" onClose={() => setSaveOpen(false)}>
         <div className="form-modal-body">

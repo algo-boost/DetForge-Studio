@@ -31,9 +31,10 @@ const NAV_ICONS = {
       <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
     </svg>
   ),
-  admin: (
+  env: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" />
+      <path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h10" />
+      <circle cx="19" cy="17" r="2" />
     </svg>
   ),
   config: (
@@ -148,6 +149,8 @@ export function Layout() {
           <div className="sb-section-label">数据查询</div>
           <NavItem to="/" end icon="query">查询</NavItem>
           <NavItem to="/history" icon="history">查询历史</NavItem>
+          <NavItem to="/manual-qc" icon="qc">人工质检</NavItem>
+          <NavItem to="/curation" icon="docs">筛选归档</NavItem>
 
           <div className="sb-section-label">预测评估</div>
           <NavItem to="/online-predict" icon="predict">在线预测</NavItem>
@@ -156,7 +159,6 @@ export function Layout() {
 
           <div className="sb-section-label">平台工具</div>
           <NavItem to="/training" icon="sync">训练平台</NavItem>
-          <NavItem to="/manual-qc" icon="qc">人工质检</NavItem>
           <NavItem to="/viewer" icon="viewer">样本图库</NavItem>
           <div className="sb-nav-footer">
             <NavItem to="/config" icon="config">设置</NavItem>

@@ -6,11 +6,22 @@ import csv
 import os
 import re
 import shutil
+import uuid
 from datetime import datetime
 
 from studio.forge import forge_db
 
 from studio.paths import PROJECT_ROOT as BASE_DIR
+from studio.curation.dispositions import (
+    INTENT_CUSTOMER_QC,
+    TRAINING_HANDOFF_READY,
+    disposition_from_qc_record,
+)
+from studio.curation.handoff_pack import (
+    assemble_handoff_dir,
+    build_coco_from_manual_qc_records,
+    handoff_inbox_root,
+)
 
 # 可配置类别（持久化在 config.json）
 DEFAULT_IMAGING_CATEGORIES = ['成像清晰', '成像不清', '拍不到']
@@ -168,7 +179,9 @@ def archive_one(product_no, customer_img_path=None, batch_id=None, note=None,
         'position': position,
         'match_status': status,
         'note': note,
+        'training_status': 'pending',
     }
+    row['disposition'] = disposition_from_qc_record(row)
     try:
         qc_id = forge_db.insert_manual_qc(row)
     except Exception as e:  # noqa: BLE001
@@ -294,6 +307,87 @@ def export_records(start=None, end=None, categories=None, defect_types=None,
         zip_base = out_dir.rstrip('/\\')
         zip_path = shutil.make_archive(zip_base, 'zip', root_dir=out_dir)
         result['zip_path'] = zip_path
+    return result
+
+
+def generate_training_handoff(start=None, end=None, categories=None, batch_id=None,
+                              training_status='pending', note=None):
+    """人工质检 → 标准训练交接包（COCO + images + manifest + provenance）。"""
+    from studio.forge import forge_paths
+
+    rows = forge_db.list_manual_qc(
+        batch_id=batch_id, start=start, end=end, categories=categories,
+        training_status=training_status, limit=100000,
+    )
+    rows = [r for r in rows if r.get('matched_img_path')]
+    if not rows:
+        raise ValueError('无可用平台匹配图，无法生成交接包')
+
+    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    run_code = f'qc_{stamp}_{uuid.uuid4().hex[:6]}'
+    out_dir = os.path.join(handoff_inbox_root(), run_code)
+
+    coco = build_coco_from_manual_qc_records(rows)
+
+    def copy_images(images_dir):
+        copied = 0
+        for r in rows:
+            src = r.get('matched_img_path')
+            if not src or not os.path.isfile(src):
+                continue
+            fname = os.path.basename(str(src))
+            dst = os.path.join(images_dir, fname)
+            if not os.path.isfile(dst):
+                shutil.copy2(src, dst)
+                copied += 1
+        return copied
+
+    manifest_rows = []
+    for r in rows:
+        fname = os.path.basename(str(r.get('matched_img_path') or ''))
+        disp = disposition_from_qc_record(r)
+        manifest_rows.append({
+            'file_name': fname,
+            'product_no': r.get('product_no'),
+            'disposition': disp,
+            'need_platform_label': 1 if disp in ('need_label', 'fn_missed', 'fp_model') else 0,
+            'qc_category': r.get('qc_category'),
+            'defect_type': r.get('defect_type'),
+            'manual_qc_id': r.get('id'),
+            'source': 'manual_qc',
+        })
+
+    result = assemble_handoff_dir(
+        out_dir,
+        intent_type=INTENT_CUSTOMER_QC,
+        coco_data=coco,
+        image_copy_fn=copy_images,
+        manifest_rows=manifest_rows,
+        provenance_extra={
+            'run_code': run_code,
+            'record_count': len(rows),
+            'batch_id': batch_id,
+            'filters': {'start': start, 'end': end, 'categories': categories},
+        },
+        readme_lines=[
+            f'- 场景：人工质检',
+            f'- 运行码：`{run_code}`',
+            f'- 样本数：{len(rows)}',
+            f'- 目录：`{out_dir}`',
+            note or '',
+        ],
+    )
+
+    if not forge_paths.safe_sync_dir(out_dir) and not forge_paths.safe_export_dir(out_dir):
+        raise ValueError('交接目录不在允许路径内')
+
+    qc_ids = [r['id'] for r in rows]
+    forge_db.update_manual_qc_training_batch(
+        qc_ids, TRAINING_HANDOFF_READY, handoff_dir=out_dir,
+    )
+    result['run_code'] = run_code
+    result['record_count'] = len(rows)
+    result['qc_ids'] = qc_ids
     return result
 
 

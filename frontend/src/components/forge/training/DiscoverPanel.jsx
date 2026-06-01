@@ -55,6 +55,9 @@ export default function DiscoverPanel({ projects, selectedProject, onImported, d
         setProjectName(`项目-${res.data.approach_id}`);
         setLocalRoot(`approach_${res.data.approach_id}`);
         toast(`发现 ${res.data.counts?.datasets || 0} 个数据集、${res.data.counts?.snapshots || 0} 个快照`);
+        if (res.data.warnings?.length) {
+          res.data.warnings.forEach((w) => toast(w, 'info'));
+        }
       }
     } catch (e) { toast(e.message, 'error'); }
     finally { setDiscovering(false); }
@@ -144,6 +147,9 @@ export default function DiscoverPanel({ projects, selectedProject, onImported, d
             {result.pages?.enhance && (
               <a href={result.pages.enhance} target="_blank" rel="noreferrer">增强页 ↗</a>
             )}
+            {result.warnings?.map((w) => (
+              <span key={w} className="sync-discover-warn">{w}</span>
+            ))}
           </div>
 
           <div className="sync-discover-tabs">

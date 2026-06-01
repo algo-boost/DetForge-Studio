@@ -55,6 +55,7 @@ DEFAULT_CONFIG = {
     'img_full_path_field': 'local_pic_url',  # 完整路径字段名
     'default_sql': "SELECT * FROM `product_detection_detail_result` WHERE ext like '%脏污%' AND c_time BETWEEN '${START_TIME}' AND '${END_TIME}'",
     'archive_base_path': '',
+    'handoff_root': '',
     'defect_approach_id': 18,
     'platform_root_drive': 'D',
     # 预测：外部 Python 子进程（DetUnify-Studio）；留空 predict_python_executable 则进程内 import
@@ -177,6 +178,20 @@ def parse_sample_size(value, default=DEFAULT_SAMPLE_SIZE):
         return default
 
 
+def sample_size_from_env(env_ctx):
+    """仅当 env 中显式提供 SAMPLE_SIZE 时才返回采样数，否则不二次采样。"""
+    if not env_ctx or 'SAMPLE_SIZE' not in env_ctx:
+        return None
+    raw = env_ctx.get('SAMPLE_SIZE')
+    if raw is None or str(raw).strip() == '':
+        return None
+    try:
+        n = int(raw)
+        return n if n > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_random_seed(value, default=RANDOM_SAMPLE_SEED):
     if value is None or value == '':
         return default
@@ -252,6 +267,7 @@ class MySQLClient:
         # pymysql 连接非线程安全；worker 多线程 + 心跳线程共享同一全局 client，
         # 用可重入锁串行化所有 DB 操作，避免游标交叉导致的数据错乱。
         self._lock = threading.RLock()
+        self.last_query_error = None
         self.connect()
 
     def connect(self):
@@ -328,10 +344,14 @@ class MySQLClient:
                 if engine is not None:
                     from sqlalchemy import text
                     # text() 避免 LIKE '%...%' 被 pandas/SQLAlchemy 当作 pyformat 占位符
-                    return pd.read_sql(text(sql), engine)
-                return pd.read_sql(sql, self.connection)
+                    df = pd.read_sql(text(sql), engine)
+                else:
+                    df = pd.read_sql(sql, self.connection)
+                self.last_query_error = None
+                return df
             except Exception as e:
                 print(f"❌ 查询失败: {e}")
+                self.last_query_error = str(e)
                 self.connection = None
                 self._engine = None
                 return None
@@ -498,17 +518,30 @@ def apply_img_paths(df):
     return df
 
 
-def execute_python_filter(df, code, capture_output=False):
+def execute_python_filter(df, code, capture_output=False, env_context=None):
     """执行用户 Python 筛选代码，返回 (df, console_output, execution_time)"""
+    from studio.query.env_context import normalize_env_dict, substitute_template
+
     code = (code or '').strip()
     if not code:
         return df, '', 0.0
+
+    ctx = normalize_env_dict(env_context)
+    if ctx:
+        code = substitute_template(code, ctx)
 
     func_match = re.search(rf'def\s+{re.escape(PROCESS_FUNC)}\s*\(', code)
     if not func_match:
         raise ValueError(f'代码中未找到函数定义，请定义 def {PROCESS_FUNC}(df): ...')
 
-    local_ns = build_python_namespace()
+    def _get_env(key, default=''):
+        return str(ctx.get(str(key).upper(), default))
+
+    local_ns = build_python_namespace({
+        'ENV': dict(ctx),
+        'get_env': _get_env,
+        'env': _get_env,
+    })
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
     start = time.time()

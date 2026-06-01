@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 from studio.forge import forge_paths
 from studio.sync import magic_fox_bridge
 from studio.sync import magic_fox_discover
-from studio.sync.forge_sync import _annotation_box_count, _count_local_images
+from studio.sync.forge_sync import (
+    _annotation_box_count,
+    _count_local_images,
+    _fetch_dataset_meta_optional,
+    _is_permission_denied_error,
+)
 
 
 class TestMagicFoxUrlParse(unittest.TestCase):
@@ -45,8 +50,8 @@ class TestMagicFoxDiscoverMock(unittest.TestCase):
     @patch('studio.sync.magic_fox_discover.fetch_all_snapshots')
     @patch('studio.sync.magic_fox_discover.fetch_all_datasets')
     def test_discover_resources(self, mock_ds, mock_sn):
-        mock_ds.return_value = [{'id': 1, 'name': 'A', 'source_type': 'dataset', 'source_id': 1}]
-        mock_sn.return_value = [{'enhance_id': 9, 'name': 'S', 'source_type': 'snapshot', 'source_id': 9}]
+        mock_ds.return_value = ([{'id': 1, 'name': 'A', 'source_type': 'dataset', 'source_id': 1}], None)
+        mock_sn.return_value = ([{'enhance_id': 9, 'name': 'S', 'source_type': 'snapshot', 'source_id': 9}], None)
         result = magic_fox_discover.discover_resources(
             url='https://www.ai.magic-fox.com/#/datasets?approachId=598&subjectId=190',
         )
@@ -54,6 +59,18 @@ class TestMagicFoxDiscoverMock(unittest.TestCase):
         self.assertEqual(result['counts']['datasets'], 1)
         self.assertEqual(result['counts']['snapshots'], 1)
         self.assertIn('training', result['pages'])
+
+
+class TestMagicFoxCatalogProbe(unittest.TestCase):
+    @patch('studio.sync.magic_fox_discover._probe_dataset_via_items')
+    @patch('studio.sync.magic_fox_discover._api_session_and_headers')
+    def test_fetch_datasets_via_catalog_probe(self, mock_session, mock_probe):
+        mock_session.return_value = ('https://x/api/v1', object(), {}, {})
+        mock_probe.side_effect = lambda *a, **k: {'count': 10} if a[4] == 2845 else None
+        rows, note = magic_fox_discover.fetch_datasets_via_catalog_probe(598, subject_id=190)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['source_id'], 2845)
+        self.assertIn('dataset_items', note)
 
 
 class TestMagicFoxEnvFallback(unittest.TestCase):
@@ -114,6 +131,22 @@ class TestMagicFoxAuth(unittest.TestCase):
 
 
 class TestSyncHelpers(unittest.TestCase):
+    def test_is_permission_denied_error(self):
+        self.assertTrue(_is_permission_denied_error(RuntimeError("don`t have enough permission")))
+        self.assertFalse(_is_permission_denied_error(RuntimeError('timeout')))
+
+    @patch('studio.sync.forge_sync.logger')
+    def test_fetch_dataset_meta_optional_fallback(self, _log):
+        flat = {
+            'fetch_dataset_meta': MagicMock(
+                side_effect=RuntimeError('datasets/3063 失败: don`t have enough permission'),
+            ),
+        }
+        logs = []
+        meta = _fetch_dataset_meta_optional('https://x/api/v1', 'tok', 3063, flat, logs.append)
+        self.assertEqual(meta, {})
+        self.assertTrue(any('dataset_items/page' in m for m in logs))
+
     def test_annotation_box_count(self):
         item = {'annotations': [{'shapes': [{}, {}]}, {'shapes': [{}]}]}
         self.assertEqual(_annotation_box_count(item), 3)

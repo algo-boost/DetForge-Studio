@@ -48,7 +48,7 @@ config.json
 .config.key
 config.json.*
 !.env.example
-!.config.json.example
+!config.json.example
 
 # --- 同步数据集（本地图片体积大）---
 datasets/

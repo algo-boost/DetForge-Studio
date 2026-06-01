@@ -206,13 +206,13 @@ export default function ConfigPage({ embedded = false }) {
         {activeTab === 'project' && (
           <>
             <SurfaceCard
-              title="检测项目（Approach）"
-              desc="Approach ID 决定缺陷类别来源、查询范围与模型列表筛选"
+              title="检测项目（本地总控 Approach）"
+              desc="defect_approach_id 对应 vision_backend 总控：缺陷类别、部署模型（modeldeploy）、本地训练配置。与 Magic-Fox 项目的 approach_id 相互独立。"
               actions={<button type="button" className="btn btn-sm btn-ghost" onClick={onRefreshCats}>刷新类别</button>}
             >
               <div className="config-card-body settings-form">
                 <div className="config-field">
-                  <label>defect_approach_id</label>
+                  <label>defect_approach_id（本地总控）</label>
                   <select value={config.defect_approach_id || 18} onChange={(e) => set('defect_approach_id', +e.target.value)}>
                     {(config.approaches || []).map((a) => <option key={a.id} value={a.id}>{a.id} — {a.approach_name}{a.approach_type ? ` (${a.approach_type})` : ''}</option>)}
                   </select>

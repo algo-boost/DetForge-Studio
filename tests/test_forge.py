@@ -316,6 +316,29 @@ class PlatformPredictTests(unittest.TestCase):
         mock_platform.assert_called_once()
         mock_import_deploy.assert_not_called()
 
+    @patch('studio.forge.forge_service.enqueue_predict_job')
+    @patch('studio.forge.forge_service.import_deploy_model')
+    @patch('studio.forge.forge_service.build_predict_items')
+    @patch('studio.forge.forge_db.get_sync_project')
+    @patch('studio.forge.forge_db.get_sync_dataset')
+    @patch('server.core.load_config')
+    def test_batch_deploy_uses_local_approach_not_project(
+        self, mock_load_cfg, mock_get_ds, mock_get_proj, mock_build, mock_import_deploy, mock_enqueue,
+    ):
+        mock_load_cfg.return_value = {'defect_approach_id': 18}
+        mock_get_ds.return_value = {'project_id': 1, 'name': 'ds1'}
+        mock_get_proj.return_value = {'id': 1, 'approach_id': 598}
+        mock_build.return_value = (['/tmp/a.jpg'], {'/tmp/a.jpg': {}})
+        mock_import_deploy.return_value = 42
+        mock_enqueue.return_value = {'job_id': 1, 'total': 1}
+        with patch('studio.forge.forge_db.get_model', return_value={'name': 'm1'}):
+            forge_service.enqueue_predict_jobs_batch(
+                deploy_model_ids=[7],
+                sync_dataset_id=1,
+            )
+        mock_import_deploy.assert_called_once()
+        self.assertEqual(mock_import_deploy.call_args[0][1], 18)
+
 
 class ModelApiShapeTests(unittest.TestCase):
     def test_make_pred_ext_shape(self):

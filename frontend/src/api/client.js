@@ -1,5 +1,8 @@
 const BASE = '';
 
+import { formatSampleGalleryError } from '../lib/sampleGallery';
+import { appNavigate } from '../lib/appNavigate';
+
 // 可选 API Token（后端配置 api_token 时启用）；存于 localStorage.pc_api_token
 export function getApiToken() {
   try { return localStorage.getItem('pc_api_token') || ''; } catch { return ''; }
@@ -111,6 +114,13 @@ export const api = {
 
   getStrategies: () => request('/api/strategies'),
   getStrategy: (id) => request(`/api/strategies/${id}`),
+  getStrategyVariables: (id) => request(`/api/strategies/${id}/variables`),
+
+  listEnvProfiles: () => request('/api/env-profiles'),
+  getEnvProfile: (id) => request(`/api/env-profiles/${encodeURIComponent(id)}`),
+  saveEnvProfile: (body) => request('/api/env-profiles', { method: 'POST', body: JSON.stringify(body) }),
+  deleteEnvProfile: (id) => request(`/api/env-profiles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  suggestEnvProfileVars: (body) => request('/api/env-profiles/suggest', { method: 'POST', body: JSON.stringify(body) }),
   saveStrategy: (body) => request('/api/strategies', { method: 'POST', body: JSON.stringify(body) }),
   deleteStrategy: (id) => request(`/api/strategies/${id}`, { method: 'DELETE' }),
   executeStrategy: (body) => request('/api/strategies/execute', { method: 'POST', body: JSON.stringify(body) }),
@@ -210,6 +220,56 @@ export const api = {
     return data;
   },
 
+  forgeCurationList: (params = '') => request(`/api/forge/curation${params}`),
+  forgeCurationCreate: (body) => request('/api/forge/curation', { method: 'POST', body: JSON.stringify(body) }),
+  forgeCurationGet: (id) => request(`/api/forge/curation/${id}`),
+  forgeCurationDelete: (id) => request(`/api/forge/curation/${id}`, { method: 'DELETE' }),
+  forgeCurationItems: (id, params = '') => request(`/api/forge/curation/${id}/items${params}`),
+  forgeCurationExport: (id, body = {}) => request(`/api/forge/curation/${id}/export`, { method: 'POST', body: JSON.stringify(body) }),
+  forgeCurationArchive: (id, body = {}) => request(`/api/forge/curation/${id}/archive`, { method: 'POST', body: JSON.stringify(body) }),
+  forgeCurationHandoff: (id, body = {}) => request(`/api/forge/curation/${id}/handoff`, { method: 'POST', body: JSON.stringify(body) }),
+  forgeCurationHandoffDone: (id, body = {}) => request(`/api/forge/curation/${id}/handoff-done`, { method: 'POST', body: JSON.stringify(body) }),
+  forgeCurationDownloadUrl: (id) => {
+    const t = getApiToken();
+    return `/api/forge/curation/${id}/download${t ? `?token=${encodeURIComponent(t)}` : ''}`;
+  },
+  forgeCurationImport: async (id, file) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch(`/api/forge/curation/${id}/import`, {
+      method: 'POST',
+      headers: { ...authHeaders() },
+      body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok && data.success !== true) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  },
+  forgeArchiveHandoffList: (params = '') => request(`/api/forge/archive-handoff${params}`),
+  forgeManualQcHandoff: (body) => request('/api/forge/manual-qc/handoff', { method: 'POST', body: JSON.stringify(body) }),
+  forgeReplayEvalPreview: (body) => request('/api/forge/replay-eval/preview', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
+  forgeReplayEvalCreate: (body) => request('/api/forge/replay-eval/create', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
+  forgeReplayRunPreview: (body) => request('/api/forge/replay-runs/preview', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
+  forgeReplayRunVariables: (body) => request('/api/forge/replay-runs/variables', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
+  forgeReplayRunCreate: (body) => request('/api/forge/replay-runs', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
+  forgeReplayRunGet: (id) => request(`/api/forge/replay-runs/${id}`),
+  forgeReplayRunList: (params = '') => request(`/api/forge/replay-runs${params}`),
+
   forgeSyncTestAuth: () => request('/api/forge/sync/test-auth', { method: 'POST' }),
   forgeSyncDiscover: (body) => request('/api/forge/sync/discover', { method: 'POST', body: JSON.stringify(body) }),
   forgeSyncDiscoverImport: (body) => request('/api/forge/sync/discover/import', { method: 'POST', body: JSON.stringify(body) }),
@@ -243,8 +303,6 @@ export const api = {
   vizSession: (sessionId) => request(`/api/viz/session/${encodeURIComponent(sessionId)}`),
 };
 
-import { appNavigate } from '../lib/appNavigate';
-
 /** 样本图库页内路由（/viewer） */
 export function sampleGalleryViewerPath(record) {
   if (typeof record === 'string') {
@@ -267,10 +325,21 @@ export function openSampleGallery(record) {
 }
 
 /** 准备样本图库会话后直接跳转看图页 */
-export async function openSampleGalleryWhenReady(prepare) {
-  const record = await prepare();
-  openSampleGallery(record);
-  return { record };
+export async function openSampleGalleryWhenReady(prepare, context = '') {
+  const status = await api.vizStatus().catch(() => ({ available: false }));
+  if (status && status.available === false) {
+    throw new Error(formatSampleGalleryError('样本图库不可用', context));
+  }
+  try {
+    const record = await prepare();
+    if (!record?.success && record?.error) {
+      throw new Error(record.error);
+    }
+    openSampleGallery(record);
+    return { record };
+  } catch (err) {
+    throw new Error(formatSampleGalleryError(err, context));
+  }
 }
 
 export function formatSqlTime(dtLocal, end = false) {

@@ -207,23 +207,29 @@ def import_train_model(train_id, approach_id, client=None, config=None, skip_mis
 
 
 def import_all_platform_models(
-    approach_id,
+    approach_id=None,
+    deploy_approach_id=None,
+    train_approach_id=None,
     include_deploy=True,
     include_train=True,
     limit=200,
     client=None,
     config=None,
 ):
-    """批量将线上部署/训练模型导入 model_registry。"""
+    """批量将本地总控部署/训练模型导入 model_registry。"""
     from server.core import load_config, get_db_client
+    from studio.query.approach_context import resolve_local_approach_id
     from studio.query.deployed_models import fetch_deployed_models, fetch_training_models
     config = config or load_config()
     client = client or get_db_client()
-    aid = int(approach_id)
+    deploy_aid = resolve_local_approach_id(config, override=deploy_approach_id or approach_id)
+    train_aid = resolve_local_approach_id(
+        config, override=train_approach_id or approach_id or deploy_approach_id,
+    )
     imported, skipped, failed = [], [], []
 
     if include_deploy:
-        bundle = fetch_deployed_models(client, config, approach_id=aid, limit=limit)
+        bundle = fetch_deployed_models(client, config, approach_id=deploy_aid, limit=limit)
         for dm in bundle.get('models') or []:
             if not dm.get('path_resolvable'):
                 skipped.append({
@@ -234,7 +240,7 @@ def import_all_platform_models(
                 })
                 continue
             try:
-                mid = import_deploy_model(dm['id'], aid, client=client, config=config)
+                mid = import_deploy_model(dm['id'], deploy_aid, client=client, config=config)
                 imported.append({
                     'source': 'modeldeploy',
                     'id': dm.get('id'),
@@ -250,7 +256,7 @@ def import_all_platform_models(
                 })
 
     if include_train:
-        bundle = fetch_training_models(client, config, approach_id=aid, limit=limit)
+        bundle = fetch_training_models(client, config, approach_id=train_aid, limit=limit)
         for tm in bundle.get('models') or []:
             if not tm.get('path_resolvable'):
                 skipped.append({
@@ -261,7 +267,7 @@ def import_all_platform_models(
                 })
                 continue
             try:
-                mid = import_train_model(tm['id'], aid, client=client, config=config)
+                mid = import_train_model(tm['id'], train_aid, client=client, config=config)
                 if mid is None:
                     skipped.append({
                         'source': 'modeltrainconfig',
@@ -420,21 +426,23 @@ def enqueue_predict_jobs_batch(
     if not items:
         raise ValueError('未找到任何待预测图片')
 
+    from server.core import load_config
+    from studio.query.approach_context import resolve_local_approach_id, resolve_magic_fox_approach_id
+
+    cfg = load_config()
+    local_approach_id = resolve_local_approach_id(cfg)
+    magic_fox_approach_id = resolve_magic_fox_approach_id(project)
+
     registry_ids = [int(x) for x in (model_ids or []) if x]
-    approach_id = (project or {}).get('approach_id')
-    if not approach_id and (deploy_model_ids or train_model_ids):
-        from server.core import load_config, DEFAULT_CONFIG
-        cfg = load_config()
-        approach_id = cfg.get('defect_approach_id') or DEFAULT_CONFIG.get('defect_approach_id')
     if deploy_model_ids:
-        if not approach_id:
-            raise ValueError('导入线上部署模型需要项目配置 approach_id，或在设置中配置 defect_approach_id')
+        if not local_approach_id:
+            raise ValueError('导入部署模型需要在设置中配置 defect_approach_id（本地总控 Approach）')
         for did in deploy_model_ids:
-            registry_ids.append(import_deploy_model(did, approach_id))
+            registry_ids.append(import_deploy_model(did, local_approach_id, client=None, config=cfg))
 
     train_ids = [int(x) for x in (train_model_ids or []) if x]
-    if train_ids and not approach_id:
-        raise ValueError('训练模型预测需要项目配置 approach_id，或在设置中配置 defect_approach_id')
+    if train_ids and not magic_fox_approach_id:
+        raise ValueError('训练模型预测需要关联 Magic-Fox 项目并配置 approach_id')
 
     seen = set()
     unique_registry = []
@@ -457,7 +465,7 @@ def enqueue_predict_jobs_batch(
 
     for tid in train_ids:
         model_name = _resolve_train_model_name(
-            tid, approach_id, project_id=platform_project_id,
+            tid, magic_fox_approach_id, project_id=platform_project_id,
         )
         job_name = f'{prefix} · {model_name}'
         result = enqueue_platform_predict_job(

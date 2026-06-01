@@ -30,7 +30,7 @@ export default function ProjectSidebar({
                 <span className="platform-project-item-body">
                   <span className="platform-project-item-name">{p.name}</span>
                   <span className="platform-project-item-meta">
-                    {p.approach_id != null ? `Approach ${p.approach_id}` : '待配置 Approach'}
+                    {p.approach_id != null ? `MF ${p.approach_id}` : '待配置 MF Approach'}
                   </span>
                 </span>
                 <span

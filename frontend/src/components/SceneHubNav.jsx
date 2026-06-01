@@ -4,6 +4,8 @@ const HUBS = {
   query: [
     { to: '/', label: '查询', end: true },
     { to: '/history', label: '查询历史' },
+    { to: '/manual-qc', label: '人工质检' },
+    { to: '/curation', label: '筛选归档' },
   ],
   predict: [
     { to: '/online-predict', label: '在线预测' },
