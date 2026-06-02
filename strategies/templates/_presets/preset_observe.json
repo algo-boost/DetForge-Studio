@@ -1,0 +1,20 @@
+{
+  "id": "preset_observe",
+  "name": "观察调试",
+  "description": "弹窗查看 DataFrame 与类别框统计（不改变数据）",
+  "icon": "eye",
+  "category": "预设步骤",
+  "preset_group": "observe",
+  "pipeline": true,
+  "inject_functions": ["view", "info", "describe_df", "count_category_boxes"],
+  "params_schema": [
+    { "key": "stats_label", "label": "统计标题", "type": "text", "default": "类别统计" },
+    { "key": "df_label", "label": "数据标题", "type": "text", "default": "DataFrame" },
+    { "key": "show_stats", "label": "显示类别统计", "type": "select", "default": "yes", "options": [{ "value": "yes", "label": "是" }, { "value": "no", "label": "否" }] },
+    { "key": "show_df", "label": "显示 DataFrame", "type": "select", "default": "yes", "options": [{ "value": "yes", "label": "是" }, { "value": "no", "label": "否" }] }
+  ],
+  "process_lines": [
+    "if {show_stats}: view(count_category_boxes(df), {stats_label})",
+    "if {show_df}: view(df, {df_label})"
+  ]
+}

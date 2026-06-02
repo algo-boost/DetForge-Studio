@@ -90,14 +90,22 @@ def _env_password_creds():
     return None
 
 
+def _disk_secret_set(key):
+    try:
+        from server.core import secret_field_set_on_disk
+        return secret_field_set_on_disk(key)
+    except Exception:
+        return False
+
+
 def _credential_source(cfg):
     """返回 (configured: bool, source: str|None)。source 仅 config | env。"""
     mode = str(cfg.get('magic_fox_auth_mode') or 'password').strip().lower()
     if mode not in ('password', 'token'):
         mode = 'password'
     has_user = bool(str(cfg.get('magic_fox_username') or '').strip())
-    has_pw = bool(str(cfg.get('magic_fox_password') or '').strip())
-    has_token = bool(str(cfg.get('magic_fox_access_token') or '').strip())
+    has_pw = bool(str(cfg.get('magic_fox_password') or '').strip()) or _disk_secret_set('magic_fox_password')
+    has_token = bool(str(cfg.get('magic_fox_access_token') or '').strip()) or _disk_secret_set('magic_fox_access_token')
 
     if mode == 'token':
         if has_token:
@@ -120,8 +128,8 @@ def auth_status(config=None):
     if mode not in ('password', 'token'):
         mode = 'password'
     has_user = bool(str(cfg.get('magic_fox_username') or '').strip())
-    has_pw = bool(str(cfg.get('magic_fox_password') or '').strip())
-    has_token = bool(str(cfg.get('magic_fox_access_token') or '').strip())
+    has_pw = bool(str(cfg.get('magic_fox_password') or '').strip()) or _disk_secret_set('magic_fox_password')
+    has_token = bool(str(cfg.get('magic_fox_access_token') or '').strip()) or _disk_secret_set('magic_fox_access_token')
     configured, source = _credential_source(cfg)
     username = str(cfg.get('magic_fox_username') or '').strip()
     if not username and source == 'env':
@@ -140,7 +148,8 @@ def auth_status(config=None):
 
 
 def merge_auth_overrides(cfg, overrides=None):
-    """用请求体中的临时字段覆盖 cfg（空密码/空 token 表示沿用 cfg 中已有值）。"""
+    """用请求体中的临时字段覆盖 cfg（空密码/空 token 表示沿用 cfg / 磁盘密文）。"""
+    from server.core import preserve_secrets_for_save
     base = _cfg() if cfg is None else dict(cfg)
     ov = dict(overrides or {})
 
@@ -159,7 +168,7 @@ def merge_auth_overrides(cfg, overrides=None):
     if tok:
         base['magic_fox_access_token'] = tok
 
-    return base
+    return preserve_secrets_for_save(base, ov)
 
 
 def build_config_to_persist(current_cfg, overrides=None):
@@ -181,7 +190,19 @@ def resolve_magic_fox_credentials(config=None):
     mode = str(cfg.get('magic_fox_auth_mode') or 'password').strip().lower()
 
     if mode == 'token':
-        token = normalize_access_token(cfg.get('magic_fox_access_token')) or _env_token()
+        from studio.config_crypto import is_encrypted, resolve_secret_value
+        raw_tok = cfg.get('magic_fox_access_token')
+        token = normalize_access_token(
+            resolve_secret_value(raw_tok) if isinstance(raw_tok, str) and is_encrypted(raw_tok) else raw_tok
+        ) or _env_token()
+        if not token:
+            try:
+                from server.core import read_config_file_raw
+                disk = read_config_file_raw().get('magic_fox_access_token')
+                if isinstance(disk, str) and is_encrypted(disk):
+                    token = normalize_access_token(resolve_secret_value(disk))
+            except Exception:
+                pass
         if token:
             return base_url, token
         raise ValueError(
@@ -190,8 +211,19 @@ def resolve_magic_fox_credentials(config=None):
             '或设置环境变量 MAGIC_FOX_TOKEN / MAGIC_FOX_ACCESS_TOKEN。'
         )
 
+    from studio.config_crypto import is_encrypted, resolve_secret_value
     user = str(cfg.get('magic_fox_username') or '').strip()
-    pw = str(cfg.get('magic_fox_password') or '').strip()
+    raw_pw = cfg.get('magic_fox_password')
+    pw = resolve_secret_value(raw_pw) if isinstance(raw_pw, str) and is_encrypted(raw_pw) else str(raw_pw or '').strip()
+    if not pw:
+        disk = None
+        try:
+            from server.core import read_config_file_raw
+            disk = read_config_file_raw().get('magic_fox_password')
+        except Exception:
+            disk = None
+        if isinstance(disk, str) and disk.strip():
+            pw = resolve_secret_value(disk) if is_encrypted(disk) else disk.strip()
     if user and pw:
         return base_url, user, pw
     env_creds = _env_password_creds()

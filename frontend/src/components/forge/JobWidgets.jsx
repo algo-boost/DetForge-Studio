@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, openSampleGallery, toast } from '../../api/client';
 import { formatSampleGalleryError } from '../../lib/sampleGallery';
@@ -104,6 +104,7 @@ export function JobDetail({ job }) {
   const [filtersDraft, setFiltersDraft] = useState({ ...DEFAULT_RESULT_FILTERS });
   const [counting, setCounting] = useState(false);
   const [openingViz, setOpeningViz] = useState(false);
+  const logWrapRef = useRef(null);
   const exportResult = job.params?.result;
   const syncResult = job.params?.result;
   const isActive = job.status === 'running' || job.status === 'pending';
@@ -119,9 +120,15 @@ export function JobDetail({ job }) {
   useEffect(() => {
     loadLogs();
     if (!isActive) return undefined;
-    const t = setInterval(loadLogs, 2000);
+    const t = setInterval(loadLogs, 1500);
     return () => clearInterval(t);
   }, [job.id, isActive]);
+
+  useEffect(() => {
+    if (tab !== 'log' || !logWrapRef.current) return;
+    const el = logWrapRef.current;
+    el.scrollTop = el.scrollHeight;
+  }, [logLines, tab]);
 
   const refreshCount = useCallback(async (activeFilters = filters) => {
     if (job.job_type !== 'predict') return;
@@ -245,12 +252,19 @@ export function JobDetail({ job }) {
 
       <div className="pjobs-detail-body">
         {tab === 'log' && (
-          <div className="pjobs-log-wrap">
-            {logLines.length ? (
-              <pre className="pjobs-log">{logLines.join('\n')}</pre>
-            ) : (
-              <div className="pjobs-empty-inline">{isActive ? '等待日志输出…' : '暂无日志'}</div>
-            )}
+          <div className="pjobs-log-panel">
+            <p className="pjobs-log-hint muted">
+              完整运行日志（文件 <code>exports/job_logs/{job.id}.log</code>）
+              {isActive ? ' · 运行中自动刷新' : ''}
+              {logLines.length > 0 ? ` · ${logLines.length} 行` : ''}
+            </p>
+            <div className="pjobs-log-wrap" ref={logWrapRef}>
+              {logLines.length ? (
+                <pre className="pjobs-log">{logLines.join('\n')}</pre>
+              ) : (
+                <div className="pjobs-empty-inline">{isActive ? '等待日志输出…（大任务可能先显示「开始」再等进度）' : '暂无日志'}</div>
+              )}
+            </div>
           </div>
         )}
         {tab === 'export' && job.job_type === 'manual_qc_export' && (

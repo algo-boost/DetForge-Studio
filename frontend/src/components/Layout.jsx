@@ -37,6 +37,12 @@ const NAV_ICONS = {
       <circle cx="19" cy="17" r="2" />
     </svg>
   ),
+  strategy: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M4 6h16M4 12h10M4 18h6" />
+      <circle cx="19" cy="12" r="2" /><circle cx="19" cy="18" r="2" />
+    </svg>
+  ),
   config: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
       <circle cx="12" cy="12" r="3" />
@@ -149,6 +155,9 @@ export function Layout() {
           <div className="sb-section-label">数据查询</div>
           <NavItem to="/" end icon="query">查询</NavItem>
           <NavItem to="/history" icon="history">查询历史</NavItem>
+          <NavItem to="/strategies" icon="strategy">查询策略</NavItem>
+
+          <div className="sb-section-label">质检归档</div>
           <NavItem to="/manual-qc" icon="qc">人工质检</NavItem>
           <NavItem to="/curation" icon="docs">筛选归档</NavItem>
 
@@ -160,7 +169,10 @@ export function Layout() {
           <div className="sb-section-label">平台工具</div>
           <NavItem to="/training" icon="sync">训练平台</NavItem>
           <NavItem to="/viewer" icon="viewer">样本图库</NavItem>
+
           <div className="sb-nav-footer">
+            <div className="sb-section-label">帮助</div>
+            <NavItem to="/docs" icon="docs">使用手册</NavItem>
             <NavItem to="/config" icon="config">设置</NavItem>
           </div>
         </nav>

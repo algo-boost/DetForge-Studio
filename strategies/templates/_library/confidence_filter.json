@@ -1,0 +1,11 @@
+{
+  "id": "confidence_filter",
+  "name": "置信度过滤",
+  "description": "按检测置信度区间筛选",
+  "icon": "target",
+  "params_schema": [
+    { "key": "min_conf", "label": "最低置信度", "type": "number", "default": 0.0, "min": 0, "max": 1, "step": 0.05 },
+    { "key": "max_conf", "label": "最高置信度", "type": "number", "default": 1.0, "min": 0, "max": 1, "step": 0.05 }
+  ],
+  "python_code": "def filter(df, params):\n    import json\n    min_c = params.get('min_conf', 0)\n    max_c = params.get('max_conf', 1)\n    def max_conf(ext_val):\n        try:\n            obj = json.loads(ext_val) if isinstance(ext_val, str) else ext_val\n            preds = obj.get('original_predictions', []) if isinstance(obj, dict) else obj\n            if isinstance(preds, list):\n                confs = [p.get('confidence',0) for p in preds if isinstance(p, dict)]\n                return max(confs) if confs else 0\n            return 0\n        except:\n            return 0\n    df['_max_conf'] = df['ext'].apply(max_conf)\n    result = df[(df['_max_conf'] >= min_c) & (df['_max_conf'] <= max_c)]\n    return result.drop(columns=['_max_conf'], errors='ignore')"
+}

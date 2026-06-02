@@ -12,7 +12,7 @@ import { formatConsoleSummary } from '../lib/consoleOutput';
 import { Modal } from '../components/Modal';
 import { useRulesStudio } from '../hooks/useRulesStudio';
 import { useEditorWorkspace, FullscreenIcon } from '../hooks/useEditorWorkspace';
-import { DEFAULT_PY, DEFAULT_SAMPLE, DEFAULT_SEED, DEFAULT_SQL, DEFAULT_DETAIL_SQL, DEFAULT_PREDICT_SQL, buildPredictJobSql, buildSampleFunction } from '../lib/constants';
+import { DEFAULT_PY, DEFAULT_SAMPLE, DEFAULT_SEED, DEFAULT_SQL, DEFAULT_DETAIL_SQL, DEFAULT_PREDICT_SQL, buildPredictJobSql } from '../lib/constants';
 import { fetchRecentPredictJobs, formatPredictJobLabel, parsePredictJobIdFromSql, resolvePredictJobId } from '../lib/predictJob';
 import { buildHistoryEntry, saveHistoryEntry } from '../lib/history';
 import { setTimePreset } from '../lib/time';
@@ -21,19 +21,22 @@ import StrategyEnvFields from '../components/StrategyEnvFields';
 import {
   buildStrategyEnvDefaults,
   extractSqlTemplateVars,
+  formatEnvDateTime,
   loadStrategyEnv,
   parseEnvRandomSeed,
   parseEnvSampleSizeOptional,
   saveStrategyEnv,
+  toDatetimeLocalValue,
   RUNTIME_VAR_LABELS,
 } from '../lib/envVars';
+import { TIME_ENV_FIELDS } from '../lib/strategyEnvSchema';
+import { shouldUseFullProcessPreview } from '../lib/previewMode';
 import {
   extractSampleFromSampleCode,
   hasInlineSampling,
   hasInlineSamplingInFlow,
   normalizeProcessSampleCall,
   patchFlowSample,
-  patchSampleFunction,
   resolveSampleSettings,
   resolveSampleCodeForExecution,
   splitStrategyPython,
@@ -67,6 +70,10 @@ function sqlNeedsTimeRange(currentSql, source, jobId) {
   return currentSql.includes('${START_TIME}') || currentSql.includes('${END_TIME}');
 }
 
+function envTimeReady(env) {
+  return Boolean(String(env?.START_TIME || '').trim() && String(env?.END_TIME || '').trim());
+}
+
 export default function QueryPage() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -76,8 +83,6 @@ export default function QueryPage() {
   const [pythonCode, setPythonCode] = useState(() => localStorage.getItem('pc_python') || DEFAULT_PY);
   const [sampleCode, setSampleCode] = useState('');
   const [filterMode, setFilterMode] = useState('rules');
-  const [startTime, setStartTime] = useState('');
-  const [endTime, setEndTime] = useState('');
   const [strategies, setStrategies] = useState([]);
   const [dataSource, setDataSource] = useState(initialQuery.dataSource);
   const [predictJobId, setPredictJobId] = useState(null);
@@ -102,6 +107,7 @@ export default function QueryPage() {
   const [deleteId, setDeleteId] = useState('');
   const [queryEnv, setQueryEnv] = useState({});
   const [envSchema, setEnvSchema] = useState([]);
+  const [processPipeline, setProcessPipeline] = useState([]);
   const importRef = useRef(null);
   const pythonFileRef = useRef(null);
   const skipSampleSyncRef = useRef(false);
@@ -117,7 +123,17 @@ export default function QueryPage() {
 
   const sampleSize = useMemo(() => parseEnvSampleSizeOptional(queryEnv), [queryEnv]);
   const randomSeed = useMemo(() => parseEnvRandomSeed(queryEnv, DEFAULT_SEED), [queryEnv]);
-  const hasPostSample = sampleSize != null;
+  const needsTimeRange = useMemo(
+    () => sqlNeedsTimeRange(sql, dataSource, predictJobId),
+    [sql, dataSource, predictJobId],
+  );
+  /** 时段与其它参数统一在「策略参数」区，不再单独显示顶部日期条 */
+  const displayEnvSchema = useMemo(() => {
+    if (envSchema.length) return envSchema;
+    if (needsTimeRange && dataSource !== 'predict_result') return TIME_ENV_FIELDS;
+    return [];
+  }, [envSchema, needsTimeRange, dataSource]);
+  const showStrategyEnv = displayEnvSchema.length > 0 || Boolean(loadedPresetId);
 
   const patchQueryEnv = useCallback((patch, { save = true } = {}) => {
     setQueryEnv((prev) => {
@@ -165,7 +181,9 @@ export default function QueryPage() {
     if (snap.sample_code != null) setSampleCode(snap.sample_code || split.sampleCode || '');
     const m = snap.filter_mode;
     if (m) setFilterMode(uiFilterMode(m));
-    if (snap.flow) studio.setFlow(snap.flow);
+    if (snap.flow) {
+      studio.setFlow(snap.flow, { removeEmptyRows: snap.remove_empty_rows });
+    }
     savedFilterRulesCodeRef.current = snap.filter_rules_code || '';
     const sample = resolveSampleSettings({
       pythonCode: split.processCode,
@@ -207,8 +225,10 @@ export default function QueryPage() {
 
   useEffect(() => {
     const p = setTimePreset('7days');
-    setStartTime(p.start);
-    setEndTime(p.end);
+    setQueryEnv({
+      START_TIME: formatEnvDateTime(p.start),
+      END_TIME: formatEnvDateTime(p.end),
+    });
     refreshPathChecks(true);
     reloadStrategies().then(() => {
       const urlStrategy = searchParams.get('strategy');
@@ -231,8 +251,12 @@ export default function QueryPage() {
     if (restored.current || !location.state?.restore) return;
     restored.current = true;
     const item = location.state.restore;
-    if (item.start_raw) setStartTime(item.start_raw);
-    if (item.end_raw) setEndTime(item.end_raw);
+    if (item.start_raw || item.end_raw) {
+      patchQueryEnv({
+        ...(item.start_raw ? { START_TIME: formatEnvDateTime(item.start_raw) } : {}),
+        ...(item.end_raw ? { END_TIME: formatEnvDateTime(item.end_raw) } : {}),
+      }, { save: false });
+    }
     if (item.snapshot) applySnapshot(item.snapshot);
     else if (item.strategy_id) loadStrategy(item.strategy_id);
     if (item.sample_size != null || item.random_seed != null) {
@@ -317,7 +341,7 @@ export default function QueryPage() {
 
   const uiBackendMode = backendFilterMode(filterMode);
   const flowPayload = filterMode === 'code' ? null : studio.flow;
-  const resolvedFlow = mergeFlowForSave(originalFlowRef.current, flowPayload);
+  const resolvedFlow = mergeFlowForSave(originalFlowRef.current, flowPayload, studio.removeEmpty);
   const inlineSample = hasInlineSampling(pythonCode, resolvedFlow, sampleCode);
   const effectiveSampleCode = resolveSampleCodeForExecution(
     sampleCode,
@@ -387,6 +411,13 @@ export default function QueryPage() {
 
   const buildBody = useCallback(async (overrides = {}) => {
     const wantsInline = hasInlineSampling(pythonCode, resolvedFlow, sampleCode);
+    const fullProcessPreview = shouldUseFullProcessPreview({
+      pythonCode,
+      sampleCode,
+      flow: resolvedFlow,
+      filterMode,
+      processPipeline,
+    });
     const effectiveSample = resolveSampleCodeForExecution(
       sampleCode,
       { sampleSize, randomSeed },
@@ -397,19 +428,22 @@ export default function QueryPage() {
       : (filterMode === 'code' ? null : resolvedFlow);
     return {
       sql: overrides.sql ?? sql,
-      start_time: formatSqlTime(startTime, false),
-      end_time: formatSqlTime(endTime, true),
+      start_time: formatSqlTime(toDatetimeLocalValue(queryEnv.START_TIME), false),
+      end_time: formatSqlTime(toDatetimeLocalValue(queryEnv.END_TIME), true),
+      strategy_id: loadedPresetId || undefined,
+      env_schema: envSchema.length ? envSchema : undefined,
       filter_mode: uiBackendMode === 'code' ? 'code' : 'flow',
       flow: flowForRequest,
       python_code: pythonCode,
       sample_code: effectiveSample,
       filter_rules_code: await resolveFilterRulesCode(),
-      preview_mode: wantsInline || filterMode === 'code' ? 'full' : 'rules',
+      preview_mode: fullProcessPreview ? 'full' : 'rules',
+      process_pipeline: processPipeline.length ? processPipeline : undefined,
       data_source: dataSource,
       env: queryEnv,
       ...(dataSource === 'predict_result' && predictJobId ? { predict_job_id: predictJobId } : {}),
     };
-  }, [sql, startTime, endTime, uiBackendMode, filterMode, resolvedFlow, pythonCode, sampleCode, studio, dataSource, queryEnv, predictJobId, sampleSize, randomSeed, resolveFilterRulesCode]);
+  }, [sql, loadedPresetId, envSchema, uiBackendMode, filterMode, resolvedFlow, pythonCode, sampleCode, studio, dataSource, queryEnv, predictJobId, sampleSize, randomSeed, resolveFilterRulesCode, processPipeline]);
 
   const onPreview = async () => {
     let batch = null;
@@ -419,8 +453,8 @@ export default function QueryPage() {
       toast(e.message, 'error');
       return;
     }
-    if (sqlNeedsTimeRange(sql, dataSource, batch?.jobId ?? predictJobId) && (!startTime || !endTime)) {
-      toast('请选择查询时段', 'error');
+    if (sqlNeedsTimeRange(sql, dataSource, batch?.jobId ?? predictJobId) && !envTimeReady(queryEnv)) {
+      toast('请在策略参数中填写开始/结束时间', 'error');
       return;
     }
     if (!(await ensureFilterRulesReady())) return;
@@ -428,13 +462,31 @@ export default function QueryPage() {
     try {
       const res = await api.previewFilter(await buildBody(batch ? { sql: batch.sql } : {}));
       if (!res.success) throw new Error(res.error);
-      const parts = [`SQL ${res.sql_rows} 行`, `规则后 ${res.filter_rows} 行`];
-      parts.push(res.post_sample_skipped ? `已含代码采样 ${res.after_sample} 条` : `采样约 ${res.after_sample} 条`);
+      const afterLabel = res.preview_mode === 'full' ? 'process_data 后' : '规则后';
+      const parts = [`SQL ${res.sql_rows} 行`, `${afterLabel} ${res.filter_rows} 行`];
+      if (res.preview_mode === 'full') {
+        parts.push(`输出 ${res.after_sample} 条`);
+      } else {
+        parts.push(res.post_sample_skipped ? `已含代码采样 ${res.after_sample} 条` : `采样约 ${res.after_sample} 条`);
+      }
       if (res.unique_products != null) parts.push(`${res.unique_products} 个产品`);
+      if (res.execution_time != null) parts.push(`${res.execution_time}s`);
       const text = parts.join(' · ');
       setPreviewStats(text);
       setPreviewStale(false);
       setExecutionDetail({ summary: `预览 · ${text}`, detail: JSON.stringify(res, null, 2) });
+      if (res.preview_mode === 'full' && (res.console_output || res.execution_time != null)) {
+        const summary = formatConsoleSummary({
+          executionTime: res.execution_time,
+          inputRows: res.sql_rows,
+          outputRows: res.filter_rows,
+        });
+        setConsole({
+          text: ['✓ process_data 预览完成', summary].filter(Boolean).join('\n\n'),
+          type: 'success',
+          consoleOutput: res.console_output || '',
+        });
+      }
       toast(text);
     } catch (e) { toast(e.message, 'error'); }
     finally { setPreviewLoading(false); }
@@ -449,8 +501,8 @@ export default function QueryPage() {
       toast(e.message, 'error');
       return;
     }
-    if (sqlNeedsTimeRange(sql, dataSource, batch?.jobId ?? predictJobId) && (!startTime || !endTime)) {
-      toast('请选择查询时段', 'error');
+    if (sqlNeedsTimeRange(sql, dataSource, batch?.jobId ?? predictJobId) && !envTimeReady(queryEnv)) {
+      toast('请在策略参数中填写开始/结束时间', 'error');
       return;
     }
     if (!(await ensureFilterRulesReady())) return;
@@ -484,10 +536,10 @@ export default function QueryPage() {
       saveHistoryEntry(buildHistoryEntry({
         strategy: stratName,
         strategyId: loadedPresetId,
-        start: formatSqlTime(startTime, false),
-        end: formatSqlTime(endTime, true),
-        startRaw: startTime,
-        endRaw: endTime,
+        start: formatSqlTime(toDatetimeLocalValue(queryEnv.START_TIME), false),
+        end: formatSqlTime(toDatetimeLocalValue(queryEnv.END_TIME), true),
+        startRaw: toDatetimeLocalValue(queryEnv.START_TIME),
+        endRaw: toDatetimeLocalValue(queryEnv.END_TIME),
         count: data.length,
         sampleSize,
         randomSeed,
@@ -552,6 +604,7 @@ export default function QueryPage() {
       setSampleCode('');
       setQueryEnv({});
       setEnvSchema([]);
+      setProcessPipeline([]);
       savedFilterRulesCodeRef.current = '';
       return;
     }
@@ -564,9 +617,14 @@ export default function QueryPage() {
     localStorage.setItem('pc_last_preset', id);
     setSql(s.sql_template || DEFAULT_SQL);
     const varsRes = await api.getStrategyVariables(id).catch(() => null);
-    const schema = varsRes?.data?.custom_vars || [];
+    const schema = (varsRes?.data?.custom_vars || []).map((row) => {
+      const key = String(row?.key || '').toUpperCase();
+      if (key === 'START_TIME' || key === 'END_TIME') return { ...row, type: 'datetime' };
+      return row;
+    });
+    const defaults = varsRes?.data?.env_defaults || {};
     setEnvSchema(schema);
-    setQueryEnv(buildStrategyEnvDefaults(schema, s, loadStrategyEnv(id)));
+    setQueryEnv(buildStrategyEnvDefaults(schema, s, { ...loadStrategyEnv(id), ...defaults }));
     const split = splitStrategyPython({
       pythonCode: s.python_code,
       sampleCode: s.sample_code,
@@ -594,7 +652,13 @@ export default function QueryPage() {
     prevSampleRef.current = { sampleSize: sampleSettings.sampleSize, randomSeed: sampleSettings.randomSeed };
     queueMicrotask(() => { skipSampleSyncRef.current = false; });
     setFilterMode(uiFilterMode(s.filter_mode || 'flow'));
-    if (s.flow) studio.setFlow(s.flow);
+    setProcessPipeline(Array.isArray(s.process_pipeline) ? s.process_pipeline : []);
+    if (s.flow) {
+      studio.setFlow(s.flow, {
+        removeEmptyRows: s.remove_empty_rows,
+        filterRulesCode: s.filter_rules_code,
+      });
+    }
     markStale();
   }
 
@@ -612,6 +676,7 @@ export default function QueryPage() {
     env_schema: envSchema,
     filter_mode: uiBackendMode,
     flow: resolvedFlow || { version: 2, nodes: [] },
+    remove_empty_rows: studio.removeEmpty,
     filter_rules_code: await resolveFilterRulesCode(),
   });
 
@@ -626,6 +691,7 @@ export default function QueryPage() {
       originalFlowRef.current = payload.flow ? JSON.parse(JSON.stringify(payload.flow)) : null;
       localStorage.setItem('pc_last_preset', payload.id);
       await reloadStrategies();
+      if (loadedPresetId === payload.id) await loadStrategy(payload.id);
       toast('策略已保存');
     } catch (e) { toast(e.message, 'error'); }
   };
@@ -775,12 +841,10 @@ export default function QueryPage() {
   })();
 
   const sampleSizeHint = inlineSample
-    ? `代码内采样 · 见策略参数 SAMPLE_SIZE / RANDOM_SEED`
-    : !hasPostSample
-      ? '未配置 SAMPLE_SIZE · SQL/Python 之后不再二次随机采样（限流请用 ${NUM} 等）'
-      : filterMode !== 'code'
-        ? `规则筛选后采样 · SAMPLE_SIZE=${sampleSize} · RANDOM_SEED=${randomSeed}`
-        : `筛选后采样 · SAMPLE_SIZE=${sampleSize} · RANDOM_SEED=${randomSeed}`;
+    ? (sampleSize != null
+      ? `策略流 random_sample · process_data 内采样 · SAMPLE_SIZE=${sampleSize} · RANDOM_SEED=${randomSeed}`
+      : '策略流已选 random_sample · 请在策略参数填写 SAMPLE_SIZE 后才会执行采样')
+    : '未在策略流中选择 random_sample · 不随机采样（时间窗 START/END 除外，其余走环境变量）';
 
   const sqlVarHint = useMemo(() => {
     const used = extractSqlTemplateVars(sql);
@@ -829,7 +893,7 @@ export default function QueryPage() {
           <button type="button" className="btn btn-sm btn-ghost" onClick={exportStrategy}>导出</button>
           <button type="button" className="btn btn-sm btn-ghost" onClick={() => importRef.current?.click()}>导入</button>
           <input ref={importRef} type="file" accept=".json" hidden onChange={(e) => { importStrategy(e.target.files?.[0]); e.target.value = ''; }} />
-          {loadedPresetId && !String(loadedPresetId).startsWith('_') && (
+          {loadedPresetId && (
             <button type="button" className="btn btn-sm btn-ghost" onClick={() => setDeleteId(loadedPresetId)}>删除</button>
           )}
         </div>
@@ -878,24 +942,10 @@ export default function QueryPage() {
                 </span>
               </div>
             )}
-            {dataSource !== 'predict_result' && (
-            <>
-            <div className="time-presets">
-              {['today', 'yesterday', '7days', '30days'].map((p) => (
-                <button key={p} type="button" className="preset-btn" onClick={() => { const r = setTimePreset(p); setStartTime(r.start); setEndTime(r.end); markStale(); }}>
-                  {({ today: '今天', yesterday: '昨天', '7days': '近 7 天', '30days': '近 30 天' })[p]}
-                </button>
-              ))}
-            </div>
-            <div className="date-range">
-              <input type="datetime-local" value={startTime} step={60} onChange={(e) => { setStartTime(e.target.value); markStale(); }} />
-              <span className="date-sep">—</span>
-              <input type="datetime-local" value={endTime} step={60} onChange={(e) => { setEndTime(e.target.value); markStale(); }} />
-            </div>
-            </>
-            )}
+            {showStrategyEnv && (
             <StrategyEnvFields
               strategyId={loadedPresetId}
+              schema={displayEnvSchema}
               values={queryEnv}
               onChange={(env) => {
                 setQueryEnv(env);
@@ -905,6 +955,7 @@ export default function QueryPage() {
               compact
               testId="query-env-section"
             />
+            )}
             <button type="button" className={`btn btn-secondary${previewStale ? ' is-recommended' : ''}`} disabled={previewLoading} onClick={onPreview}>{previewLoading ? '预览中…' : '预览筛选'}</button>
             <button type="button" className={`btn btn-primary${previewStale && studio.rules.length ? ' needs-preview' : ''}`} disabled={loading || previewLoading} onClick={onExecute} data-testid="query-execute">{loading ? '执行中…' : '执行查询'}</button>
             {previewLoading && <div className="preview-progress" aria-hidden><div className="preview-progress-bar" /></div>}
@@ -1073,11 +1124,16 @@ export default function QueryPage() {
           <div className="form-actions">
             <button type="button" className="btn btn-ghost" onClick={() => setDeleteId('')}>取消</button>
             <button type="button" className="btn btn-danger" onClick={async () => {
-              await api.deleteStrategy(deleteId);
-              setDeleteId('');
-              loadStrategy('');
-              reloadStrategies();
-              toast('已删除');
+              try {
+                const res = await api.deleteStrategy(deleteId);
+                if (!res.success) throw new Error(res.error);
+                setDeleteId('');
+                loadStrategy('');
+                reloadStrategies();
+                toast('已删除');
+              } catch (e) {
+                toast(e.message || '删除失败', 'error');
+              }
             }}>删除</button>
           </div>
         </div>

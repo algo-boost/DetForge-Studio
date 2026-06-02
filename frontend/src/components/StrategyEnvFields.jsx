@@ -1,12 +1,40 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
+import { formatEnvDateTime } from '../lib/envVars';
+import { setTimePreset } from '../lib/time';
+import StrategyEnvFieldControl from './StrategyEnvFieldControl';
+
+const TIME_PRESETS = [
+  { id: 'today', label: '今天' },
+  { id: 'yesterday', label: '昨天' },
+  { id: '7days', label: '近 7 天' },
+  { id: '30days', label: '近 30 天' },
+];
+
+function applyTimePreset(preset) {
+  const r = setTimePreset(preset);
+  return {
+    START_TIME: formatEnvDateTime(r.start),
+    END_TIME: formatEnvDateTime(r.end),
+  };
+}
 
 /**
- * 策略可调参数（来自策略 env_schema，查询 / 回跑共用）
- * label 为中文名，直接展示给用户。
+ * 策略可调参数（按类型渲染控件，查询 / 回跑共用）
  */
+function normalizeTimeFieldTypes(rows) {
+  return (rows || []).map((row) => {
+    const key = String(row?.key || '').toUpperCase();
+    if (key === 'START_TIME' || key === 'END_TIME') {
+      return { ...row, key, type: 'datetime' };
+    }
+    return row;
+  });
+}
+
 export default function StrategyEnvFields({
   strategyId,
+  schema: schemaProp,
   values,
   onChange,
   onStale,
@@ -14,27 +42,47 @@ export default function StrategyEnvFields({
   compact = false,
   testId = 'strategy-env-fields',
 }) {
-  const [schema, setSchema] = useState([]);
+  const [fetchedSchema, setFetchedSchema] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  const useParentSchema = Array.isArray(schemaProp) && schemaProp.length > 0;
+
   useEffect(() => {
+    if (useParentSchema) {
+      setFetchedSchema([]);
+      setLoading(false);
+      return;
+    }
     if (!strategyId) {
-      setSchema([]);
+      setFetchedSchema([]);
       return;
     }
     setLoading(true);
     api.getStrategyVariables(strategyId)
-      .then((r) => setSchema(r.data?.custom_vars || []))
-      .catch(() => setSchema([]))
+      .then((r) => setFetchedSchema(normalizeTimeFieldTypes(r.data?.custom_vars || [])))
+      .catch(() => setFetchedSchema([]))
       .finally(() => setLoading(false));
-  }, [strategyId]);
+  }, [strategyId, useParentSchema]);
 
-  if (!strategyId) return null;
-  if (!loading && !schema.length) return null;
+  const schema = useMemo(
+    () => normalizeTimeFieldTypes(useParentSchema ? schemaProp : fetchedSchema),
+    [useParentSchema, schemaProp, fetchedSchema],
+  );
+
+  const hasTimeFields = useMemo(
+    () => schema.some((f) => f.key === 'START_TIME' || f.key === 'END_TIME'),
+    [schema],
+  );
+
+  if (!schema.length && !loading) return null;
 
   const setField = (key, val) => {
-    const next = { ...values, [String(key).toUpperCase()]: val };
-    onChange(next);
+    onChange({ ...values, [String(key).toUpperCase()]: val });
+    onStale?.();
+  };
+
+  const applyPreset = (presetId) => {
+    onChange({ ...values, ...applyTimePreset(presetId) });
     onStale?.();
   };
 
@@ -44,25 +92,37 @@ export default function StrategyEnvFields({
       data-testid={testId}
     >
       <span className="strategy-env-fields-title">{title}</span>
+      {hasTimeFields && (
+        <div className="strategy-env-time-presets">
+          <span className="muted strategy-env-time-label">时段快捷</span>
+          <div className="time-presets">
+            {TIME_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className="preset-btn"
+                onClick={() => applyPreset(p.id)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="strategy-env-fields-grid">
-        {(loading ? [{ key: '_loading', label: '加载中…' }] : schema).map((field) => (
-          field.key === '_loading' ? (
-            <span key="_loading" className="muted strategy-env-loading">加载参数…</span>
-          ) : (
-            <label key={field.key} className="strategy-env-field">
-              <span className="strategy-env-field-label">{field.label || field.key}</span>
-              <input
-                type={field.type === 'number' ? 'number' : 'text'}
-                step={field.type === 'number' ? '0.01' : undefined}
-                placeholder={field.placeholder || field.default || ''}
-                title={field.description || field.key}
-                value={values[field.key] ?? values[field.key?.toUpperCase()] ?? ''}
-                onChange={(e) => setField(field.key, e.target.value)}
-                data-testid={`strategy-env-${field.key}`}
-              />
-            </label>
-          )
-        ))}
+        {loading ? (
+          <span className="muted strategy-env-loading">加载参数…</span>
+        ) : (
+          schema.map((field) => (
+            <StrategyEnvFieldControl
+              key={field.key}
+              field={field}
+              values={values}
+              onChange={setField}
+              testIdPrefix="strategy-env"
+            />
+          ))
+        )}
       </div>
     </div>
   );

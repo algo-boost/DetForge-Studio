@@ -4,6 +4,8 @@ import { installApiMocks } from '../fixtures/mock-api.js';
 const SIDEBAR_ROUTES = [
   { path: '/', title: '数据查询' },
   { path: '/history', title: '查询历史' },
+  { path: '/strategies', title: '查询策略' },
+  { path: '/docs', title: '使用手册' },
   { path: '/online-predict', heading: '在线预测' },
   { path: '/jobs', title: '预测任务' },
   { path: '/models', title: '模型' },
@@ -40,5 +42,11 @@ test.describe('侧栏导航与 SPA 路由', () => {
     await page.goto('/');
     await page.getByRole('link', { name: '查询历史' }).first().click();
     await expect(page).toHaveURL(/\/history/);
+  });
+
+  test('质检归档 Hub Tab 切换', async ({ page }) => {
+    await page.goto('/manual-qc');
+    await page.getByRole('link', { name: '筛选归档' }).first().click();
+    await expect(page).toHaveURL(/\/curation/);
   });
 });

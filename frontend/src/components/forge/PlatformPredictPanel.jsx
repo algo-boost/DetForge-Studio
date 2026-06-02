@@ -65,8 +65,10 @@ export default function PlatformPredictPanel({
   const [trainSyncMeta, setTrainSyncMeta] = useState(null);
   const [busy, setBusy] = useState(false);
   const [threshold, setThreshold] = useState('0.1');
+  const [maxSize, setMaxSize] = useState('1536');
   const [device, setDevice] = useState('');
   const [intra, setIntra] = useState(1);
+  const [namePrefix, setNamePrefix] = useState('');
   const [localApproachId, setLocalApproachId] = useState(null);
 
   const magicFoxApproachId = resolveMagicFoxApproachId(project);
@@ -245,6 +247,10 @@ export default function PlatformPredictPanel({
       toast('请至少选择一个模型', 'error');
       return;
     }
+    if (threshold === '' || Number.isNaN(Number(threshold))) {
+      toast('请填写置信度阈值', 'error');
+      return;
+    }
     if (deploySelections.length && !localApproachId) {
       toast('部署模型需要在 设置 → 检测项目 配置本地总控 Approach（defect_approach_id）', 'error');
       return;
@@ -266,11 +272,11 @@ export default function PlatformPredictPanel({
     try {
       const body = {
         platform_project_id: project?.id,
-        name_prefix: usingSyncDataset
+        name_prefix: namePrefix.trim() || (usingSyncDataset
           ? (ds?.name || 'predict')
           : usingQueryTask
             ? `query-${queryTaskId.trim().slice(0, 8)}`
-            : (localDir.trim().split('/').filter(Boolean).pop() || 'predict'),
+            : (localDir.trim().split('/').filter(Boolean).pop() || 'predict')),
         deploy_model_ids: deploySelections.map(Number),
         train_model_ids: trainSelections.map(Number),
         model_ids: registrySelections.map(Number),
@@ -290,6 +296,7 @@ export default function PlatformPredictPanel({
         body.image_source = { type: 'dir', path: localDir.trim() };
       }
       if (threshold !== '') body.threshold = Number(threshold);
+      if (maxSize !== '') body.max_size = Number(maxSize);
       if (device) body.device = device.trim();
       const res = await api.forgeEnqueuePredictBatch(body);
       if (res.success) {
@@ -356,7 +363,7 @@ export default function PlatformPredictPanel({
       {deploySelections.length > 0 && !localApproachId && (
         <div className="platform-surface-card platform-predict-alert">
           <p>
-            部署模型需要在 <Link to="/settings">设置 → 检测项目</Link> 配置
+            部署模型需要在 <Link to="/config">设置 → 检测项目</Link> 配置
             <code> defect_approach_id</code>（本地总控 Approach），或改用「已注册」Tab。
           </p>
         </div>
@@ -424,18 +431,6 @@ export default function PlatformPredictPanel({
                   本地图片
                   <input readOnly className={datasetStatus?.local_count ? 'platform-input-ok' : ''} value={datasetStatus ? `${datasetStatus.local_count} 张` : '…'} />
                 </label>
-                <label>
-                  阈值
-                  <input value={threshold} onChange={(e) => setThreshold(e.target.value)} placeholder="训练模型默认 0.1" />
-                </label>
-                <label>
-                  设备
-                  <input value={device} onChange={(e) => setDevice(e.target.value)} placeholder="部署/注册模型：cuda:0" />
-                </label>
-                <label>
-                  任务内并发
-                  <input type="number" min={1} value={intra} onChange={(e) => setIntra(e.target.value)} title="仅部署/已注册本地预测有效" />
-                </label>
               </div>
               {selectedDs && !datasetStatus?.local_count && (
                 <p className="platform-step-hint hint">
@@ -469,18 +464,6 @@ export default function PlatformPredictPanel({
                   value={queryIndices?.length ? `已选 ${queryIndices.length} 条` : '全部结果'}
                 />
               </label>
-              <label>
-                阈值
-                <input value={threshold} onChange={(e) => setThreshold(e.target.value)} placeholder="训练模型默认 0.1" />
-              </label>
-              <label>
-                设备
-                <input value={device} onChange={(e) => setDevice(e.target.value)} placeholder="部署/注册模型：cuda:0" />
-              </label>
-              <label>
-                任务内并发
-                <input type="number" min={1} value={intra} onChange={(e) => setIntra(e.target.value)} title="仅部署/已注册本地预测有效" />
-              </label>
               <p className="platform-step-hint hint forge-span2">
                 在 <Link to="/">查询页</Link> 执行筛选后，点击结果栏「预测」可自动带入 task_id；若勾选了部分图片则只预测选中项。
               </p>
@@ -498,18 +481,6 @@ export default function PlatformPredictPanel({
                   spellCheck={false}
                 />
               </label>
-              <label>
-                阈值
-                <input value={threshold} onChange={(e) => setThreshold(e.target.value)} placeholder="训练模型默认 0.1" />
-              </label>
-              <label>
-                设备
-                <input value={device} onChange={(e) => setDevice(e.target.value)} placeholder="部署/注册模型：cuda:0" />
-              </label>
-              <label>
-                任务内并发
-                <input type="number" min={1} value={intra} onChange={(e) => setIntra(e.target.value)} title="仅部署/已注册本地预测有效" />
-              </label>
               <p className="platform-step-hint hint forge-span2">
                 目录需在服务器可访问路径内；支持 jpg/png/bmp 等常见格式，子目录会递归扫描。
               </p>
@@ -520,6 +491,68 @@ export default function PlatformPredictPanel({
         <section className="platform-step platform-surface-card">
           <div className="platform-step-head">
             <span className="platform-step-num">2</span>
+            <div>
+              <h4>预测参数</h4>
+              <p className="muted">提交时将写入作业配置；部署/已注册模型走本地推理，训练模型走线上 API</p>
+            </div>
+          </div>
+          <div className="forge-form-grid platform-predict-form">
+            <label>
+              置信度阈值 *
+              <input
+                type="number"
+                step="0.01"
+                min={0}
+                max={1}
+                value={threshold}
+                onChange={(e) => setThreshold(e.target.value)}
+                placeholder="0.1"
+              />
+            </label>
+            <label>
+              输入尺寸 image_size
+              <input
+                type="number"
+                min={256}
+                step={64}
+                value={maxSize}
+                onChange={(e) => setMaxSize(e.target.value)}
+                placeholder="1536"
+                title="对应 max_size，本地模型推理时的最长边"
+              />
+            </label>
+            <label>
+              推理设备
+              <input
+                value={device}
+                onChange={(e) => setDevice(e.target.value)}
+                placeholder="cuda:0 / cpu（本地模型）"
+              />
+            </label>
+            <label>
+              任务内并发
+              <input
+                type="number"
+                min={1}
+                value={intra}
+                onChange={(e) => setIntra(e.target.value)}
+                title="单作业内多图并行，共享一次模型加载"
+              />
+            </label>
+            <label className="forge-span2">
+              作业名称前缀
+              <input
+                value={namePrefix}
+                onChange={(e) => setNamePrefix(e.target.value)}
+                placeholder="留空则按数据集/目录名自动生成"
+              />
+            </label>
+          </div>
+        </section>
+
+        <section className="platform-step platform-surface-card">
+          <div className="platform-step-head">
+            <span className="platform-step-num">3</span>
             <div className="platform-step-head-main">
               <div>
                 <h4>选择模型</h4>
@@ -688,6 +721,18 @@ export default function PlatformPredictPanel({
           )}
           <span className="platform-context-dot">·</span>
           <span>{totalSelected} 个模型</span>
+          {trainSelections.length > 0 && (
+            <>
+              <span className="platform-context-dot">·</span>
+              <span>阈值 {threshold || '0.1'}</span>
+            </>
+          )}
+          {(deploySelections.length + registrySelections.length) > 0 && (
+            <>
+              <span className="platform-context-dot">·</span>
+              <span>size {maxSize || '1536'}{device ? ` · ${device}` : ''}</span>
+            </>
+          )}
           {trainSelections.length > 0 && (
             <>
               <span className="platform-context-dot">·</span>

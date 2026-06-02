@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from studio.flow.flow_compiler import has_inline_sampling, normalize_strategy, resolve_strategy_python
+from studio.flow.flow_compiler import normalize_strategy, resolve_strategy_python
 from studio.query.env_context import substitute_template
 from studio.query.strategy_loader import get_all_strategies, get_all_templates
 
@@ -66,12 +66,11 @@ def execute_filter_strategy(
     build_task=False 时仅返回统计（preview）；True 时调用 build_query_task。
     """
     from server.core import (
-        apply_random_sample,
         build_query_task,
         execute_python_filter,
         get_db_client,
         parse_random_seed,
-        parse_sample_size,
+        sample_size_from_env,
     )
 
     context = dict(context or {})
@@ -110,7 +109,11 @@ def execute_filter_strategy(
     if python_code:
         python_code = substitute_template(python_code, context)
         df, console_output, execution_time = execute_python_filter(
-            df, python_code, capture_output=True, env_context=context,
+            df,
+            python_code,
+            capture_output=True,
+            env_context=context,
+            strategy=strategy,
         )
     if df.empty:
         return {
@@ -125,12 +128,20 @@ def execute_filter_strategy(
             'input_cols': input_cols,
         }
 
-    eff_sample = parse_sample_size(sample_size if sample_size is not None else strategy.get('sample_size'))
-    eff_seed = parse_random_seed(random_seed)
     rows_before_sample = len(df)
-    skip_post_sample = has_inline_sampling(python_code, strategy.get('flow'))
-    if not skip_post_sample:
-        df = apply_random_sample(df, eff_sample, eff_seed)
+    ctx_sample = sample_size_from_env(context)
+    if ctx_sample is None and sample_size is not None:
+        try:
+            n = int(sample_size)
+            ctx_sample = n if n > 0 else None
+        except (TypeError, ValueError):
+            ctx_sample = None
+    eff_sample = ctx_sample
+    eff_seed = parse_random_seed(
+        (context or {}).get('RANDOM_SEED') if random_seed is None else random_seed
+    )
+    # 随机采样仅在 process_data 内（策略流 random_sample + SAMPLE_SIZE），不再二次采样
+    post_sample_skipped = True
 
     sid = strategy_id or strategy.get('id') or ''
     sname = strategy_name or strategy.get('name') or ''
@@ -148,7 +159,7 @@ def execute_filter_strategy(
         'sample_size': eff_sample,
         'random_seed': eff_seed,
         'rows_before_sample': rows_before_sample,
-        'post_sample_skipped': skip_post_sample,
+        'post_sample_skipped': post_sample_skipped,
         'query_mode': exec_mode if python_code else 'strategy',
         'data_source': ds,
         'env': dict(context),
@@ -170,7 +181,7 @@ def execute_filter_strategy(
             'query_sql_executed': sql,
             'rows_before_sample': rows_before_sample,
             'sample_size': eff_sample,
-            'post_sample_skipped': skip_post_sample,
+            'post_sample_skipped': post_sample_skipped,
             'console_output': console_output or None,
             'execution_time': execution_time or None,
             'input_rows': input_rows,
@@ -187,7 +198,7 @@ def execute_filter_strategy(
         'sample_size': eff_sample,
         'random_seed': eff_seed,
         'rows_before_sample': rows_before_sample,
-        'post_sample_skipped': skip_post_sample,
+        'post_sample_skipped': post_sample_skipped,
         'console_output': console_output or None,
         'execution_time': execution_time or None,
         'input_rows': input_rows,

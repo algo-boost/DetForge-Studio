@@ -15,8 +15,8 @@ import { PLATFORM_TABS, tabFromHash } from '../components/forge/training/platfor
 function AuthPill({ authOk, authConfigured }) {
   if (authOk === true) return <span className="platform-pill platform-pill-ok">已连接</span>;
   if (authOk === false) return <span className="platform-pill platform-pill-err">认证失败</span>;
-  if (!authConfigured) return <span className="platform-pill platform-pill-warn">未配置</span>;
-  return <span className="platform-pill">待验证</span>;
+  if (authConfigured) return <span className="platform-pill platform-pill-ok">已配置</span>;
+  return <span className="platform-pill platform-pill-warn">未配置</span>;
 }
 
 function OnboardingEmpty({ onNewProject, onImported, authConfigured, authOk }) {
@@ -89,12 +89,25 @@ export default function TrainingPlatformPage() {
       if (dRes.success) setDatasets(dRes.data || []);
       if (cfgRes.success) {
         setAuthConfigured(!!cfgRes.config?.magic_fox_configured);
-        if (cfgRes.config?.magic_fox_configured) setAuthOk(true);
       }
     } catch (e) { toast(e.message, 'error'); }
   }, [selectedProject]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!authConfigured || authOk != null) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.forgeSyncTestAuth();
+        if (!cancelled) setAuthOk(!!res.connected);
+      } catch {
+        if (!cancelled) setAuthOk(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authConfigured, authOk]);
 
   useEffect(() => {
     if (projects.length && (selectedProject == null || !projects.some((p) => p.id === selectedProject))) {

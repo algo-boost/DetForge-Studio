@@ -96,6 +96,86 @@ def _strip_ext(ext_val, categories, min_confidence):
         return ext_val
 
 
+def _row_has_matching_pred(ext_val, categories, min_c, max_c):
+    for pred in parse_ext(ext_val):
+        if not isinstance(pred, dict):
+            continue
+        name = pred.get('name', '')
+        conf = float(pred.get('confidence', 0) or 0)
+        if name in categories and min_c <= conf <= max_c:
+            return True
+    return False
+
+
+def _keep_matching_row_by_ratio(random_drop_ratio):
+    """
+    捞图行级保留概率。random_drop_ratio=0 保留全部匹配行；
+    ratio>=1 表示对该规则 100% 纳入匹配行（不删框，legacy 捞图满额）。
+    中间值：按比例随机舍弃匹配行（仅丢图，不改 ext）。
+    """
+    try:
+        rdr = float(random_drop_ratio)
+    except (TypeError, ValueError):
+        rdr = 0.0
+    rdr = max(0.0, min(1.0, rdr))
+    if rdr >= 1.0:
+        return True
+    if rdr <= 0.0:
+        return True
+    return random.random() > rdr
+
+
+def select_df_rows_by_rules_union(df, rules=None):
+    """
+    捞图语义：多条规则取并集，保留「至少命中一条规则」的整行，ext 内检测框原样保留。
+    产线 min_threshold 规则仍用 strip_boxes_below_confidence 改 ext。
+    """
+    if 'ext' not in df.columns:
+        return df
+    rules = list(rules or [])
+    if not rules:
+        return df.copy()
+
+    working = df.copy()
+    keep = set()
+
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        if rule.get('confidence_mode') == 'min_threshold' or rule.get('min_confidence') is not None:
+            working = strip_boxes_below_confidence(
+                working,
+                categories=rule.get('categories') or [],
+                min_confidence=float(
+                    rule.get('min_confidence', (rule.get('confidence_range') or [0, 1])[0])
+                ),
+                positions=rule.get('positions'),
+            )
+            continue
+
+        categories = list(rule.get('categories') or [])
+        if not categories:
+            continue
+        cr = rule.get('confidence_range') or [0, 1]
+        min_c = _coerce_float(cr[0] if len(cr) > 0 else 0, 0.0)
+        max_c = _coerce_float(cr[1] if len(cr) > 1 else 1, 1.0)
+        positions = rule.get('positions')
+        rdr = rule.get('random_drop_ratio', 0.0)
+
+        for idx in working.index:
+            row = working.loc[idx]
+            if not _row_matches_positions(row, positions):
+                continue
+            if not _row_has_matching_pred(row.get('ext'), categories, min_c, max_c):
+                continue
+            if _keep_matching_row_by_ratio(rdr):
+                keep.add(idx)
+
+    if not keep:
+        return working.iloc[0:0].copy().reset_index(drop=True)
+    return working.loc[sorted(keep)].copy().reset_index(drop=True)
+
+
 def filter_df_by_ext(df, categories=None, confidence_range=(0, 1), random_drop_ratio=1.0, positions=None):
     """
     对指定类别且落在置信度区间内的框，按 random_drop_ratio 随机筛掉。
@@ -292,10 +372,32 @@ def describe_df(df, description=None):
     return view(desc, description=description or '统计描述')
 
 
-def apply_random_sample_rows(df, max_rows=300, random_seed=42):
-    """在 DataFrame 上随机采样；行数不足时返回全部。"""
-    max_rows = int(max_rows)
-    seed = int(random_seed)
+def _resolve_sample_params(max_rows, random_seed, env=None):
+    """从 env（SAMPLE_SIZE / RANDOM_SEED）解析采样参数；未配置 SAMPLE_SIZE 时返回 (0, seed) 表示跳过。"""
+    ctx = env if env is not None else {}
+    if max_rows is None:
+        raw = str(ctx.get('SAMPLE_SIZE', '') or '').strip()
+        if not raw:
+            return 0, int(ctx.get('RANDOM_SEED', 42) or 42)
+        try:
+            max_rows = int(raw)
+        except (TypeError, ValueError):
+            return 0, 42
+    else:
+        max_rows = int(max_rows)
+    if random_seed is None:
+        try:
+            seed = int(ctx.get('RANDOM_SEED', 42) or 42)
+        except (TypeError, ValueError):
+            seed = 42
+    else:
+        seed = int(random_seed)
+    return max_rows, seed
+
+
+def apply_random_sample_rows(df, max_rows=None, random_seed=None, env=None):
+    """在 DataFrame 上随机采样；默认从环境变量 SAMPLE_SIZE / RANDOM_SEED 读取，未配置则不采样。"""
+    max_rows, seed = _resolve_sample_params(max_rows, random_seed, env)
     if max_rows <= 0 or len(df) <= max_rows:
         return df.reset_index(drop=True)
     return df.sample(n=max_rows, random_state=seed).reset_index(drop=True)
@@ -326,7 +428,7 @@ def stratified_sample_by_type(df, n=10, type_col='product_type', seed=42):
 
 
 def build_python_namespace(extra=None):
-    """构建用户 Python 代码的执行命名空间。"""
+    """构建用户 Python 代码的执行命名空间（全量预设，兼容旧调用）。"""
     ns = {
         'pd': pd,
         'json': json,
@@ -336,11 +438,25 @@ def build_python_namespace(extra=None):
         'parse_ext': parse_ext,
         'is_ext_empty': is_ext_empty,
         'filter_df_by_ext': filter_df_by_ext,
+        'select_df_rows_by_rules_union': select_df_rows_by_rules_union,
         'strip_boxes_below_confidence': strip_boxes_below_confidence,
         'remove_empty_ext_rows': remove_empty_ext_rows,
         'count_category_boxes': count_category_boxes,
         'apply_random_sample_rows': apply_random_sample_rows,
         'stratified_sample_by_type': stratified_sample_by_type,
+    }
+    if extra:
+        ns.update(extra)
+    return ns
+
+
+def build_minimal_python_namespace(extra=None):
+    """最小命名空间 + extra（供 python_preset_registry 按策略加载函数）。"""
+    ns = {
+        'pd': pd,
+        'json': json,
+        'parse_ext': parse_ext,
+        'is_ext_empty': is_ext_empty,
     }
     if extra:
         ns.update(extra)

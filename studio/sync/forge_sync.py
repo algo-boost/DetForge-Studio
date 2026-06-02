@@ -195,11 +195,14 @@ def sync_dataset(dataset_id, job_id=None, stop_check=None, on_progress=None, con
 
     remote_count = len(detail_items)
     _log(f'线上共 {remote_count} 条，开始拉取全量标注 …')
+    _log('（标注拉取数据量大时可能耗时数分钟，请查看运行日志进度）')
 
     items = flat['hydrate_items_for_coco'](
         detail_items, base_url, token, DEFAULT_HYDRATE_WORKERS,
     )
     _log(f'标注合并完成 {len(items)}/{remote_count} 条')
+
+    _log('正在生成 COCO 标注与 manifest …')
 
     approach_id = project.get('approach_id')
     if approach_id is None and detail_for_approach:
@@ -301,6 +304,8 @@ def sync_dataset(dataset_id, job_id=None, stop_check=None, on_progress=None, con
             _log(f'警告: 平台库溯源失败（仍将写入样本）: {e}')
             prov_list = [{}] * len(pending_db_rows)
 
+    if write_db and pending_db_rows:
+        _log(f'写入 detforge 样本表 {len(pending_db_rows)} 条 …')
     for row, prov in zip(pending_db_rows, prov_list or [{}] * len(pending_db_rows)):
         if row.get('remote_item_id') is None:
             continue
@@ -326,16 +331,22 @@ def sync_dataset(dataset_id, job_id=None, stop_check=None, on_progress=None, con
     stats = generate_stats(coco_data, category_stats)
     (out / 'stats.json').write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding='utf-8')
     (out / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+    _log(f'COCO 已写入 {len(coco_data.get("images", []))} 张 · 标注框 {len(coco_data.get("annotations", []))} 个')
 
     downloaded_ok = 0
     downloaded_fail = 0
     if download_tasks:
         _log(f'待下载 {len(download_tasks)} 张（跳过已有 {skipped_images} 张）')
+
+        def _download_progress(done, total, ok_count, fail_count):
+            _log(f'下载进度 {done}/{total}（成功 {ok_count}，失败 {fail_count}）')
+
         downloaded_ok, downloaded_fail = flat['download_batches'](
             base_url, token, download_tasks,
             batch_size=DEFAULT_BATCH_SIZE,
             timeout_sec=DEFAULT_TIMEOUT,
             retries=DEFAULT_RETRIES,
+            progress_fn=_download_progress,
         )
         _log(f'下载完成：成功 {downloaded_ok}，失败 {downloaded_fail}')
     else:

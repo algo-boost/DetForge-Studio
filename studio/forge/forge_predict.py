@@ -10,6 +10,7 @@ import sys
 import threading
 
 from studio.forge import forge_db
+from studio.forge import job_log
 from studio.forge import predict_runtime
 from studio.paths import PROJECT_ROOT as BASE_DIR
 
@@ -117,18 +118,38 @@ def run_predict_job(job, stop_check=None, on_progress=None, model_loader=None):
     device = params.get('device') or (model.get('default_params') or {}).get('device') or 'cuda:0'
     max_size = int(params.get('max_size', (model.get('default_params') or {}).get('max_size', 1536)))
     intra = max(1, int(job.get('intra_concurrency') or params.get('intra_concurrency') or 1))
+    pending_n = len(forge_db.pending_items(job['id']))
+
+    job_log.append(
+        job['id'],
+        f'预测开始：模型 {model.get("name")} ({model.get("framework")}) · '
+        f'待处理 {pending_n} 张 · device={device} · threshold={threshold} · intra={intra}',
+    )
 
     if model_loader:
         loaded = model_loader() if callable(model_loader) else model_loader
         return _run_with_loaded(job, loaded, model, params, threshold, intra, stop_check, on_progress)
 
-    if _use_subprocess():
+    settings = predict_runtime.resolve_predict_settings()
+    if settings.get('use_subprocess'):
+        if settings.get('predict_subprocess_auto'):
+            job_log.append(
+                job['id'],
+                f'子进程预测（自动）· {settings.get("predict_python_executable") or "python"}',
+            )
         sem = _device_sem(device)
         sem.acquire()
         try:
             return _run_predict_subprocess(job, model, params, threshold, device, max_size, stop_check, on_progress)
         finally:
             sem.release()
+
+    if settings.get('predict_script') and os.path.isfile(settings['predict_script']):
+        job_log.append(
+            job['id'],
+            '警告：未启用子进程预测，进程内加载 mmdet 在 worker 线程可能失败；'
+            '请在设置中填写 predict_python_executable 或取消 PC_FORCE_INPROCESS_PREDICT',
+        )
 
     loader = lambda: _import_model_api().load_model(
         model['checkpoint_path'], framework=model.get('framework'),
@@ -138,7 +159,9 @@ def run_predict_job(job, stop_check=None, on_progress=None, model_loader=None):
     sem = _device_sem(device)
     sem.acquire()
     try:
+        job_log.append(job['id'], '进程内加载模型 …')
         loaded = loader()
+        job_log.append(job['id'], '模型加载完成，开始逐图预测')
         return _run_with_loaded(job, loaded, model, params, threshold, intra, stop_check, on_progress)
     finally:
         sem.release()
@@ -161,7 +184,20 @@ def _run_predict_subprocess(job, model, params, threshold, device, max_size, sto
         'images': [{'path': item['ref_key'], 'threshold': threshold} for item in items],
     }
     timeout = max(3600, len(items) * 120)
-    batch_results = predict_runtime.run_batch_predict(payload, timeout=timeout)
+    job_log.append(
+        job['id'],
+        f'子进程批量预测 {len(items)} 张（加载模型 + 推理，期间日志可能较少）…',
+    )
+
+    def _subprocess_log(line):
+        line = str(line or '').strip()
+        if line:
+            job_log.append_throttled(job['id'], f'[predict] {line}', key='subprocess', min_interval=3.0)
+
+    batch_results = predict_runtime.run_batch_predict(
+        payload, timeout=timeout, log_line=_subprocess_log,
+    )
+    job_log.append(job['id'], f'子进程预测返回 {len(batch_results)} 条结果，开始写库 …')
     by_path = {r.get('path'): r for r in batch_results}
 
     for item in items:

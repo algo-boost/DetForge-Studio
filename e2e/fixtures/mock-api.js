@@ -334,6 +334,37 @@ export async function installApiMocks(page) {
       });
     }
 
+    if (p === '/api/forge/manual-qc/summary' && method === 'GET') {
+      return json(route, {
+        success: true,
+        total: MOCK_MQC_RECORDS.length,
+        pending: 1,
+        handoff_ready: 0,
+        closed: 0,
+        daily_batch_id: '2026-06-01',
+        handoff_inbox_root: '/tmp/training_inbox',
+        export_default_root: '/tmp/exports/manual_qc_export',
+      });
+    }
+
+    if (p === '/api/forge/manual-qc/batches' && method === 'GET') {
+      return json(route, {
+        success: true,
+        daily_batch_id: '2026-06-01',
+        data: [{
+          batch_key: '2026-06-01',
+          batch_id: '2026-06-01',
+          batch_day: '2026-06-01',
+          total: MOCK_MQC_RECORDS.length,
+          pending: 1,
+          handoff_ready: 0,
+          matched: 1,
+          first_at: '2026-06-01 10:00:00',
+          last_at: '2026-06-01 12:00:00',
+        }],
+      });
+    }
+
     if (p === '/api/forge/manual-qc' && method === 'GET') {
       return json(route, {
         success: true,

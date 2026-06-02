@@ -11,11 +11,16 @@
   2) 命令行独立运行：python worker.py [--concurrency N] [--once]
 """
 import argparse
-import fcntl
 import logging
 import os
+import sys
 import threading
 import time
+
+if sys.platform == 'win32':
+    fcntl = None  # Windows 无 fcntl，用 msvcrt 或 PID 检测代替
+else:
+    import fcntl
 
 from studio.forge import forge_db
 from studio.forge import forge_predict
@@ -37,9 +42,35 @@ STALE_TIMEOUT = 120              # 秒，超时回收 running 作业
 POLL_INTERVAL = 3                # 秒，空闲轮询间隔
 CLEANUP_INTERVAL = 86400           # 秒，孤儿客户图自动清理间隔（24h）
 SUPPORTED_JOB_TYPES = ('predict', 'manual_qc_archive', 'manual_qc_export', 'dataset_sync')
+PREDICT_JOB_TYPES = ('predict',)
+IO_JOB_TYPES = ('dataset_sync', 'manual_qc_archive', 'manual_qc_export')
 
 _manager = None
 _manager_lock = threading.Lock()
+
+
+def resolve_worker_lanes():
+    """解析 worker 线程池：默认预测与数据同步各 1 槽，互不阻塞。
+
+    PC_WORKER_CONCURRENCY=N  → N 个通用槽（兼容旧配置，所有类型争抢）。
+    否则：
+      PC_WORKER_PREDICT_SLOTS（默认 1）
+      PC_WORKER_SYNC_SLOTS（默认 1，含 dataset_sync / manual_qc_*）
+    """
+    if os.environ.get('PC_WORKER_CONCURRENCY') is not None:
+        n = max(1, int(os.environ.get('PC_WORKER_CONCURRENCY', '1')))
+        return [{'name': 'generic', 'job_types': SUPPORTED_JOB_TYPES, 'slots': n}]
+
+    predict_slots = max(0, int(os.environ.get('PC_WORKER_PREDICT_SLOTS', '1')))
+    sync_slots = max(0, int(os.environ.get('PC_WORKER_SYNC_SLOTS', '1')))
+    lanes = []
+    if predict_slots:
+        lanes.append({'name': 'predict', 'job_types': PREDICT_JOB_TYPES, 'slots': predict_slots})
+    if sync_slots:
+        lanes.append({'name': 'sync', 'job_types': IO_JOB_TYPES, 'slots': sync_slots})
+    if not lanes:
+        lanes.append({'name': 'generic', 'job_types': SUPPORTED_JOB_TYPES, 'slots': 1})
+    return lanes
 
 
 def _job_is_stopped(job_id):
@@ -67,6 +98,19 @@ def _dispatch(job, worker_id):
     def on_progress():
         try:
             forge_db.heartbeat(job['id'], worker_id)
+            prog = forge_db.recompute_job_progress(job['id'])
+            total = int(job.get('total') or 0)
+            if not total:
+                total = int(prog.get('done', 0)) + int(prog.get('failed', 0)) + int(prog.get('remaining', 0))
+            if total > 0:
+                done = int(prog.get('done', 0))
+                failed = int(prog.get('failed', 0))
+                job_log.append_throttled(
+                    job['id'],
+                    f'进度 {done + failed}/{total}（完成 {done}，失败 {failed}，剩余 {prog.get("remaining", 0)}）',
+                    key='item_progress',
+                    min_interval=6.0,
+                )
         except Exception:
             pass
 
@@ -176,12 +220,18 @@ def _run_manual_qc_export_job(job, on_progress=None):
 
 
 class WorkerManager:
-    def __init__(self, concurrency=1, worker_id=None):
-        self.concurrency = max(1, int(concurrency))
+    def __init__(self, lanes=None, concurrency=None, worker_id=None):
+        if concurrency is not None:
+            lanes = [{'name': 'generic', 'job_types': SUPPORTED_JOB_TYPES, 'slots': max(1, int(concurrency))}]
+        self.lanes = lanes or resolve_worker_lanes()
         self.worker_id = worker_id or f'worker-{os.getpid()}'
         self.stop_event = threading.Event()
         self.threads = []
         self._schema_ok = False
+
+    @property
+    def concurrency(self):
+        return sum(int(lane.get('slots') or 0) for lane in self.lanes)
 
     def _ensure_schema_once(self):
         if self._schema_ok:
@@ -193,8 +243,8 @@ class WorkerManager:
             self._schema_ok = False
         return self._schema_ok
 
-    def _loop(self, slot):
-        worker_id = f'{self.worker_id}#{slot}'
+    def _loop(self, lane_name, job_types, slot_in_lane, is_primary=False):
+        worker_id = f'{self.worker_id}#{lane_name}-{slot_in_lane}'
         last_reclaim = 0.0
         last_cleanup = 0.0
         while not self.stop_event.is_set():
@@ -202,13 +252,13 @@ class WorkerManager:
                 self.stop_event.wait(POLL_INTERVAL)
                 continue
             now = time.time()
-            if slot == 0 and now - last_reclaim > STALE_TIMEOUT / 2:
+            if is_primary and now - last_reclaim > STALE_TIMEOUT / 2:
                 try:
                     forge_db.reclaim_stale_jobs(STALE_TIMEOUT)
                 except Exception:
                     pass
                 last_reclaim = now
-            if slot == 0 and now - last_cleanup > CLEANUP_INTERVAL:
+            if is_primary and now - last_cleanup > CLEANUP_INTERVAL:
                 try:
                     r = forge_manual_qc.cleanup_orphan_uploads(dry_run=False)
                     if r.get('deleted'):
@@ -217,7 +267,7 @@ class WorkerManager:
                     pass
                 last_cleanup = now
             try:
-                job = forge_db.claim_next_job(worker_id, SUPPORTED_JOB_TYPES)
+                job = forge_db.claim_next_job(worker_id, job_types)
             except Exception:
                 job = None
             if not job:
@@ -226,10 +276,20 @@ class WorkerManager:
             _dispatch(job, worker_id)
 
     def start(self):
-        for slot in range(self.concurrency):
-            t = threading.Thread(target=self._loop, args=(slot,), daemon=True)
-            t.start()
-            self.threads.append(t)
+        is_first = True
+        for lane in self.lanes:
+            name = lane['name']
+            job_types = lane['job_types']
+            for slot in range(int(lane.get('slots') or 0)):
+                primary = is_first
+                is_first = False
+                t = threading.Thread(
+                    target=self._loop,
+                    args=(name, job_types, slot, primary),
+                    daemon=True,
+                )
+                t.start()
+                self.threads.append(t)
         return self
 
     def stop(self):
@@ -260,13 +320,54 @@ def _pid_alive(pid):
     if not pid:
         return False
     try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if sys.platform == 'win32':
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if handle:
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+        return False
+    try:
         os.kill(pid, 0)
         return True
     except OSError:
         return False
 
 
-def maybe_start_in_process(concurrency=1):
+def _try_exclusive_lock(lock_f):
+    """跨平台非阻塞文件锁（Flask reloader 双进程防重复拉起 worker）。"""
+    try:
+        if fcntl is not None:
+            fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        if sys.platform == 'win32':
+            import msvcrt
+            msvcrt.locking(lock_f.fileno(), msvcrt.LK_NBLCK, 1)
+            return True
+    except OSError:
+        return False
+    return False
+
+
+def _release_lock(lock_f):
+    if not lock_f:
+        return
+    try:
+        if fcntl is not None:
+            fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
+        elif sys.platform == 'win32':
+            import msvcrt
+            msvcrt.locking(lock_f.fileno(), msvcrt.LK_UNLCK, 1)
+        lock_f.close()
+    except Exception:
+        pass
+
+
+def maybe_start_in_process(concurrency=None):
     """Flask 启动调用：若无存活 worker 则在本进程内拉起。可用 PC_NO_WORKER=1 禁用。"""
     global _manager
     if os.environ.get('PC_NO_WORKER') == '1':
@@ -278,9 +379,14 @@ def maybe_start_in_process(concurrency=1):
             return _manager
         os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
         lock_path = PID_FILE + '.lock'
+        lock_f = None
         try:
             lock_f = open(lock_path, 'w')
-            fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if not _try_exclusive_lock(lock_f):
+                existing = _read_pid()
+                if _pid_alive(existing):
+                    logger.info('已有存活 worker (pid=%s)，本进程不再拉起', existing)
+                return None
         except OSError:
             existing = _read_pid()
             if _pid_alive(existing):
@@ -289,34 +395,49 @@ def maybe_start_in_process(concurrency=1):
         existing = _read_pid()
         if _pid_alive(existing) and existing != os.getpid():
             logger.info('已有存活 worker (pid=%s)，本进程不再拉起', existing)
-            try:
-                fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
-                lock_f.close()
-            except Exception:
-                pass
+            _release_lock(lock_f)
             return None
         try:
             with open(PID_FILE, 'w') as f:
                 f.write(str(os.getpid()))
         except Exception:
             pass
-        logger.info('在 Flask 进程内启动 worker pid=%s concurrency=%s', os.getpid(), concurrency)
-        _manager = WorkerManager(concurrency=concurrency).start()
+        lanes = resolve_worker_lanes()
+        lane_summary = ', '.join(f"{l['name']}×{l['slots']}" for l in lanes)
+        logger.info('在 Flask 进程内启动 worker pid=%s lanes=[%s]', os.getpid(), lane_summary)
+        if concurrency is not None:
+            _manager = WorkerManager(concurrency=concurrency).start()
+        else:
+            _manager = WorkerManager(lanes=lanes).start()
         return _manager
 
 
 def main():
     parser = argparse.ArgumentParser(description='DetForge 后台作业 worker')
-    parser.add_argument('--concurrency', type=int, default=1, help='任务级并发数（独立模型加载）')
+    parser.add_argument(
+        '--concurrency', type=int, default=None,
+        help='通用槽位数（覆盖分 lane 默认；与 PC_WORKER_CONCURRENCY 等效）',
+    )
+    parser.add_argument('--predict-slots', type=int, default=None, help='预测专用槽（默认 1）')
+    parser.add_argument('--sync-slots', type=int, default=None, help='同步/I/O 槽（默认 1）')
     parser.add_argument('--once', action='store_true', help='只执行一个作业后退出')
     args = parser.parse_args()
 
-    manager = WorkerManager(concurrency=args.concurrency)
+    if args.concurrency is not None:
+        os.environ['PC_WORKER_CONCURRENCY'] = str(args.concurrency)
+    if args.predict_slots is not None:
+        os.environ['PC_WORKER_PREDICT_SLOTS'] = str(args.predict_slots)
+    if args.sync_slots is not None:
+        os.environ['PC_WORKER_SYNC_SLOTS'] = str(args.sync_slots)
+
+    lanes = resolve_worker_lanes()
+    manager = WorkerManager(lanes=lanes) if args.concurrency is None else WorkerManager(concurrency=args.concurrency)
     if args.once:
         ok = manager.run_once()
         print('已处理一个作业' if ok else '无待处理作业')
         return
-    print(f'worker 启动，concurrency={args.concurrency}，Ctrl-C 退出')
+    lane_summary = ', '.join(f"{l['name']}×{l['slots']}" for l in manager.lanes)
+    print(f'worker 启动，lanes=[{lane_summary}]，Ctrl-C 退出')
     manager.start()
     try:
         while True:

@@ -8,10 +8,8 @@ VAR_PATTERN = re.compile(r'\$\{([A-Z][A-Z0-9_]*)\}')
 GET_ENV_PATTERN = re.compile(r"""get_env\s*\(\s*['"]([A-Z][A-Z0-9_]*)['"]""", re.I)
 ENV_CALL_PATTERN = re.compile(r"""env\s*\(\s*['"]([A-Z][A-Z0-9_]*)['"]""", re.I)
 
-# 由系统自动注入（非策略「可调参数」）；时段仅 START/END 在工具栏，其余用户参数走 env_schema
-SYSTEM_VARS = frozenset({
-    'START_TIME',
-    'END_TIME',
+# 运行时自动注入，不应在策略 env_schema 中重复定义
+AUTO_RUNTIME_VARS = frozenset({
     'JOB_ID',
     'PREDICT_JOB_ID',
     'DATA_SOURCE',
@@ -21,6 +19,9 @@ SYSTEM_VARS = frozenset({
     'RUN_ID',
     'STAGE',
 })
+
+# 兼容旧引用：含时段变量（时段改由预设 env_schema 声明，工具栏同步写入 env）
+SYSTEM_VARS = AUTO_RUNTIME_VARS | frozenset({'START_TIME', 'END_TIME'})
 
 SYSTEM_VAR_LABELS = {
     'START_TIME': '开始时间',
@@ -161,17 +162,13 @@ def resolve_strategy_env_schema(strategy: dict | None) -> list[dict[str, Any]]:
             if not isinstance(row, dict):
                 continue
             key = str(row.get('key') or '').strip().upper()
-            if not key or key in SYSTEM_VARS:
+            if not key or key in AUTO_RUNTIME_VARS:
                 continue
-            out.append({
-                'key': key,
-                'label': row.get('label') or key,
-                'type': row.get('type') or 'text',
-                'default': row.get('default'),
-                'placeholder': row.get('placeholder'),
-                'stage': row.get('stage'),
-                'description': row.get('description'),
-            })
+            from studio.query.env_field_types import normalize_env_field_row
+
+            row_out = normalize_env_field_row({**row, 'key': key})
+            if row_out:
+                out.append(row_out)
         return out
 
     inferred = [
@@ -181,15 +178,17 @@ def resolve_strategy_env_schema(strategy: dict | None) -> list[dict[str, Any]]:
             strategy.get('filter_rules_code'),
             strategy.get('sample_code'),
         )
-        if v not in SYSTEM_VARS
+        if v not in AUTO_RUNTIME_VARS
     ]
     return [{'key': k, 'label': k, 'type': 'text'} for k in inferred]
 
 
-def describe_strategy_variables(strategy: dict | None) -> dict[str, Any]:
-    """返回策略变量说明（系统 + 自定义 schema）。"""
+def describe_strategy_variables(strategy: dict | None, templates: dict | None = None) -> dict[str, Any]:
+    """返回策略变量说明（运行时自动注入 + 合并后的可调 schema）。"""
+    from studio.query.strategy_env_schema import merge_strategy_env_schema
+
     strategy = strategy or {}
-    schema = resolve_strategy_env_schema(strategy)
+    schema = merge_strategy_env_schema(strategy, templates)
     inferred = extract_template_vars(
         strategy.get('sql_template'),
         strategy.get('python_code'),
@@ -197,9 +196,10 @@ def describe_strategy_variables(strategy: dict | None) -> dict[str, Any]:
     )
     return {
         'strategy_id': strategy.get('id'),
+        'is_preset': False,
         'system_vars': [
             {'key': k, 'label': SYSTEM_VAR_LABELS.get(k, k), 'auto': True}
-            for k in sorted(SYSTEM_VARS)
+            for k in sorted(AUTO_RUNTIME_VARS)
         ],
         'custom_vars': schema,
         'template_vars': inferred,
@@ -219,8 +219,12 @@ def build_stage_context(
     end_time: str | None = None,
     sample_size=None,
     random_seed=None,
+    env_schema: list | None = None,
+    time_preset: str = 'today',
 ) -> dict[str, str]:
-    """合并系统变量 + 全局 env + 阶段 env。"""
+    """合并系统变量 + 全局 env + 阶段 env；时段以 env 为主，请求体 start_time 仅作补全。"""
+    from studio.query.preset_env import apply_env_schema_defaults, fill_time_env_defaults
+
     body = body or {}
     predict = predict or body.get('predict') or {}
 
@@ -233,9 +237,26 @@ def build_stage_context(
     if random_seed is None and body.get('random_seed') is not None:
         random_seed = body.get('random_seed')
 
+    global_env = normalize_env_dict(body.get('env') or body.get('variables'))
+    stage_env = {}
+    if stage:
+        stage_env = normalize_env_dict(
+            body.get(f'{stage}_env')
+            or body.get('stage_env', {}).get(stage)
+        )
+    merged = merge_context(global_env, stage_env)
+
+    # 时段：优先策略参数 env，其次兼容顶层 start_time / end_time
+    if start_time and not str(merged.get('START_TIME', '')).strip():
+        merged['START_TIME'] = str(start_time).strip()
+    if end_time and not str(merged.get('END_TIME', '')).strip():
+        merged['END_TIME'] = str(end_time).strip()
+
+    schema = env_schema if env_schema is not None else body.get('env_schema')
+    merged = apply_env_schema_defaults(merged, schema, time_preset=time_preset)
+    merged = fill_time_env_defaults(merged, preset=time_preset, schema=schema)
+
     system = build_system_context(
-        start_time=start_time,
-        end_time=end_time,
         job_id=job_id,
         data_source=ds,
         threshold=predict.get('threshold'),
@@ -244,15 +265,7 @@ def build_stage_context(
         run_id=run_id,
         stage=stage,
     )
-
-    global_env = normalize_env_dict(body.get('env') or body.get('variables'))
-    stage_env = {}
-    if stage:
-        stage_env = normalize_env_dict(
-            body.get(f'{stage}_env')
-            or body.get('stage_env', {}).get(stage)
-        )
-    merged = merge_context(system, global_env, stage_env)
+    merged = merge_context(system, merged)
 
     # 兼容旧请求：顶层 sample_size / random_seed 写入 env（策略参数优先）
     if sample_size is not None and 'SAMPLE_SIZE' not in merged:

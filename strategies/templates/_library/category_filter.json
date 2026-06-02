@@ -1,0 +1,13 @@
+{
+  "id": "category_filter",
+  "name": "缺陷类型过滤",
+  "description": "按缺陷名称筛选，支持包含/排除模式",
+  "icon": "filter",
+  "params_schema": [
+    { "key": "categories", "label": "缺陷类型", "type": "multiselect", "default": [],
+      "options": ["划伤","压痕","吊紧","异物外漏","折痕","抛线","拼接间隙","水渍","烫伤","破损","碰伤","红标签","线头","脏污","褶皱(T型)","褶皱（重度）","重跳针","错漏装: 银色螺丝","胶水","错漏装: V型卡子","银色螺丝","色差","凹坑","擦伤","蓝色定位柱","卡扣-轻微","卡扣-严重","蓝色安装柱","卡扣-偏斜"] },
+    { "key": "mode", "label": "筛选模式", "type": "select", "default": "include",
+      "options": [{"value":"include","label":"包含选中"},{"value":"exclude","label":"排除选中"}] }
+  ],
+  "python_code": "def filter(df, params):\n    import json\n    cats = params.get('categories', [])\n    if not cats:\n        return df\n    mode = params.get('mode', 'include')\n    def get_names(ext_val):\n        try:\n            obj = json.loads(ext_val) if isinstance(ext_val, str) else ext_val\n            preds = obj.get('original_predictions', []) if isinstance(obj, dict) else obj\n            if isinstance(preds, list):\n                return [p.get('name','') for p in preds if isinstance(p, dict)]\n            return []\n        except:\n            return []\n    df['_names'] = df['ext'].apply(get_names)\n    mask = df['_names'].apply(lambda ns: any(c in ns for c in cats))\n    result = df[mask] if mode == 'include' else df[~mask]\n    return result.drop(columns=['_names'], errors='ignore')"
+}

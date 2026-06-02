@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, toast } from '../api/client';
 
 export function StrategyPicker({
@@ -8,6 +8,15 @@ export function StrategyPicker({
   const rootRef = useRef(null);
 
   const current = strategies.find((s) => s.id === value);
+
+  const sorted = useMemo(() => {
+    return [...strategies].sort((a, b) => {
+      const ca = a.category || '';
+      const cb = b.category || '';
+      if (ca !== cb) return ca.localeCompare(cb, 'zh-CN');
+      return (a.name || a.id || '').localeCompare(b.name || b.id || '', 'zh-CN');
+    });
+  }, [strategies]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -37,6 +46,25 @@ export function StrategyPicker({
     setOpen(false);
   };
 
+  const renderRow = (s) => (
+    <div key={s.id} className="strategy-menu-row">
+      <button type="button" className={`strategy-menu-item${value === s.id ? ' active' : ''}`} onClick={() => pick(s.id)}>
+        <span className="smi-name">{s.name}</span>
+        <span className="smi-desc">{s.description || s.category || s.id}</span>
+      </button>
+      <div className="strategy-menu-actions">
+        <button type="button" className="strategy-menu-export" title="导出 JSON" onClick={(e) => exportById(s.id, e)}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
+        </button>
+        {onDeleteRequest && (
+          <button type="button" className="strategy-menu-delete" title="删除" onClick={(e) => { e.stopPropagation(); onDeleteRequest(s.id); setOpen(false); }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="strategy-picker" ref={rootRef}>
       <button type="button" className="strategy-picker-btn" onClick={() => setOpen(!open)}>
@@ -51,25 +79,12 @@ export function StrategyPicker({
             <span className="smi-name">自由查询</span>
             <span className="smi-desc">SQL + 规则 / 代码</span>
           </button>
-          {strategies.length > 0 && <div className="strategy-menu-divider">策略</div>}
-          {strategies.map((s) => (
-            <div key={s.id} className="strategy-menu-row">
-              <button type="button" className={`strategy-menu-item${value === s.id ? ' active' : ''}`} onClick={() => pick(s.id)}>
-                <span className="smi-name">{s.name}</span>
-                <span className="smi-desc">{s.category || s.description || s.id}</span>
-              </button>
-              <div className="strategy-menu-actions">
-                <button type="button" className="strategy-menu-export" title="导出 JSON" onClick={(e) => exportById(s.id, e)}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
-                </button>
-                {!String(s.id).startsWith('_') && onDeleteRequest && (
-                  <button type="button" className="strategy-menu-delete" title="删除" onClick={(e) => { e.stopPropagation(); onDeleteRequest(s.id); setOpen(false); }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
+          {sorted.length > 0 && (
+            <>
+              <div className="strategy-menu-divider">策略</div>
+              {sorted.map(renderRow)}
+            </>
+          )}
           <div className="strategy-menu-divider">操作</div>
           <button type="button" className="strategy-menu-item strategy-menu-import" onClick={() => { onImportClick?.(); setOpen(false); }}>
             <span className="smi-name">导入 JSON…</span>

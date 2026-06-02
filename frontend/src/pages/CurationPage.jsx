@@ -178,7 +178,7 @@ export default function CurationPage() {
 
   return (
     <div className="cur-page">
-      <SceneHubNav variant="query" />
+      <SceneHubNav variant="qc" />
       <header className="cur-header">
         <div>
           <h1 className="topbar-title">筛选归档</h1>

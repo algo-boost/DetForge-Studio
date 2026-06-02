@@ -24,12 +24,12 @@ async function exportCocoZip(page) {
   await page.getByTestId('results-export-coco').click();
 }
 
-async function openMqcQueryExportTab(page) {
+async function openMqcLibraryTab(page) {
   await page.goto('/manual-qc');
-  await expect(page.getByTestId('mqc-tab-query')).toBeVisible({ timeout: 60_000 });
-  await page.getByTestId('mqc-tab-query').evaluate((el) => el.click());
-  await expect(page.getByTestId('mqc-tab-query')).toHaveClass(/is-active/);
-  await expect(page.getByTestId('mqc-query-export-query')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('mqc-tab-library')).toBeVisible({ timeout: 60_000 });
+  await page.getByTestId('mqc-tab-library').evaluate((el) => el.click());
+  await expect(page.getByTestId('mqc-tab-library')).toHaveClass(/is-active/);
+  await expect(page.getByTestId('mqc-library-query')).toBeVisible({ timeout: 15_000 });
 }
 
 async function createPredictFromResults(page) {
@@ -88,15 +88,15 @@ test.describe('完整业务链路：查询 → 导出 → 预测 → 质检', ()
     await expect(page.locator('.mqc-tile').first()).toBeVisible();
   });
 
-  test('Step 6：人工质检 — 查询导出 Tab 查询与导出', async ({ page }) => {
-    await openMqcQueryExportTab(page);
+  test('Step 6：人工质检 — 归档库查询与导出', async ({ page }) => {
+    await openMqcLibraryTab(page);
 
-    await page.getByTestId('mqc-query-export-query').click();
-    await expect(page.locator('.mqc-query-results')).toBeVisible();
+    await page.getByTestId('mqc-library-query').click();
+    await expect(page.locator('.mqc-table tbody tr').first()).toBeVisible();
     await expect(page.getByText('SN-E2E-001')).toBeVisible();
 
-    await page.getByTestId('mqc-query-export-dir').click();
-    await expect(page.locator('.forge-banner-ok')).toContainText(/导出完成/i);
+    await page.getByTestId('mqc-library-export-dir').click();
+    await expect(page.locator('.forge-banner-ok')).toContainText(/导出/i);
   });
 
   test('完整链路串联（单会话）', async ({ page }) => {
@@ -115,9 +115,9 @@ test.describe('完整业务链路：查询 → 导出 → 预测 → 质检', ()
     await page.getByRole('button', { name: '查图' }).click();
     await expect(page.locator('.mqc-tile').first()).toBeVisible();
 
-    await openMqcQueryExportTab(page);
-    await page.getByTestId('mqc-query-export-query').click();
-    await page.getByTestId('mqc-query-export-dir').click();
-    await expect(page.locator('.forge-banner-ok')).toContainText(/导出完成/i);
+    await openMqcLibraryTab(page);
+    await page.getByTestId('mqc-library-query').click();
+    await page.getByTestId('mqc-library-export-dir').click();
+    await expect(page.locator('.forge-banner-ok')).toContainText(/导出/i);
   });
 });

@@ -88,11 +88,7 @@ def _compile_filter(params, in_rules_loop=False):
             "min_confidence=float(_loop_rule.get('min_confidence', (_loop_rule.get('confidence_range') or [0, 1])[0])), "
             "positions=_loop_rule.get('positions') or None)",
             "else:",
-            "    df = filter_df_by_ext(df, "
-            "categories=_loop_rule.get('categories', []), "
-            "confidence_range=tuple(_loop_rule.get('confidence_range', [0, 1])), "
-            "random_drop_ratio=_loop_rule.get('random_drop_ratio', 1.0), "
-            "positions=_loop_rule.get('positions') or None)",
+            "    pass  # 捞图规则在循环外由 select_df_rows_by_rules_union 一次处理",
         ]
     cats = p.get('categories') or []
     cr = p.get('confidence_range') or [0, 1]
@@ -211,7 +207,24 @@ def _compile_container(node, templates, tpl_defs, tpl_order, errors, in_rules_lo
         if delegate_rules_loop and entry_func == PROCESS_FUNC:
             lines.append(f'df = {FILTER_RULES_FUNC}(df)')
             return lines
-        lines += [f'_rules = {_repr_value(rules)}', 'for _loop_rule in _rules:']
+        lines.append(f'_rules = {_repr_value(rules)}')
+        has_trawl_filter = any(
+            (n.get('type') == 'builtin.filter_df_by_ext')
+            for n in (body or [])
+        )
+        if has_trawl_filter:
+            lines.append('df = select_df_rows_by_rules_union(df, _rules)')
+            post_nodes = [
+                n for n in (body or [])
+                if n.get('type') != 'builtin.filter_df_by_ext'
+            ]
+            inner = _compile_nodes(
+                post_nodes, templates, tpl_defs, tpl_order, errors, in_rules_loop=False, indent=0,
+                delegate_rules_loop=delegate_rules_loop, entry_func=entry_func,
+            )
+            lines += inner if inner else []
+            return lines
+        lines += ['for _loop_rule in _rules:']
         inner = _compile_nodes(body, templates, tpl_defs, tpl_order, errors, in_rules_loop=True, indent=0)
         lines += ['    ' + ln for ln in inner] if inner else ['    pass']
         return lines
@@ -302,6 +315,13 @@ def _uses_legacy_sampling_in_process(code: str) -> bool:
 
 def normalize_strategy(strategy, templates=None):
     """加载/返回前拆分 filter_rules_code 与手写 process_data。"""
+    from studio.flow.process_pipeline import (
+        compile_process_pipeline,
+        ensure_process_pipeline,
+        preset_groups_from_pipeline,
+        resolve_python_code_manual,
+    )
+
     s = dict(strategy or {})
     templates = templates or {}
     mode = s.get('filter_mode', 'flow')
@@ -314,17 +334,29 @@ def normalize_strategy(strategy, templates=None):
     if sample_from_flow:
         s['sample_code'] = sample_from_flow
 
-    if mode in ('flow', 'split', 'rules', 'code') and flow.get('nodes'):
+    pipeline = ensure_process_pipeline(s, templates)
+    s['process_pipeline'] = pipeline
+    manual = resolve_python_code_manual(s, templates)
+    s['python_code_manual'] = manual
+    pipeline_process = False
+    if pipeline and not manual:
+        proc = compile_process_pipeline(pipeline, templates)
+        if proc.get('valid') and proc.get('python_code'):
+            s['python_code'] = proc['python_code']
+            pipeline_process = True
+        groups = preset_groups_from_pipeline(pipeline, templates)
+        if groups:
+            s['python_presets'] = groups
+
+    if mode in ('flow', 'split', 'rules', 'code') and flow.get('nodes') and not pipeline_process and not manual:
         has_rules = flow_has_rules_loop(flow)
         py = (s.get('python_code') or '').strip()
 
         if has_rules:
-            rules_code = (s.get('filter_rules_code') or '').strip()
-            if not rules_code:
-                rules_flow = extract_rules_compile_flow(flow)
-                compiled = compile_filter_rules(rules_flow, templates)
-                if compiled['valid'] and compiled['python_code'].strip():
-                    s['filter_rules_code'] = compiled['python_code']
+            rules_flow = extract_rules_compile_flow(flow)
+            compiled = compile_filter_rules(rules_flow, templates)
+            if compiled['valid'] and compiled['python_code'].strip():
+                s['filter_rules_code'] = compiled['python_code']
 
             needs_resync = (
                 _looks_legacy_compiled_python(py)
@@ -360,37 +392,34 @@ def normalize_strategy(strategy, templates=None):
     return s
 
 
-def build_random_sample_function(max_rows=300, random_seed=42):
-    """生成可编辑的随机采样函数（参数由 UI 同步到此函数签名）。"""
-    max_rows = int(max_rows)
-    random_seed = int(random_seed)
+def build_random_sample_function():
+    """生成随机采样辅助函数（运行时从 get_env SAMPLE_SIZE / RANDOM_SEED 读取）。"""
     return (
-        f'def {RANDOM_SAMPLE_FUNC}(df, max_rows={max_rows}, random_seed={random_seed}):\n'
-        f'    """随机采样；行数不足时返回全部。"""\n'
-        f'    max_rows = int(max_rows)\n'
-        f'    seed = int(random_seed)\n'
+        f'def {RANDOM_SAMPLE_FUNC}(df, max_rows=None, random_seed=None):\n'
+        f'    """随机采样；策略流已选 random_sample 节点时由 process_data 调用；参数走环境变量。"""\n'
+        f'    if max_rows is None:\n'
+        f'        _raw = get_env("SAMPLE_SIZE", "").strip()\n'
+        f'        if not _raw:\n'
+        f'            return df.reset_index(drop=True)\n'
+        f'        max_rows = int(_raw)\n'
+        f'    else:\n'
+        f'        max_rows = int(max_rows)\n'
+        f'    if random_seed is None:\n'
+        f'        random_seed = int(get_env("RANDOM_SEED", "42") or 42)\n'
+        f'    else:\n'
+        f'        random_seed = int(random_seed)\n'
         f'    if max_rows <= 0 or len(df) <= max_rows:\n'
         f'        return df.reset_index(drop=True)\n'
-        f'    return df.sample(n=max_rows, random_state=seed).reset_index(drop=True)\n'
+        f'    return df.sample(n=max_rows, random_state=random_seed).reset_index(drop=True)\n'
     )
 
 
 def compile_sample_code(flow, templates=None):
-    """从 flow 提取 random_sample 节点参数，生成采样函数定义。"""
+    """flow 含 random_sample 节点时生成采样辅助函数（参数由环境变量控制）。"""
     _ = templates
-    max_rows, seed = 300, 42
-    found = False
-    for node in _walk_flow_nodes((flow or {}).get('nodes') or []):
-        t = node.get('type') or ''
-        tid = node.get('template_id') or ''
-        if t == 'template.random_sample' or tid == 'random_sample':
-            p = node.get('params') or {}
-            max_rows = int(p.get('max_rows', 300))
-            seed = int(p.get('random_seed', 42))
-            found = True
-    if not found:
+    if not _flow_has_random_sample(flow):
         return ''
-    return build_random_sample_function(max_rows, seed)
+    return build_random_sample_function()
 
 
 def combine_python_code(filter_rules_code='', process_code='', sample_code=''):
@@ -451,7 +480,9 @@ def extract_rules_compile_flow(flow):
 
 
 def resolve_strategy_python(strategy, templates=None):
-    """Strategy v2：规则 → apply_filter_rules；process_data 由用户手写或从 flow 编译。"""
+    """Strategy v2：规则 → apply_filter_rules；process_data 由 pipeline / flow / 手写编译。"""
+    from studio.flow.process_pipeline import compile_process_pipeline, ensure_process_pipeline
+
     templates = templates or {}
     mode = strategy.get('filter_mode', 'flow')
     flow = strategy.get('flow') or {}
@@ -460,6 +491,11 @@ def resolve_strategy_python(strategy, templates=None):
     if mode in ('flow', 'split', 'rules'):
         rules_code = (strategy.get('filter_rules_code') or '').strip()
         process_code = (strategy.get('python_code') or '').strip()
+        pipeline = ensure_process_pipeline(strategy, templates)
+        if pipeline and not (strategy.get('python_code_manual') and process_code):
+            proc_pipe = compile_process_pipeline(pipeline, templates)
+            if proc_pipe.get('valid') and proc_pipe.get('python_code'):
+                process_code = proc_pipe['python_code'].strip()
 
         if not rules_code and has_rules:
             rules_flow = extract_rules_compile_flow(flow)
@@ -468,15 +504,17 @@ def resolve_strategy_python(strategy, templates=None):
                 raise ValueError('筛选规则编译失败: ' + '; '.join(compiled['errors']))
             rules_code = compiled['python_code']
 
-        sample_code = (strategy.get('sample_code') or '').strip()
-        if not sample_code and flow.get('nodes'):
-            sample_code = compile_sample_code(flow, templates)
-
         if not process_code and flow.get('nodes'):
             proc = compile_process_data(flow, templates)
             if not proc['valid']:
                 raise ValueError('process_data 编译失败: ' + '; '.join(proc['errors']))
             process_code = proc['python_code']
+
+        sample_code = ''
+        if _flow_has_random_sample(flow) or references_random_sample(process_code):
+            sample_code = (strategy.get('sample_code') or '').strip()
+            if not sample_code:
+                sample_code = compile_sample_code(flow, templates)
 
         if rules_code or sample_code or process_code:
             return combine_execution_python(
@@ -520,7 +558,7 @@ def _flow_has_random_sample(flow):
 
 
 def has_inline_sampling(python_code='', flow=None):
-    """process_data / flow 已含随机采样时，跳过查询后的二次采样。"""
+    """策略是否在 process_data 内配置了随机采样（flow random_sample 节点或显式调用）。"""
     code = (python_code or '').strip()
     if code:
         if re.search(r'\.sample\s*\(', code):

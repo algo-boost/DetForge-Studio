@@ -358,6 +358,7 @@ def download_batches(
     batch_size: int,
     timeout_sec: int,
     retries: int,
+    progress_fn=None,
 ) -> Tuple[int, int]:
     """tasks: (object_key, local_path)"""
     s = m._api_session()
@@ -406,6 +407,11 @@ def download_batches(
             else:
                 fail += 1
         print(f"进度: 成功={ok}, 失败={fail}, 已处理={ok + fail}/{total}")
+        if progress_fn:
+            try:
+                progress_fn(ok + fail, total, ok, fail)
+            except Exception:
+                pass
     return ok, fail
 
 

@@ -6,7 +6,7 @@ import unittest
 
 import pandas as pd
 
-from studio.export.csv2coco import build_coco_info, csv2coco
+from studio.export.csv2coco import build_coco_info, csv2coco, sync_coco_image_file_names
 
 
 class Csv2CocoTests(unittest.TestCase):
@@ -47,6 +47,22 @@ class Csv2CocoTests(unittest.TestCase):
         cat_names = {c['name'] for c in coco['categories']}
         self.assertIn('脏污', cat_names)
         self.assertIn('焊丝', cat_names)
+
+    def test_sync_coco_image_file_names_local_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local = os.path.join(tmp, '0_photo.jpg')
+            open(local, 'wb').write(b'x')
+            coco_path = os.path.join(tmp, '_annotations.coco.json')
+            with open(coco_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'images': [{'id': 0, 'file_name': 'photo.jpg'}],
+                    'annotations': [],
+                    'categories': [],
+                }, f)
+            self.assertTrue(sync_coco_image_file_names(coco_path, {0: local}, image_dir=tmp))
+            with open(coco_path, encoding='utf-8') as f:
+                coco = json.load(f)
+            self.assertEqual(coco['images'][0]['file_name'], os.path.abspath(local))
 
 
 if __name__ == '__main__':

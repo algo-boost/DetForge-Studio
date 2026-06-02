@@ -13,6 +13,10 @@ export const FILTER_MODE_LABEL = {
   code: '仅代码',
 };
 
-export function isBuiltinStrategy(draft) {
-  return draft?.category === '内置' || String(draft?.id || '').startsWith('_');
+export function isBuiltinStrategy() {
+  return false;
+}
+
+export function isPresetStrategy() {
+  return false;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import SceneHubNav from '../components/SceneHubNav';
 import { api, toast } from '../api/client';
 import { RulesBuilder } from '../components/RulesBuilder';
 import { SqlEditor, PythonEditor } from '../components/Editors';
@@ -8,8 +9,11 @@ import { TemplateEditor } from '../components/TemplateEditor';
 import { Modal } from '../components/Modal';
 import { mergeFlowForSave, uiFilterMode } from '../lib/flowMerge';
 import StrategyEnvSchemaEditor from '../components/StrategyEnvSchemaEditor';
+import ProcessPipelineEditor from '../components/ProcessPipelineEditor';
+import { defaultPipelineFromPresets } from '../lib/processPipeline';
 import { envDefaultsFromSchema, parseEnvRandomSeed, parseEnvSampleSize } from '../lib/envVars';
-import { FILTER_MODE_LABEL, STRATEGY_EDITOR_TABS, isBuiltinStrategy } from '../components/strategy/strategyUtils';
+import { TIME_ENV_FIELDS } from '../lib/strategyEnvSchema';
+import { FILTER_MODE_LABEL, STRATEGY_EDITOR_TABS } from '../components/strategy/strategyUtils';
 
 function StrategyEditorTabBar({ activeTab, onTabChange, hideRules }) {
   const tabs = STRATEGY_EDITOR_TABS.filter((t) => !(hideRules && t.id === 'rules'));
@@ -83,10 +87,18 @@ export default function AdminPage({ embedded = false }) {
 
   const openStrategy = (s) => {
     setEditing({ type: 'strategy', id: s.id });
-    setDraft({ ...s, filter_mode: uiFilterMode(s.filter_mode || 'flow') });
+    const envSchema = (s.env_schema || []).map((row) => {
+      const key = String(row?.key || '').toUpperCase();
+      if (key === 'START_TIME' || key === 'END_TIME') return { ...row, type: 'datetime' };
+      return row;
+    });
+    setDraft({ ...s, env_schema: envSchema, filter_mode: uiFilterMode(s.filter_mode || 'flow') });
     setEditorTab('meta');
     originalFlowRef.current = s.flow ? JSON.parse(JSON.stringify(s.flow)) : null;
-    studio.setFlow(s.flow || { version: 2, nodes: [] });
+    studio.setFlow(s.flow || { version: 2, nodes: [] }, {
+      removeEmptyRows: s.remove_empty_rows,
+      filterRulesCode: s.filter_rules_code,
+    });
   };
 
   const newStrategy = () => {
@@ -94,12 +106,11 @@ export default function AdminPage({ embedded = false }) {
     const s = {
       id, name: '新策略', category: 'custom', filter_mode: 'split',
       sql_template: "SELECT * FROM product_detection_detail_result\nWHERE c_time BETWEEN '${START_TIME}' AND '${END_TIME}'",
-      python_code: 'def process_data(df):\n    df = apply_filter_rules(df)\n    return df',
+      python_code: '',
       flow: { version: 2, nodes: [] },
-      env_schema: [
-        { key: 'SAMPLE_SIZE', label: '随机采样数量', type: 'number', default: '300' },
-        { key: 'RANDOM_SEED', label: '随机种子', type: 'number', default: '42' },
-      ],
+      env_schema: [...TIME_ENV_FIELDS],
+      python_presets: ['observe', 'filter'],
+      process_pipeline: defaultPipelineFromPresets(['observe', 'filter']),
     };
     setEditing({ type: 'strategy', id });
     setDraft(s);
@@ -128,12 +139,15 @@ export default function AdminPage({ embedded = false }) {
       filter_mode: mode,
       sample_size: parseEnvSampleSize(envDefaults, draft.sample_size || 300),
       random_seed: parseEnvRandomSeed(envDefaults, draft.random_seed ?? 42),
-      flow: mergeFlowForSave(originalFlowRef.current, studio.flow),
+      flow: mergeFlowForSave(originalFlowRef.current, studio.flow, studio.removeEmpty),
+      remove_empty_rows: studio.removeEmpty,
       filter_rules_code: await studio.compile(),
     };
     try {
       const res = await api.saveStrategy(payload);
       if (!res.success) throw new Error(res.error);
+      const fresh = await api.getStrategy(payload.id);
+      if (fresh.success) openStrategy(fresh.data);
       toast('已保存');
       reload();
     } catch (e) { toast(e.message, 'error'); }
@@ -141,7 +155,15 @@ export default function AdminPage({ embedded = false }) {
 
   const duplicate = async () => {
     if (!draft) return;
-    const copy = { ...draft, id: `${draft.id}_copy_${Date.now()}`, name: `${draft.name} (副本)` };
+    const copy = {
+      ...draft,
+      id: `saved_${Date.now()}`,
+      name: `${draft.name} (副本)`,
+      category: 'custom',
+      is_preset: false,
+      _preset: false,
+      save_as_copy: true,
+    };
     await api.saveStrategy({ ...copy, flow: studio.flow, filter_rules_code: await studio.compile() });
     reload();
     openStrategy(copy);
@@ -174,7 +196,6 @@ export default function AdminPage({ embedded = false }) {
     } catch (e) { toast(e.message, 'error'); }
   };
 
-  const isBuiltin = isBuiltinStrategy(draft);
   const filterMode = draft?.filter_mode === 'flow' ? 'rules' : (draft?.filter_mode || 'split');
   const hideRulesTab = filterMode === 'code';
 
@@ -189,6 +210,8 @@ export default function AdminPage({ embedded = false }) {
   return (
     <div className={`admin-page strategy-page panel active${embedded ? ' strategy-page-embedded' : ''}`} id="panel-admin">
       {!embedded && (
+        <>
+        <SceneHubNav variant="query" />
         <header className="strategy-header">
           <div>
             <div className="topbar-title">查询策略</div>
@@ -205,6 +228,7 @@ export default function AdminPage({ embedded = false }) {
             </div>
           </div>
         </header>
+        </>
       )}
 
       <div className="strategy-layout">
@@ -229,7 +253,7 @@ export default function AdminPage({ embedded = false }) {
                   onClick={() => openStrategy(s)}
                   title={s.name}
                   meta={s.category || 'custom'}
-                  badge={isBuiltinStrategy(s) ? '内置' : null}
+                  badge={s.category === '推荐' ? '推荐' : null}
                 />
               ))}
               {!filteredStrategies.length && <div className="strategy-list-empty">无匹配策略</div>}
@@ -249,7 +273,7 @@ export default function AdminPage({ embedded = false }) {
                   onClick={() => { setEditing({ type: 'template', id: t.id }); setDraft({ ...t }); setEditorTab('meta'); }}
                   title={t.name || t.id}
                   meta={t.id}
-                  badge={String(t.id).startsWith('_') ? '内置' : null}
+                  badge={String(t.id).startsWith('_') ? '库' : null}
                 />
               ))}
               {!filteredTemplates.length && <div className="strategy-list-empty">无匹配模板</div>}
@@ -292,7 +316,6 @@ export default function AdminPage({ embedded = false }) {
                 <div>
                   <div className="strategy-editor-title-row">
                     <h2 className="strategy-editor-title">{draft.name}</h2>
-                    {isBuiltin && <span className="strategy-pill strategy-pill-muted">内置</span>}
                     <span className="strategy-pill strategy-pill-info">{FILTER_MODE_LABEL[filterMode] || filterMode}</span>
                   </div>
                   <p className="strategy-editor-sub"><code>{draft.id}</code></p>
@@ -304,7 +327,7 @@ export default function AdminPage({ embedded = false }) {
                   <button type="button" className="btn btn-sm btn-ghost" onClick={() => document.getElementById('admin-import')?.click()}>导入</button>
                   <input id="admin-import" type="file" accept=".json" hidden onChange={(e) => { importJson(e.target.files?.[0]); e.target.value = ''; }} />
                   <Link className="btn btn-sm btn-ghost" to="/">主界面 →</Link>
-                  {!isBuiltin && <button type="button" className="btn btn-sm btn-ghost strategy-action-danger" onClick={() => setDeleteOpen(true)}>删除</button>}
+                  <button type="button" className="btn btn-sm btn-ghost strategy-action-danger" onClick={() => setDeleteOpen(true)}>删除</button>
                 </div>
               </div>
 
@@ -314,7 +337,7 @@ export default function AdminPage({ embedded = false }) {
                 {editorTab === 'meta' && (
                   <div className="strategy-meta-form">
                     <div className="form-row">
-                      <div className="form-group"><label>ID</label><input className="form-input" value={draft.id} readOnly={isBuiltin} onChange={(e) => setDraft({ ...draft, id: e.target.value })} /></div>
+                      <div className="form-group"><label>ID</label><input className="form-input" value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value })} /></div>
                       <div className="form-group"><label>名称</label><input className="form-input" value={draft.name || ''} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></div>
                     </div>
                     <div className="form-row">
@@ -334,7 +357,7 @@ export default function AdminPage({ embedded = false }) {
                   </div>
                 )}
                 {editorTab === 'params' && (
-                  <StrategyEnvSchemaEditor draft={draft} onChange={setDraft} />
+                  <StrategyEnvSchemaEditor draft={draft} onChange={setDraft} templates={Object.fromEntries(templates.map((t) => [t.id, t]))} />
                 )}
                 {editorTab === 'sql' && (
                   <div className="strategy-code-panel">
@@ -349,8 +372,28 @@ export default function AdminPage({ embedded = false }) {
                 )}
                 {editorTab === 'code' && (
                   <div className="strategy-code-panel">
-                    <p className="strategy-panel-hint">定义 <code>process_data(df)</code> 函数，对 SQL 结果做后处理。</p>
-                    <div className="editor-wrap strategy-editor-wrap"><PythonEditor value={draft.python_code || ''} onChange={(v) => setDraft({ ...draft, python_code: v })} /></div>
+                    <ProcessPipelineEditor
+                      draft={draft}
+                      onChange={setDraft}
+                      templatesMap={Object.fromEntries(templates.map((t) => [t.id, t]))}
+                    />
+                    <div className="strategy-process-code-section">
+                      <div className="strategy-process-code-head">
+                        <h3 className="strategy-env-schema-title">process_data 源码</h3>
+                        {draft.python_code_manual && (
+                          <span className="strategy-pill strategy-pill-info">手写模式</span>
+                        )}
+                      </div>
+                      <p className="strategy-panel-hint">
+                        直接编辑并保存；与调用链不一致时自动按手写保留。要用调用链生成请点击上方「应用调用链到代码」。
+                      </p>
+                      <div className="editor-wrap strategy-editor-wrap">
+                        <PythonEditor
+                          value={draft.python_code || ''}
+                          onChange={(v) => setDraft({ ...draft, python_code: v, python_code_manual: true })}
+                        />
+                      </div>
+                    </div>
                   </div>
                 )}
                 {editorTab === 'flow' && (
@@ -371,12 +414,17 @@ export default function AdminPage({ embedded = false }) {
           <div className="form-actions">
             <button type="button" className="btn btn-ghost" onClick={() => setDeleteOpen(false)}>取消</button>
             <button type="button" className="btn btn-danger" onClick={async () => {
-              await api.deleteStrategy(draft.id);
-              setDeleteOpen(false);
-              setDraft(null);
-              setEditing(null);
-              reload();
-              toast('已删除');
+              try {
+                const res = await api.deleteStrategy(draft.id);
+                if (!res.success) throw new Error(res.error);
+                setDeleteOpen(false);
+                setDraft(null);
+                setEditing(null);
+                reload();
+                toast('已删除');
+              } catch (e) {
+                toast(e.message || '删除失败', 'error');
+              }
             }}>删除</button>
           </div>
         </div>

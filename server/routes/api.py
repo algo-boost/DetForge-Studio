@@ -12,7 +12,17 @@ from datetime import datetime
 from server.core import *
 from server.core import _fetch_approaches, _resolve_query_python, _resolve_filter_rules_code
 from studio.export.csv2coco import build_coco_info
-from studio.flow.flow_compiler import compile_filter_rules, normalize_strategy, resolve_strategy_python, extract_rules_compile_flow, has_inline_sampling
+from studio.export.task_images import normalize_coco_images_for_task
+from studio.flow.flow_compiler import (
+    compile_filter_rules,
+    normalize_strategy,
+    resolve_strategy_python,
+    extract_rules_compile_flow,
+    has_inline_sampling,
+    references_filter_rules,
+    references_random_sample,
+)
+import re
 from studio.flow.flow_schema import prepare_strategy, validate_flow, FLOW_IR_VERSION
 from studio.flow.flow_registry import build_node_registry
 from studio.query.deployed_models import fetch_deployed_models, fetch_training_models
@@ -97,9 +107,25 @@ def get_config():
         safe_config.update(mf_status)
         safe_config.pop('magic_fox_password', None)
         safe_config.pop('magic_fox_access_token', None)
-        safe_config['api_token_set'] = bool(str(config.get('api_token') or '').strip())
+        from server.core import read_config_file_raw, secret_field_set_on_disk, CONFIG_FILE
+        raw_cfg = read_config_file_raw()
+        safe_config['api_token_set'] = bool(
+            str(config.get('api_token') or '').strip() or secret_field_set_on_disk('api_token')
+        )
         safe_config['api_token'] = ''
         safe_config['db_password'] = ''
+        safe_config['db_password_set'] = bool(
+            str(config.get('db_password') or '').strip() or secret_field_set_on_disk('db_password')
+        )
+        decrypt_errors = safe_config.pop('_config_decrypt_errors', None) or []
+        if decrypt_errors:
+            safe_config['config_decrypt_errors'] = decrypt_errors
+            safe_config['config_decrypt_hint'] = (
+                '部分敏感字段无法解密，请确认 .config.key 与 config.json 配对；'
+                '勿在未解密时保存配置，以免覆盖口令。'
+            )
+        safe_config['config_file'] = CONFIG_FILE
+        safe_config['config_file_exists'] = os.path.isfile(CONFIG_FILE)
 
         from studio.config_crypto import secrets_encryption_status
         config_secrets = secrets_encryption_status()
@@ -127,15 +153,17 @@ def save_config_api():
             'platform_paths_source', 'approaches', 'db_connected', 'viz_available', 'unify_available', 'predict_runtime',
             'magic_fox_configured', 'magic_fox_password_set', 'magic_fox_token_set', 'api_token_set',
         }
+        from server.core import preserve_secrets_for_save
         config = {**current, **{k: v for k, v in incoming.items() if k not in readonly}}
-        if not str(incoming.get('db_password') or '').strip():
-            config['db_password'] = current.get('db_password', '')
-        if not str(incoming.get('magic_fox_password') or '').strip():
-            config['magic_fox_password'] = current.get('magic_fox_password', '')
-        if not str(incoming.get('magic_fox_access_token') or '').strip():
-            config['magic_fox_access_token'] = current.get('magic_fox_access_token', '')
-        if not str(incoming.get('api_token') or '').strip():
-            config['api_token'] = current.get('api_token', '')
+        config = preserve_secrets_for_save(config, incoming)
+        if config.get('_config_decrypt_errors') and not any(
+            str(incoming.get(k) or '').strip() for k in ('db_password', 'magic_fox_password', 'magic_fox_access_token')
+        ):
+            return jsonify({
+                'success': False,
+                'error': '配置口令无法解密，请先恢复 .config.key 或在表单中重新填写密码后再保存',
+                'config_decrypt_errors': config.get('_config_decrypt_errors'),
+            }), 400
 
         mode = str(config.get('magic_fox_auth_mode') or 'password').strip().lower()
         if mode not in ('password', 'token'):
@@ -162,7 +190,29 @@ def save_config_api():
                 path = str(config.get(key) or '').strip()
                 if path and not os.path.isdir(path):
                     warnings.append(f'{label} 不存在: {path}')
-            return jsonify({'success': True, 'message': '配置保存成功', 'warnings': warnings})
+            client = get_db_client()
+            mf_probe = {}
+            from studio.sync import magic_fox_bridge
+            mf_status = magic_fox_bridge.auth_status(config)
+            if mf_status.get('magic_fox_configured'):
+                try:
+                    magic_fox_bridge.test_connection(config)
+                    mf_probe = {'magic_fox_reachable': True, **mf_status}
+                except Exception as mf_err:  # noqa: BLE001
+                    mf_probe = {
+                        'magic_fox_reachable': False,
+                        'magic_fox_error': str(mf_err),
+                        **mf_status,
+                    }
+            else:
+                mf_probe = mf_status
+            return jsonify({
+                'success': True,
+                'message': '配置保存成功',
+                'warnings': warnings,
+                'db_connected': bool(client and client.ensure_alive()),
+                'auth': mf_probe,
+            })
         else:
             return jsonify({'success': False, 'error': '保存配置失败'}), 500
     
@@ -172,28 +222,46 @@ def save_config_api():
 
 @api_bp.route('/api/config/test-connection', methods=['POST'])
 def test_connection():
-    """测试数据库连接"""
+    """测试数据库连接；成功后将连接参数写入 config.json 并重建全局连接。"""
     try:
-        data = request.json
-        host = data.get('host', '')
-        user = data.get('user', '')
-        password = data.get('password', '')
-        database = data.get('database', '')
+        from server.core import update_config_and_reconnect
 
+        data = request.json or {}
+        host = str(data.get('host', '') or '').strip()
+        user = str(data.get('user', '') or '').strip()
+        password = data.get('password', '')
+        database = str(data.get('database', '') or '').strip()
+
+        current = load_config()
         if not str(password).strip():
-            password = load_config().get('db_password', '')
+            password = current.get('db_password', '')
 
         if not all([host, user, database]):
             return jsonify({'success': False, 'error': '请填写主机、用户名和数据库名'}), 400
-        
-        # 尝试连接
+
         test_client = MySQLClient(host, user, password, database)
-        if test_client.connection:
-            test_client.close()
-            return jsonify({'success': True, 'message': '数据库连接成功'})
-        else:
+        if not test_client.connection:
             return jsonify({'success': False, 'error': '数据库连接失败'}), 500
-    
+        test_client.close()
+
+        from server.core import preserve_secrets_for_save
+        updated = preserve_secrets_for_save(
+            {**current, 'db_host': host, 'db_user': user, 'db_database': database},
+            {'db_password': password},
+        )
+        if str(password).strip():
+            updated['db_password'] = password
+        if not update_config_and_reconnect(updated):
+            return jsonify({'success': False, 'error': '连接成功但写入 config.json 失败'}), 500
+
+        client = get_db_client()
+        return jsonify({
+            'success': True,
+            'message': '数据库连接成功，凭据已写入 config.json',
+            'saved': True,
+            'db_connected': bool(client and client.ensure_alive()),
+        })
+
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -244,11 +312,18 @@ def query_database():
         if not sql_template:
             return jsonify({'success': False, 'error': 'SQL 查询语句不能为空'}), 400
 
+        strategy = _get_all_strategies().get((data.get('strategy_id') or '').strip()) if data.get('strategy_id') else None
+        env_schema = data.get('env_schema')
+        if strategy and not env_schema:
+            from studio.query.strategy_env_schema import merge_strategy_env_schema
+            env_schema = merge_strategy_env_schema(strategy, templates)
+
         env_ctx = build_stage_context(
             data,
             start_time=start_time,
             end_time=end_time,
             job_id=data.get('predict_job_id') or data.get('job_id'),
+            env_schema=env_schema,
         )
         sample_size = sample_size_from_env(env_ctx)
         random_seed = parse_random_seed(env_ctx.get('RANDOM_SEED'))
@@ -257,7 +332,7 @@ def query_database():
         if unresolved:
             return jsonify({
                 'success': False,
-                'error': format_unresolved_vars_error(unresolved),
+                'error': format_unresolved_vars_error(unresolved, env_schema),
                 'unresolved_vars': unresolved,
             }), 400
         
@@ -281,7 +356,11 @@ def query_database():
         if python_code and python_code.strip():
             try:
                 df, console_output, execution_time = execute_python_filter(
-                    df, python_code, capture_output=True, env_context=env_ctx,
+                    df,
+                    python_code,
+                    capture_output=True,
+                    env_context=env_ctx,
+                    strategy=strategy,
                 )
             except Exception as e:
                 return jsonify({
@@ -300,9 +379,7 @@ def query_database():
 
         rows_before_sample = len(df)
         flow_payload = flow if flow and flow.get('nodes') else None
-        skip_post_sample = has_inline_sampling(python_code, flow_payload) or sample_size is None
-        if not skip_post_sample:
-            df = apply_random_sample(df, sample_size, random_seed)
+        post_sample_skipped = True
 
         query_meta = {
             'query_sql': sql_template,
@@ -310,12 +387,12 @@ def query_database():
             'python_code': python_code or '',
             'flow': flow_payload,
             'filter_mode': filter_mode or ('flow' if flow_payload else 'code'),
-            'start_time': start_time,
-            'end_time': end_time,
+            'start_time': env_ctx.get('START_TIME', start_time),
+            'end_time': env_ctx.get('END_TIME', end_time),
             'sample_size': sample_size,
             'random_seed': random_seed,
             'rows_before_sample': rows_before_sample,
-            'post_sample_skipped': skip_post_sample,
+            'post_sample_skipped': post_sample_skipped,
             'query_mode': 'free_query',
             'data_source': data.get('data_source') or 'detail',
         }
@@ -335,7 +412,7 @@ def query_database():
             'data': result_data,
             'count': len(result_data),
             'task_id': task_id,
-            'post_sample_skipped': skip_post_sample,
+            'post_sample_skipped': post_sample_skipped,
             'sample_size': sample_size,
             'random_seed': random_seed,
             'rows_before_sample': rows_before_sample,
@@ -366,11 +443,18 @@ def preview_filter():
         if not sql_template:
             return jsonify({'success': False, 'error': 'SQL 查询语句不能为空'}), 400
 
+        strategy = _get_all_strategies().get((data.get('strategy_id') or '').strip()) if data.get('strategy_id') else None
+        env_schema = data.get('env_schema')
+        if strategy and not env_schema:
+            from studio.query.strategy_env_schema import merge_strategy_env_schema
+            env_schema = merge_strategy_env_schema(strategy, _get_all_templates())
+
         env_ctx = build_stage_context(
             data,
             start_time=start_time,
             end_time=end_time,
             job_id=data.get('predict_job_id') or data.get('job_id'),
+            env_schema=env_schema,
         )
         sample_size = sample_size_from_env(env_ctx)
         random_seed = parse_random_seed(env_ctx.get('RANDOM_SEED'))
@@ -379,7 +463,7 @@ def preview_filter():
         if unresolved:
             return jsonify({
                 'success': False,
-                'error': format_unresolved_vars_error(unresolved),
+                'error': format_unresolved_vars_error(unresolved, env_schema),
                 'unresolved_vars': unresolved,
             }), 400
         client = get_db_client()
@@ -403,22 +487,48 @@ def preview_filter():
         templates = _get_all_templates()
         filter_rows = sql_rows
         execution_time = 0.0
+        console_output = ''
+
+        if preview_mode != 'full':
+            from studio.flow.process_pipeline import ensure_process_pipeline
+            pipe = data.get('process_pipeline')
+            if not pipe and strategy:
+                pipe = ensure_process_pipeline(strategy, templates)
+            py_snippet = (data.get('python_code') or '')
+            if pipe or re.search(r'\bview\s*\(', py_snippet):
+                preview_mode = 'full'
+            elif references_filter_rules(py_snippet) or references_random_sample(py_snippet):
+                preview_mode = 'full'
 
         if preview_mode == 'full':
             try:
-                python_code = _resolve_query_python(data, templates)
+                merge_data = dict(data)
+                if strategy:
+                    if not (merge_data.get('python_code') or '').strip():
+                        merge_data['python_code'] = strategy.get('python_code') or ''
+                    if not merge_data.get('process_pipeline') and strategy.get('process_pipeline'):
+                        merge_data['process_pipeline'] = strategy.get('process_pipeline')
+                    if not merge_data.get('flow') and strategy.get('flow'):
+                        merge_data['flow'] = strategy.get('flow')
+                    if not merge_data.get('filter_rules_code') and strategy.get('filter_rules_code'):
+                        merge_data['filter_rules_code'] = strategy.get('filter_rules_code')
+                python_code = _resolve_query_python(merge_data, templates)
             except ValueError as e:
                 return jsonify({'success': False, 'error': str(e)}), 400
             if python_code:
                 try:
-                    df, _, execution_time = execute_python_filter(
-                        df, python_code, capture_output=True, env_context=env_ctx,
+                    df, console_output, execution_time = execute_python_filter(
+                        df,
+                        python_code,
+                        capture_output=True,
+                        env_context=env_ctx,
+                        strategy=strategy,
                     )
                     filter_rows = len(df)
                 except Exception as e:
                     return jsonify({
                         'success': False,
-                        'error': f'Python 筛选失败: {str(e)}',
+                        'error': f'process_data 执行失败: {str(e)}',
                         'traceback': traceback.format_exc(),
                     }), 500
         else:
@@ -426,7 +536,7 @@ def preview_filter():
             if rules_code:
                 try:
                     start = time.time()
-                    df = execute_filter_rules_only(df, rules_code)
+                    df = execute_filter_rules_only(df, rules_code, env_context=env_ctx, strategy=strategy)
                     execution_time = time.time() - start
                     filter_rows = len(df)
                 except Exception as e:
@@ -437,19 +547,17 @@ def preview_filter():
                     }), 500
 
         flow_payload = data.get('flow') if (data.get('flow') or {}).get('nodes') else None
-        python_for_check = ''
+        from studio.flow.flow_compiler import has_inline_sampling
+
         if preview_mode == 'full':
-            try:
-                python_for_check = _resolve_query_python(data, templates) or ''
-            except ValueError:
-                python_for_check = (data.get('python_code') or '').strip()
-        skip_post_sample = has_inline_sampling(python_for_check, flow_payload) or sample_size is None
-        if skip_post_sample and preview_mode == 'full':
+            after_sample = filter_rows
+        elif not has_inline_sampling('', flow_payload):
             after_sample = filter_rows
         elif sample_size is None:
             after_sample = filter_rows
         else:
             after_sample = min(sample_size, filter_rows) if filter_rows else 0
+        post_sample_skipped = True
         unique_products = None
         if 'product_no' in df.columns:
             unique_products = int(df['product_no'].nunique())
@@ -463,7 +571,8 @@ def preview_filter():
             'unique_products': unique_products,
             'execution_time': round(execution_time, 3),
             'preview_mode': preview_mode,
-            'post_sample_skipped': skip_post_sample,
+            'post_sample_skipped': post_sample_skipped,
+            'console_output': console_output or '',
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -525,124 +634,75 @@ def export_coco(task_id):
         task_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], task_id)
         coco_path = os.path.join(task_dir, '_annotations.coco.json')
         csv_path = os.path.join(task_dir, 'result.csv')
-        
+
         if not os.path.exists(coco_path):
             return jsonify({'error': 'COCO 文件不存在'}), 404
-        
-        # 获取选中的图片索引（如果提供了）
-        selected_indices = None
+
+        selected_list = None
         if request.method == 'POST':
             data = request.get_json() or {}
-            selected_indices = data.get('selected_indices', None)
-            if selected_indices is not None:
-                selected_indices = set(int(idx) for idx in selected_indices)
-        
-        # 读取原始CSV数据以获取图片文件名映射
-        image_filename_map = {}
-        if os.path.exists(csv_path):
-            try:
-                df = pd.read_csv(csv_path, encoding='utf-8')
-                for idx, row in df.iterrows():
-                    img_path = row.get('img_path', '')
-                    if pd.notna(img_path) and img_path:
-                        img_name = os.path.basename(str(img_path))
-                        image_filename_map[int(idx)] = img_name
-            except Exception as e:
-                print(f"⚠️ 读取CSV文件警告: {e}")
-        
-        # 读取COCO数据
+            raw = data.get('selected_indices')
+            if raw is not None and len(raw) > 0:
+                selected_list = [int(idx) for idx in raw]
+
         with open(coco_path, 'r', encoding='utf-8') as f:
             coco_data = json.load(f)
-        
-        # 如果指定了选中的图片，过滤COCO数据
-        if selected_indices is not None and len(selected_indices) > 0:
-            # 过滤images
-            filtered_images = [img for img in coco_data['images'] if img.get('id') in selected_indices]
+
+        if selected_list:
+            selected_set = set(selected_list)
+            filtered_images = [img for img in coco_data['images'] if img.get('id') in selected_set]
             selected_image_ids = {img['id'] for img in filtered_images}
-            
-            # 过滤annotations（只保留选中图片的标注）
-            filtered_annotations = [ann for ann in coco_data['annotations'] if ann.get('image_id') in selected_image_ids]
-            
-            # 创建新的COCO数据
-            filtered_coco = {
+            filtered_annotations = [
+                ann for ann in coco_data['annotations']
+                if ann.get('image_id') in selected_image_ids
+            ]
+            coco_data = {
                 'info': coco_data.get('info') or build_coco_info(),
                 'images': filtered_images,
                 'annotations': filtered_annotations,
-                'categories': coco_data.get('categories', [])
+                'categories': coco_data.get('categories', []),
             }
-            
-            # 临时保存过滤后的COCO文件
-            filtered_coco_path = os.path.join(task_dir, '_annotations_filtered.coco.json')
-            with open(filtered_coco_path, 'w', encoding='utf-8') as f:
-                json.dump(filtered_coco, f, ensure_ascii=False, indent=4)
-            coco_path = filtered_coco_path
-        
-        # 创建临时ZIP文件
+
+        image_files = normalize_coco_images_for_task(task_dir, coco_data, selected_list)
+
         zip_filename = f'coco_export_{task_id}.zip'
         zip_path = os.path.join(current_app.config['UPLOAD_FOLDER'], zip_filename)
-        
+
         try:
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                # 添加COCO JSON文件
-                zipf.write(coco_path, '_annotations.coco.json')
+                zipf.writestr(
+                    '_annotations.coco.json',
+                    json.dumps(coco_data, ensure_ascii=False, indent=4),
+                )
                 if os.path.exists(csv_path):
                     zipf.write(csv_path, 'result.csv')
-                
-                # 添加图片文件
-                image_count = 0
-                if selected_indices is not None and len(selected_indices) > 0:
-                    # 只添加选中的图片
-                    for idx in selected_indices:
-                        img_name = image_filename_map.get(idx)
-                        if img_name:
-                            file_path = os.path.join(task_dir, img_name)
-                            if os.path.exists(file_path) and os.path.isfile(file_path):
-                                zipf.write(file_path, img_name)
-                                image_count += 1
-                else:
-                    # 添加所有图片文件
-                    for filename in os.listdir(task_dir):
-                        file_path = os.path.join(task_dir, filename)
-                        # 只添加图片文件，跳过JSON和CSV文件
-                        if os.path.isfile(file_path) and filename.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp')):
-                            zipf.write(file_path, filename)
-                            image_count += 1
-            
-            # 清理临时过滤的COCO文件
-            if selected_indices is not None and os.path.exists(filtered_coco_path):
-                try:
-                    os.remove(filtered_coco_path)
-                except:
-                    pass
-            
-            # 返回ZIP文件
-            response = send_file(zip_path, as_attachment=True, download_name=f'coco_export_{task_id}.zip', mimetype='application/zip')
-            
-            # 延迟删除临时ZIP文件（在响应发送后）
+                for src, arc in image_files:
+                    zipf.write(src, arc)
+
+            response = send_file(
+                zip_path,
+                as_attachment=True,
+                download_name=f'coco_export_{task_id}.zip',
+                mimetype='application/zip',
+            )
+
             def remove_file():
                 try:
                     if os.path.exists(zip_path):
                         os.remove(zip_path)
-                except:
+                except Exception:
                     pass
-            
-            # 使用Flask的after_request机制会在响应后清理，但这里我们使用线程延迟删除
-            import threading
-            timer = threading.Timer(60.0, remove_file)  # 60秒后删除
-            timer.start()
-            
+
+            threading.Timer(60.0, remove_file).start()
             return response
         except Exception as zip_error:
-            # 如果ZIP创建失败，尝试删除临时文件
             try:
                 if os.path.exists(zip_path):
                     os.remove(zip_path)
-                if selected_indices is not None and os.path.exists(filtered_coco_path):
-                    os.remove(filtered_coco_path)
-            except:
+            except Exception:
                 pass
             raise zip_error
-    
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -790,18 +850,10 @@ def archive_results(task_id):
         image_count = 0
 
         if include_images:
-            if indices:
-                for img_name in image_names:
-                    src = os.path.join(task_dir, img_name)
-                    if os.path.isfile(src):
-                        shutil.copy2(src, os.path.join(dest_dir, img_name))
-                        image_count += 1
-            else:
-                for filename in os.listdir(task_dir):
-                    src = os.path.join(task_dir, filename)
-                    if os.path.isfile(src) and filename.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp')):
-                        shutil.copy2(src, os.path.join(dest_dir, filename))
-                        image_count += 1
+            image_files = normalize_coco_images_for_task(task_dir, coco_data, indices)
+            for src, arc in image_files:
+                shutil.copy2(src, os.path.join(dest_dir, arc))
+                image_count += 1
             file_count += image_count
 
         return jsonify({
@@ -862,18 +914,31 @@ def _save_json(filepath, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def _delete_json(directory, item_id):
-    """删除对应 id 的 JSON 文件（递归搜索）"""
+    """删除对应 id 的 JSON 文件（递归搜索，UTF-8）"""
+    item_id = str(item_id or '').strip()
+    if not item_id or not os.path.isdir(directory):
+        return False
+    direct = os.path.join(directory, f'{item_id}.json')
+    if os.path.isfile(direct):
+        try:
+            os.remove(direct)
+            return True
+        except OSError:
+            pass
     for root, _, files in os.walk(directory):
         for fname in files:
-            if fname.endswith('.json'):
-                fpath = os.path.join(root, fname)
-                try:
-                    with open(fpath, 'r') as f:
-                        if json.load(f).get('id') == item_id:
-                            os.remove(fpath)
-                            return True
-                except Exception:
-                    pass
+            if not fname.endswith('.json'):
+                continue
+            fpath = os.path.join(root, fname)
+            if fpath == direct:
+                continue
+            try:
+                with open(fpath, 'r', encoding='utf-8') as f:
+                    if json.load(f).get('id') == item_id:
+                        os.remove(fpath)
+                        return True
+            except Exception:
+                pass
     return False
 
 # ── 模板 API ────────────────────────────────────────────────────
@@ -892,8 +957,8 @@ def save_template():
         tpl_id = data.get('id', '').strip()
         if not tpl_id:
             return jsonify({'success': False, 'error': 'id 不能为空'}), 400
-        builtin_dir = os.path.join(TEMPLATES_DIR, '_builtin')
-        filepath = os.path.join(builtin_dir if data.get('_builtin') else TEMPLATES_DIR, f"{tpl_id}.json")
+        lib_dir = os.path.join(TEMPLATES_DIR, '_library')
+        filepath = os.path.join(lib_dir if data.get('_library') or data.get('_builtin') else TEMPLATES_DIR, f"{tpl_id}.json")
         _save_json(filepath, data)
         return jsonify({'success': True, 'id': tpl_id})
     except Exception as e:
@@ -909,6 +974,39 @@ def delete_template(template_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # ── 策略 API ────────────────────────────────────────────────────
+
+@api_bp.route('/api/python-presets', methods=['GET'])
+def list_python_presets():
+    try:
+        from studio.query.python_preset_registry import list_preset_catalog
+        return jsonify({'success': True, 'data': list_preset_catalog()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@api_bp.route('/api/pipeline-templates', methods=['GET'])
+def list_pipeline_templates():
+    """可用于 process_pipeline 的块模板目录。"""
+    try:
+        from studio.flow.process_pipeline import list_pipeline_templates
+        return jsonify({'success': True, 'data': list_pipeline_templates(_get_all_templates())})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@api_bp.route('/api/strategies/compile-pipeline', methods=['POST'])
+def compile_strategy_pipeline():
+    """预览 process_pipeline → process_data 编译结果。"""
+    try:
+        from studio.flow.process_pipeline import compile_process_pipeline
+        body = request.get_json(silent=True) or {}
+        pipeline = body.get('process_pipeline') or []
+        templates = _get_all_templates()
+        result = compile_process_pipeline(pipeline, templates)
+        return jsonify({'success': True, 'data': result})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @api_bp.route('/api/strategies', methods=['GET'])
 def list_strategies():
@@ -942,7 +1040,15 @@ def get_strategy_variables(strategy_id):
             return jsonify({'success': False, 'error': '策略不存在'}), 404
         templates = _get_all_templates()
         strategy = normalize_strategy(dict(strategies[strategy_id]), templates)
-        return jsonify({'success': True, 'data': describe_strategy_variables(strategy)})
+        from studio.query.preset_env import apply_env_schema_defaults
+        from studio.query.python_preset_registry import active_presets_for_env_schema
+
+        vars_info = describe_strategy_variables(strategy, templates)
+        schema = vars_info.get('custom_vars') or []
+        vars_info['python_presets'] = active_presets_for_env_schema(strategy)
+        vars_info['process_pipeline'] = strategy.get('process_pipeline') or []
+        vars_info['env_defaults'] = apply_env_schema_defaults({}, schema)
+        return jsonify({'success': True, 'data': vars_info})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -1036,8 +1142,9 @@ def save_strategy():
             if compiled['valid']:
                 data['filter_rules_code'] = compiled['python_code']
             # python_code 保留用户手写的 process_data，不再整段覆盖
-        builtin_dir = os.path.join(STRATEGIES_DIR, '_builtin')
-        filepath = os.path.join(builtin_dir if data.get('_builtin') else STRATEGIES_DIR, f"{sid}.json")
+        data.pop('is_preset', None)
+        data.pop('_preset', None)
+        filepath = os.path.join(STRATEGIES_DIR, f'{sid}.json')
         _save_json(filepath, data)
         return jsonify({'success': True, 'id': sid})
     except Exception as e:
@@ -1046,9 +1153,14 @@ def save_strategy():
 @api_bp.route('/api/strategies/<strategy_id>', methods=['DELETE'])
 def delete_strategy(strategy_id):
     try:
-        if _delete_json(STRATEGIES_DIR, strategy_id):
+        from studio.query.strategy_loader import delete_strategy_by_id
+
+        ok, err = delete_strategy_by_id(strategy_id)
+        if ok:
             return jsonify({'success': True})
-        return jsonify({'success': False, 'error': '策略不存在'}), 404
+        if err == '策略不存在':
+            return jsonify({'success': False, 'error': err}), 404
+        return jsonify({'success': False, 'error': err or '删除失败'}), 404
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

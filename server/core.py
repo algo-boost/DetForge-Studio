@@ -17,7 +17,7 @@ import json
 import uuid
 import zipfile
 from urllib.parse import quote_plus
-from studio.export.csv2coco import csv2coco, build_coco_info
+from studio.export.csv2coco import csv2coco, build_coco_info, sync_coco_image_file_names
 from studio.query.row_fields import enrich_df_product_fields, normalize_result_row_fields
 from studio.query.python_builtins import build_python_namespace
 from studio.flow.flow_registry import build_node_registry
@@ -46,7 +46,7 @@ CONFIG_FILE = os.path.join(BASE_DIR, 'config.json')
 DEFAULT_CONFIG = {
     'db_host': 'localhost',
     'db_user': 'root',
-    'db_password': '12345678',
+    'db_password': '',
     'db_database': 'vision_backend',
     'forge_database': 'detforge',  # 写库（同实例独立库；存模型/作业/预测结果/质检）
     'img_base_path': 'E:/magic_fox_ai_20250826/resources/backend/local_file/',
@@ -201,33 +201,86 @@ def parse_random_seed(value, default=RANDOM_SAMPLE_SEED):
         return default
 
 # 配置管理函数
+def read_config_file_raw():
+    """读取 config.json 原始 JSON（不解密）。"""
+    if not os.path.exists(CONFIG_FILE):
+        return {}
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        print(f'⚠️ 读取 config.json 失败: {e}')
+        return {}
+
+
+def _merge_file_config(file_config: dict) -> dict:
+    merged_config = DEFAULT_CONFIG.copy()
+    merged_config.update(file_config or {})
+    if not isinstance(merged_config.get('id2name'), dict):
+        merged_config['id2name'] = DEFAULT_CONFIG['id2name'].copy()
+    else:
+        id2name = DEFAULT_CONFIG['id2name'].copy()
+        id2name.update(merged_config['id2name'])
+        merged_config['id2name'] = id2name
+    return merged_config
+
+
+def secret_field_set_on_disk(key: str) -> bool:
+    """磁盘上是否已有该敏感字段（含 enc:v1 密文）。"""
+    from studio.config_crypto import is_encrypted
+    val = read_config_file_raw().get(key)
+    if not isinstance(val, str) or not str(val).strip():
+        return False
+    return is_encrypted(val) or bool(str(val).strip())
+
+
+def preserve_secrets_for_save(config: dict, incoming: dict | None = None) -> dict:
+    """保存前：表单留空时保留内存/磁盘已有口令，避免误写成空或 DEFAULT。"""
+    from studio.config_crypto import is_encrypted, SENSITIVE_KEYS
+    incoming = incoming or {}
+    out = dict(config)
+    raw = read_config_file_raw()
+    for key in SENSITIVE_KEYS:
+        if str(incoming.get(key) or '').strip():
+            continue
+        if str(out.get(key) or '').strip():
+            continue
+        disk = raw.get(key)
+        if isinstance(disk, str) and (is_encrypted(disk) or str(disk).strip()):
+            out[key] = disk
+    return out
+
+
 def load_config():
-    """加载配置文件（敏感字段自动解密）。"""
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-                merged_config = DEFAULT_CONFIG.copy()
-                merged_config.update(config)
-                if not isinstance(merged_config.get('id2name'), dict):
-                    merged_config['id2name'] = DEFAULT_CONFIG['id2name'].copy()
-                else:
-                    id2name = DEFAULT_CONFIG['id2name'].copy()
-                    id2name.update(merged_config['id2name'])
-                    merged_config['id2name'] = id2name
-                from studio.config_crypto import decrypt_config_secrets
-                return decrypt_config_secrets(merged_config)
-        except Exception as e:
-            print(f"⚠️ 加载配置文件失败: {e}，使用默认配置")
+    """加载配置文件（敏感字段自动解密；解密失败仍保留文件中的非敏感项）。"""
+    if not os.path.exists(CONFIG_FILE):
+        return DEFAULT_CONFIG.copy()
+    try:
+        file_config = read_config_file_raw()
+        if not file_config:
             return DEFAULT_CONFIG.copy()
-    return DEFAULT_CONFIG.copy()
+        merged_config = _merge_file_config(file_config)
+        from studio.config_crypto import decrypt_config_secrets
+        return decrypt_config_secrets(merged_config)
+    except json.JSONDecodeError as e:
+        print(f'⚠️ config.json 格式错误: {e}，使用默认配置')
+        return DEFAULT_CONFIG.copy()
+    except Exception as e:
+        print(f'⚠️ 加载配置文件失败: {e}')
+        try:
+            return _merge_file_config(read_config_file_raw())
+        except Exception:
+            return DEFAULT_CONFIG.copy()
 
 
 def save_config(config):
     """保存配置文件（敏感字段加密写入磁盘）。"""
     try:
         from studio.config_crypto import encrypt_config_secrets, encryption_available
-        to_write = encrypt_config_secrets(dict(config))
+        to_write = dict(config or {})
+        to_write.pop('_config_decrypt_errors', None)
+        to_write = encrypt_config_secrets(to_write)
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(to_write, f, ensure_ascii=False, indent=4)
         try:
@@ -415,14 +468,34 @@ class MySQLClient:
 db_client = None
 
 
+def resolve_db_password(cfg=None):
+    """解析数据库口令（环境变量 > 已解密配置 > 磁盘密文）。"""
+    env_pw = os.getenv('DB_PASSWORD')
+    if env_pw is not None and str(env_pw).strip():
+        return str(env_pw).strip()
+    cfg = cfg or load_config()
+    from studio.config_crypto import is_encrypted, resolve_secret_value
+    pw = str(cfg.get('db_password') or '').strip()
+    if pw:
+        return pw
+    disk = read_config_file_raw().get('db_password')
+    if isinstance(disk, str) and disk.strip():
+        if is_encrypted(disk):
+            try:
+                return resolve_secret_value(disk)
+            except Exception:
+                return ''
+        return disk.strip()
+    return ''
+
+
 def get_db_client():
     global db_client, DB_CONFIG, APP_CONFIG
     APP_CONFIG = load_config()
-    # 口令等敏感项优先读环境变量（DB_HOST/DB_USER/DB_PASSWORD/DB_DATABASE），其次配置文件
     new_db = {
         'host': os.getenv('DB_HOST', APP_CONFIG.get('db_host', DEFAULT_CONFIG['db_host'])),
         'user': os.getenv('DB_USER', APP_CONFIG.get('db_user', DEFAULT_CONFIG['db_user'])),
-        'password': os.getenv('DB_PASSWORD', APP_CONFIG.get('db_password', DEFAULT_CONFIG['db_password'])),
+        'password': resolve_db_password(APP_CONFIG),
         'database': os.getenv('DB_DATABASE', APP_CONFIG.get('db_database', DEFAULT_CONFIG['db_database'])),
     }
     DB_CONFIG = new_db
@@ -518,9 +591,17 @@ def apply_img_paths(df):
     return df
 
 
-def execute_python_filter(df, code, capture_output=False, env_context=None):
+def execute_python_filter(
+    df,
+    code,
+    capture_output=False,
+    env_context=None,
+    strategy=None,
+    python_presets=None,
+):
     """执行用户 Python 筛选代码，返回 (df, console_output, execution_time)"""
     from studio.query.env_context import normalize_env_dict, substitute_template
+    from studio.query.python_preset_registry import build_execution_namespace
 
     code = (code or '').strip()
     if not code:
@@ -534,14 +615,12 @@ def execute_python_filter(df, code, capture_output=False, env_context=None):
     if not func_match:
         raise ValueError(f'代码中未找到函数定义，请定义 def {PROCESS_FUNC}(df): ...')
 
-    def _get_env(key, default=''):
-        return str(ctx.get(str(key).upper(), default))
-
-    local_ns = build_python_namespace({
-        'ENV': dict(ctx),
-        'get_env': _get_env,
-        'env': _get_env,
-    })
+    local_ns = build_execution_namespace(
+        ctx,
+        strategy=strategy,
+        python_presets=python_presets,
+        code=code,
+    )
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
     start = time.time()
@@ -567,12 +646,19 @@ def execute_python_filter(df, code, capture_output=False, env_context=None):
     return result
 
 
-def execute_filter_rules_only(df, rules_code):
+def execute_filter_rules_only(df, rules_code, env_context=None, strategy=None):
     """仅执行 apply_filter_rules，用于预览筛选行数。"""
+    from studio.query.python_preset_registry import build_execution_namespace
+
     rules_code = (rules_code or '').strip()
     if not rules_code:
         return df
-    local_ns = build_python_namespace()
+    local_ns = build_execution_namespace(
+        env_context,
+        strategy=strategy,
+        python_presets=['filter'],
+        code=rules_code,
+    )
     exec(rules_code, local_ns)
     if FILTER_RULES_FUNC not in local_ns:
         raise ValueError(f'规则代码中未找到 def {FILTER_RULES_FUNC}(df)')
@@ -593,17 +679,17 @@ def _compile_rules_from_flow(flow, templates):
 
 
 def _resolve_sample_code(data, templates, process_code=''):
-    """解析采样函数；UI 的 sample_size/random_seed 优先于 flow 默认值。"""
-    sample_code = (data.get('sample_code') or '').strip()
+    """仅当策略流含 random_sample 或 process_data 调用采样函数时附带 sample 辅助代码。"""
+    from studio.flow.flow_compiler import _flow_has_random_sample, references_random_sample
+
     flow = data.get('flow') or {}
-    if not sample_code and flow.get('nodes'):
+    if not _flow_has_random_sample(flow) and not references_random_sample(process_code):
+        return ''
+    sample_code = (data.get('sample_code') or '').strip()
+    if not sample_code:
         sample_code = compile_sample_code(flow, templates)
-    needs_sample = bool(sample_code) or references_random_sample(process_code) or has_inline_sampling('', flow)
-    if needs_sample and (data.get('sample_size') is not None or data.get('random_seed') is not None):
-        sample_code = build_random_sample_function(
-            parse_sample_size(data.get('sample_size')),
-            parse_random_seed(data.get('random_seed')),
-        )
+    if not sample_code:
+        sample_code = build_random_sample_function()
     return sample_code
 
 
@@ -693,17 +779,43 @@ def build_query_task(df, query_meta=None):
     except Exception as e:
         print(f"⚠️ COCO 转换警告: {e}")
 
+    local_img_by_idx = {}
     try:
-        for _, row in df.iterrows():
+        for idx, row in df.iterrows():
             img_path = row.get('img_path', '')
             if pd.isna(img_path) or not img_path or not os.path.exists(img_path):
                 if img_path and not pd.isna(img_path):
                     print(f"⚠️ 图片文件不存在: {img_path}")
                 continue
-            dest_img_path = os.path.join(task_dir, os.path.basename(str(img_path)))
+            base = os.path.basename(str(img_path))
+            dest_img_path = os.path.join(task_dir, f'{int(idx)}_{base}')
             shutil.copy2(img_path, dest_img_path)
+            local_img_by_idx[int(idx)] = dest_img_path
     except Exception as e:
         print(f"⚠️ 复制图片警告: {e}")
+
+    if os.path.isfile(coco_path):
+        paths_by_id = dict(local_img_by_idx)
+        for idx, row in df.iterrows():
+            iid = int(idx)
+            if iid in paths_by_id:
+                continue
+            raw = row.get('img_path', '')
+            if raw is None or (hasattr(raw, '__float__') and pd.isna(raw)):
+                continue
+            p = str(raw).strip()
+            if p and os.path.isfile(p):
+                paths_by_id[iid] = os.path.abspath(p)
+        if paths_by_id:
+            try:
+                if sync_coco_image_file_names(coco_path, paths_by_id, image_dir=task_dir):
+                    with open(coco_path, 'r', encoding='utf-8') as f:
+                        coco_data = json.load(f)
+            except Exception as e:
+                print(f"⚠️ COCO 图片路径同步警告: {e}")
+
+    if (query_meta or {}).get('data_source') == 'predict_result' and 'id' not in df.columns:
+        print('⚠️ 预测结果查询缺少 id 列，带框预览可能不可用，建议在 SQL 中包含 id')
 
     result_data = []
     image_meta_by_id = {}
@@ -715,7 +827,11 @@ def build_query_task(df, query_meta=None):
         img_path = row.get('img_path', '')
         if pd.isna(img_path):
             img_path = ''
-        img_name = os.path.basename(str(img_path)) if img_path else ''
+        img_path = str(img_path).strip() if img_path else ''
+        local_path = local_img_by_idx.get(int(idx))
+        if local_path and os.path.isfile(local_path):
+            img_path = local_path
+        img_name = os.path.basename(img_path) if img_path else ''
 
         annotations = []
         if pred_ann_by_image:

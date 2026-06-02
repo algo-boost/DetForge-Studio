@@ -332,9 +332,11 @@ def predict_result_preview(result_id):
         row = forge_db.get_predict_result(result_id)
         if not row:
             return jsonify({'success': False, 'error': '结果不存在'}), 404
-        img_path = row.get('img_path')
-        if not img_path or not forge_paths.safe_read_path(img_path) or not os.path.exists(img_path):
+        img_path = str(row.get('img_path') or '').strip()
+        if not img_path or not os.path.isfile(img_path):
             return jsonify({'success': False, 'error': '原图不可用'}), 404
+        if not forge_paths.safe_read_path(img_path):
+            return jsonify({'success': False, 'error': '原图路径不在允许范围内'}), 403
         img = Image.open(img_path).convert('RGB')
         draw = ImageDraw.Draw(img)
         preds = ((row.get('ext') or {}).get('original_predictions')) or []
@@ -383,6 +385,26 @@ def manual_qc_lookup():
 def manual_qc_categories():
     try:
         return jsonify({'success': True, **forge_manual_qc.get_categories()})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/summary', methods=['GET'])
+def manual_qc_summary():
+    """归档库概览：条数统计、当日批次、交接收件箱路径。"""
+    try:
+        return jsonify({'success': True, **forge_manual_qc.get_workflow_summary()})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/batches', methods=['GET'])
+def manual_qc_batches():
+    """按日/批次汇总归档记录。"""
+    try:
+        limit = min(int(request.args.get('limit', 60)), 200)
+        data = forge_manual_qc.list_batch_groups(limit=limit)
+        return jsonify({'success': True, 'data': data, 'daily_batch_id': forge_manual_qc.default_daily_batch_id()})
     except Exception as e:  # noqa: BLE001
         return _err(e)
 

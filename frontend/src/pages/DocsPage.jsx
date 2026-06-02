@@ -75,7 +75,7 @@ export default function DocsPage({ embedded = false }) {
           <div>
             <div className="topbar-title">使用手册</div>
             <div className="topbar-sub">
-              {doc?.tagline || (doc?.updated_at ? `更新于 ${doc.updated_at}` : '工业缺陷检测数据闭环系统')}
+              {doc?.tagline || (doc?.updated_at ? `更新于 ${doc.updated_at}` : '产品说明与操作指引')}
             </div>
           </div>
         </div>

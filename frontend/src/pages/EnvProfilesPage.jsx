@@ -281,6 +281,9 @@ export default function EnvProfilesPage() {
                   <select value={row.type || 'text'} onChange={(e) => updateVar(idx, { type: e.target.value })}>
                     <option value="text">文本</option>
                     <option value="number">数字</option>
+                    <option value="datetime">时间字符串</option>
+                    <option value="select">下拉单选</option>
+                    <option value="multiselect">下拉多选</option>
                   </select>
                   <input
                     value={row.value ?? ''}

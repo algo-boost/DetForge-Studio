@@ -49,7 +49,7 @@ def create_app():
         if base_dir not in sys.path:
             sys.path.insert(0, base_dir)
         from worker import maybe_start_in_process
-        maybe_start_in_process(concurrency=int(os.environ.get('PC_WORKER_CONCURRENCY', '1')))
+        maybe_start_in_process()
     except Exception as e:  # noqa: BLE001
         print(f"⚠️ worker 自动启动失败（可命令行手动启动 python worker.py）: {e}")
 

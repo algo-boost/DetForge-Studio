@@ -5,6 +5,8 @@ import os
 
 from studio.paths import PROJECT_ROOT as BASE_DIR
 
+_LOCAL_FILE_MARKER = '/resources/backend/local_file/'
+
 
 def _abs(p):
     return os.path.abspath(os.path.realpath(str(p)))
@@ -28,7 +30,7 @@ def is_within(path, roots):
 
 
 def allowed_read_roots():
-    """允许通过 /api/image 读取的根目录。"""
+    """允许通过 /api/image 读取的根目录（仅配置 + 项目目录，不查库）。"""
     from server.core import load_config, DEFAULT_CONFIG
     cfg = load_config()
     roots = [
@@ -76,7 +78,15 @@ def safe_sync_dir(path):
 
 
 def safe_read_path(path):
-    return is_within(path, allowed_read_roots())
+    """配置白名单 + 本地 Magic-Fox local_file 原路径（文件须存在）。"""
+    if not path:
+        return False
+    if is_within(path, allowed_read_roots()):
+        return True
+    norm = str(path).replace('\\', '/').lower()
+    if _LOCAL_FILE_MARKER in norm and os.path.isfile(str(path)):
+        return True
+    return False
 
 
 def allowed_export_roots():

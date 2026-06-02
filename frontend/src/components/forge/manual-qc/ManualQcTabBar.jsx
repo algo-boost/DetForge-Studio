@@ -16,6 +16,9 @@ const TAB_ICONS = {
   settings: (
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="2.5" stroke="currentColor" strokeWidth="1.5"/><path d="M10 3v2M10 15v2M3 10h2M15 10h2M5.05 5.05l1.41 1.41M13.54 13.54l1.41 1.41M5.05 14.95l1.41-1.41M13.54 6.46l1.41-1.41" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
   ),
+  library: (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 4h5v12H4zM11 4h5v8h-5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><path d="M11 14h5v2h-5z" stroke="currentColor" strokeWidth="1.5"/></svg>
+  ),
 };
 
 export default function ManualQcTabBar({ activeTab, onTabChange, counts = {} }) {

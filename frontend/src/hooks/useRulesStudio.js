@@ -146,11 +146,15 @@ export function useRulesStudio(onChange) {
     }
   }, []);
 
-  const setFlow = useCallback((incoming) => {
+  const setFlow = useCallback((incoming, options = {}) => {
     const f = FlowTree.prepareFlow(incoming || { version: 2, nodes: [] });
-    const loop = f.nodes.find((n) => n.type === 'control.loop' && (n.params?.loop_mode || 'rules') === 'rules');
+    const loop = FlowTree.findRulesLoopNode(f);
     setRules(JSON.parse(JSON.stringify(loop?.params?.rules || [])));
-    setRemoveEmpty(!!f.nodes.some((n) => n.type === 'builtin.remove_empty_ext_rows'));
+    setRemoveEmpty(FlowTree.inferRemoveEmptyRows(
+      f,
+      options.filterRulesCode,
+      options.removeEmptyRows,
+    ));
   }, []);
 
   const importPipelineRules = useCallback(async (pipelineId, nodeId, trawl) => {

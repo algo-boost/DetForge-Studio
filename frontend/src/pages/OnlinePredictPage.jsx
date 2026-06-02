@@ -174,12 +174,8 @@ export default function OnlinePredictPage() {
   };
 
   const handleCreated = (res) => {
-    const firstId = res?.jobs?.[0]?.job_id ?? res?.job_id;
-    if (firstId) {
-      navigate(`/?predict_job=${firstId}`);
-    } else {
-      navigate('/jobs');
-    }
+    toast('预测任务已创建，可在「预测任务」页查看进度', 'info');
+    navigate('/jobs');
   };
 
   return (
@@ -189,7 +185,7 @@ export default function OnlinePredictPage() {
       <header className="predict-workbench-header">
         <div className="predict-workbench-title">
           <h2>在线预测</h2>
-          <p className="muted">导入数据集，从部署/训练 API/本地注册表任选模型，创建后台预测任务</p>
+          <p className="muted">选择数据来源与模型，设定阈值 / image_size 等参数后提交后台预测任务</p>
         </div>
         <div className="predict-workbench-tabs">
           <button

@@ -15,12 +15,17 @@ HQ_SUB_TYPES = ('dino', 'dino2', 'rtdetr', 'rtmdet', 'yolo', 'lwdetr', 'rfdetr',
 def infer_framework(model_type, source=''):
     """从平台 model_type 字符串推断 (framework, sub_type)。dino 默认走 ml_backend。"""
     mt = str(model_type or '').strip().lower()
-    if not mt:
+    if not mt or mt in ('null', 'none', 'undefined'):
         return '', None
     if mt == 'dino':
         return 'dino', None
     if mt in HQ_SUB_TYPES:
         return 'hq_det', mt
+    # vision_backend 部署编码如 DET0307、DETRTDETR — 仅当后缀能识别子类型
+    if mt.startswith('det'):
+        for sub in HQ_SUB_TYPES:
+            if sub in mt:
+                return 'hq_det', sub
     return '', None
 
 
@@ -34,13 +39,21 @@ def import_model(payload):
     """
     framework = (payload.get('framework') or '').strip()
     sub_type = payload.get('sub_type')
-    if not framework and payload.get('model_type'):
-        framework, sub_type = infer_framework(payload.get('model_type'), payload.get('source'))
-    if not framework:
-        raise ValueError('无法确定 framework（dino|hq_det），请显式选择')
     checkpoint_path = (payload.get('checkpoint_path') or '').strip()
     if not checkpoint_path:
         raise ValueError('checkpoint_path 不能为空')
+    if not framework and payload.get('model_type'):
+        framework, sub_type = infer_framework(payload.get('model_type'), payload.get('source'))
+    if not framework and os.path.isfile(checkpoint_path):
+        from studio.forge import predict_runtime
+        from server.core import load_config
+        fw, st = predict_runtime.detect_model_framework(
+            checkpoint_path, config=payload.get('_config') or load_config(),
+        )
+        if fw:
+            framework, sub_type = fw, st or sub_type
+    if not framework:
+        raise ValueError('无法确定 framework（dino|hq_det），请显式选择或在设置中配置 predict_python_executable')
 
     default_params = payload.get('default_params') or {}
     for key, default in (('threshold', 0.5), ('max_size', 1536), ('device', 'cuda:0')):
@@ -330,6 +343,9 @@ def enqueue_predict_job(model_id, name, image_source, threshold=None,
         priority=priority,
         intra_concurrency=intra_concurrency,
     )
+    from studio.forge import job_log
+    job_log.clear(job_id)
+    job_log.append(job_id, f'已创建预测作业，共 {len(items)} 张，等待 worker 领取 …')
     return {'job_id': job_id, 'total': len(items)}
 
 

@@ -196,7 +196,7 @@ export default function ReplayRunWizard({ initialJobId, onCreated, onCancel }) {
   const [strategies, setStrategies] = useState([]);
   const [models, setModels] = useState([]);
   const [stage1Id, setStage1Id] = useState('daily_trawl');
-  const [stage2Id, setStage2Id] = useState('replay_post_ng');
+  const [stage2Id, setStage2Id] = useState('');
   const [stage1Env, setStage1Env] = useState({});
   const [stage2Env, setStage2Env] = useState({});
   const [timePreset, setTimePreset] = useState('yesterday');
@@ -209,7 +209,14 @@ export default function ReplayRunWizard({ initialJobId, onCreated, onCancel }) {
 
   useEffect(() => {
     api.getStrategies().then((r) => {
-      if (r.success) setStrategies(r.data || []);
+      if (!r.success) return;
+      const list = r.data || [];
+      setStrategies(list);
+      setStage2Id((prev) => {
+        if (prev && list.some((s) => s.id === prev)) return prev;
+        const hint = list.find((s) => /筛|fp/i.test(s.name || ''));
+        return hint?.id || list[0]?.id || '';
+      });
     }).catch(() => setStrategies([]));
     api.forgeModels(true).then((r) => {
       if (r.success) {

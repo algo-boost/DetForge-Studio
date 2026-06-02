@@ -64,8 +64,8 @@ class E2EApiTests(unittest.TestCase):
         self.assertIn('strip_boxes_below_confidence', code)
         self.assertIn('apply_filter_rules', code)
 
-    def test_compile_trawl_mode_uses_filter_df(self):
-        """捞图区间规则（无 min_confidence）编译后含 filter_df_by_ext 分支。"""
+    def test_compile_trawl_mode_uses_row_select(self):
+        """捞图区间规则（无 min_confidence）编译后按行筛选、不删 ext 框。"""
         bundle = _get(f'/api/pipelines/{AB_PIPELINE}/filter-rules?random_drop_ratio=1')
         rule = dict((bundle.get('rules') or [{}])[0])
         rule.pop('confidence_mode', None)
@@ -77,7 +77,7 @@ class E2EApiTests(unittest.TestCase):
         comp = _post('/api/flow/compile', {'flow': flow, 'target': 'filter_rules'})
         self.assertTrue(comp.get('success'))
         code = comp.get('python_code') or ''
-        self.assertIn('filter_df_by_ext', code)
+        self.assertIn('select_df_rows_by_rules_union', code)
 
 
 @unittest.skipUnless(_server_up(), 'Flask 未运行在 5050')

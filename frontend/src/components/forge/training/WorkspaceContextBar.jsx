@@ -4,7 +4,7 @@ function StatusPill({ authOk, authConfigured }) {
   if (authOk === true) return <span className="platform-pill platform-pill-ok">平台已连接</span>;
   if (authOk === false) return <span className="platform-pill platform-pill-err">认证失败</span>;
   if (!authConfigured) return <span className="platform-pill platform-pill-warn">未配置认证</span>;
-  return <span className="platform-pill">未验证</span>;
+  return <span className="platform-pill platform-pill-ok">已配置</span>;
 }
 
 export default function WorkspaceContextBar({

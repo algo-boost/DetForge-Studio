@@ -1,0 +1,15 @@
+{
+  "id": "preset_random_sample",
+  "name": "随机采样",
+  "description": "按环境变量 SAMPLE_SIZE / RANDOM_SEED 随机抽样",
+  "icon": "shuffle",
+  "category": "预设步骤",
+  "preset_group": "sampling",
+  "pipeline": true,
+  "inject_functions": ["apply_random_sample_rows", "stratified_sample_by_type"],
+  "params_schema": [
+    { "key": "max_rows", "env_key": "SAMPLE_SIZE", "label": "最大条数", "type": "number", "default": "", "min": 1, "max": 10000, "step": 1 },
+    { "key": "random_seed", "env_key": "RANDOM_SEED", "label": "随机种子", "type": "number", "default": "42", "min": 0, "max": 9999, "step": 1 }
+  ],
+  "process_lines": ["df = apply_random_sample_rows(df)"]
+}

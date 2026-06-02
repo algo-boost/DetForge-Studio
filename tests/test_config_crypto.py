@@ -47,6 +47,16 @@ class TestConfigCrypto(unittest.TestCase):
         dec = cc.decrypt_config_secrets(cfg)
         self.assertEqual(dec['db_password'], 'legacy-plain')
 
+    @unittest.skipUnless(cc.encryption_available(), 'cryptography not installed')
+    def test_decrypt_soft_fail_keeps_other_fields(self):
+        with patch.object(cc, 'key_file_path', return_value=self.key_path):
+            enc = cc.encrypt_config_secrets({'db_password': 'pw1'})
+            bad = enc['db_password'][:-4] + 'XXXX'
+            dec = cc.decrypt_config_secrets({'db_host': '10.0.0.1', 'db_password': bad})
+            self.assertEqual(dec['db_host'], '10.0.0.1')
+            self.assertEqual(dec['db_password'], '')
+            self.assertTrue(dec.get('_config_decrypt_errors'))
+
 
 if __name__ == '__main__':
     unittest.main()

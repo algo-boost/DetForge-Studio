@@ -110,6 +110,7 @@ class ManualQcLogicTests(unittest.TestCase):
     def test_no_match_archive(self):
         res = forge_manual_qc.archive_one('SN1', no_match=True, qc_category='拍不到', defect_type='划伤')
         self.assertEqual(res['match_status'], 'not_found')
+        self.assertRegex(res.get('batch_id') or '', r'^\d{4}-\d{2}-\d{2}$')
         self.assertEqual(res['qc_category'], '拍不到')
         self.assertEqual(self.inserted['defect_type'], '划伤')
         self.assertIsNone(self.inserted['matched_detail_id'])
@@ -196,6 +197,24 @@ class FrameworkInferTests(unittest.TestCase):
         self.assertEqual(forge_service.infer_framework('dino'), ('dino', None))
         self.assertEqual(forge_service.infer_framework('rtdetr'), ('hq_det', 'rtdetr'))
         self.assertEqual(forge_service.infer_framework('unknown'), ('', None))
+        self.assertEqual(forge_service.infer_framework('DET0307'), ('', None))
+        self.assertEqual(forge_service.infer_framework('DETRTDETR'), ('hq_det', 'rtdetr'))
+
+    @patch('studio.forge.forge_service.os.path.isfile', return_value=True)
+    @patch('studio.forge.predict_runtime.detect_model_framework', return_value=('hq_det', 'dino2'))
+    @patch('studio.forge.forge_db.upsert_model', return_value=99)
+    def test_import_model_detects_from_checkpoint(self, mock_upsert, mock_detect, _mock_isfile):
+        mid = forge_service.import_model({
+            'name': 'V28',
+            'checkpoint_path': __import__('os').path.join(__import__('tempfile').gettempdir(), 'fake.pt'),
+            'model_type': 'DET0307',
+            'source': 'modeldeploy',
+        })
+        self.assertEqual(mid, 99)
+        payload = mock_upsert.call_args[0][0]
+        self.assertEqual(payload['framework'], 'hq_det')
+        self.assertEqual(payload['sub_type'], 'dino2')
+        mock_detect.assert_called_once()
 
     @patch('studio.sync.forge_sync.resolve_dataset_output_dir')
     @patch('studio.forge.forge_db.get_sync_project')
@@ -467,6 +486,47 @@ class ForgeDbIntegrationTests(unittest.TestCase):
         self.assertEqual(claimed['id'], job_id)
         self.assertEqual(claimed['status'], 'running')
         self.assertIsNone(forge_db.claim_next_job('w1', ['predict']))  # 已无 pending
+
+
+class WorkerLaneTests(unittest.TestCase):
+    def test_default_lanes_split_predict_and_sync(self):
+        import worker
+        saved = {
+            k: os.environ.get(k)
+            for k in ('PC_WORKER_CONCURRENCY', 'PC_WORKER_PREDICT_SLOTS', 'PC_WORKER_SYNC_SLOTS')
+        }
+        try:
+            for k in saved:
+                os.environ.pop(k, None)
+            lanes = worker.resolve_worker_lanes()
+            names = [lane['name'] for lane in lanes]
+            self.assertIn('predict', names)
+            self.assertIn('sync', names)
+            self.assertGreaterEqual(worker.WorkerManager().concurrency, 2)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+
+class JobLogTests(unittest.TestCase):
+    def test_append_throttled(self):
+        from studio.forge import job_log
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = job_log.LOG_DIR
+            job_log.LOG_DIR = tmp
+            try:
+                job_log._throttle_state.clear()
+                job_log.append_throttled(999, 'a', min_interval=60)
+                self.assertIsNone(job_log.append_throttled(999, 'b', min_interval=60))
+                job_log.append_throttled(999, 'c', min_interval=0)
+                lines = job_log.read_tail(999)
+                self.assertEqual(len(lines), 2)
+            finally:
+                job_log.LOG_DIR = orig
 
 
 if __name__ == '__main__':

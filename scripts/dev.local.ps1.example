@@ -1,0 +1,2 @@
+# 复制为 dev.local.ps1（已 gitignore）以覆盖本地 Python 路径
+$env:PC_PYTHON = 'D:\magic_fox_ai_3_13_3_20250916\resources\backend\python.exe'

@@ -63,8 +63,9 @@ export const PYTHON_HELP = [
   ['parse_ext(ext)', '解析 ext 字段为 predictions 列表'],
   ['is_ext_empty(ext)', '判断 ext 检测框是否为空'],
   ['strip_boxes_below_confidence(df, categories, min_confidence)', '产线语义：低于阈值剔除'],
-  ['filter_df_by_ext(df, categories, confidence_range, random_drop_ratio)', '捞图语义：区间内随机剔除'],
-  ['remove_empty_ext_rows(df)', '移除无检测框的行'],
+  ['select_df_rows_by_rules_union(df, rules)', '捞图：命中规则保留整图，ext 框不删'],
+  ['filter_df_by_ext(df, categories, confidence_range, random_drop_ratio)', '按区间随机剔除框（会改 ext）'],
+  ['remove_empty_ext_rows(df)', '移除 ext 中无任何框的行'],
   ['count_category_boxes(df)', '统计各类别框数量'],
-  ['apply_random_sample_rows(df)', '随机采样（参数在 sample_code 函数签名中）'],
+  ['apply_random_sample_rows(df)', '随机采样（须在策略流中启用 random_sample；参数 SAMPLE_SIZE / RANDOM_SEED）'],
 ];

@@ -38,6 +38,15 @@ def is_encrypted(value) -> bool:
     return isinstance(value, str) and value.startswith(ENC_PREFIX)
 
 
+def resolve_secret_value(value) -> str:
+    """将明文或 enc:v1 字段解析为可用明文字符串。"""
+    if not isinstance(value, str) or not value.strip():
+        return ''
+    if is_encrypted(value):
+        return decrypt_value(value)
+    return value.strip()
+
+
 def _load_key_bytes() -> bytes | None:
     env_key = str(os.environ.get('DEFECTLOOP_CONFIG_KEY') or '').strip()
     if env_key:
@@ -101,12 +110,23 @@ def decrypt_value(value: str) -> str:
         raise RuntimeError('config.json 解密失败，密钥可能已更换或文件损坏') from exc
 
 
-def decrypt_config_secrets(config: dict) -> dict:
+def decrypt_config_secrets(config: dict, *, strict: bool = False) -> dict:
+    """解密敏感字段；默认单字段失败不拖垮整份配置（避免回退 DEFAULT 覆盖 config.json）。"""
     out = dict(config)
+    errors = []
     for key in SENSITIVE_KEYS:
         val = out.get(key)
-        if isinstance(val, str) and is_encrypted(val):
+        if not isinstance(val, str) or not is_encrypted(val):
+            continue
+        try:
             out[key] = decrypt_value(val)
+        except Exception as exc:
+            errors.append({'key': key, 'error': str(exc)})
+            out[key] = ''
+            if strict:
+                raise
+    if errors:
+        out['_config_decrypt_errors'] = errors
     return out
 
 

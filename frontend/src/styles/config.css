@@ -151,7 +151,7 @@
 }
 .settings-readonly-list code { font-size: 11px; word-break: break-all; }
 
-/* Settings hub — 系统设置 / 查询策略 / 使用手册 */
+/* 设置页 — 仅系统配置（查询策略、使用手册见数据查询分区） */
 .settings-hub {
   flex: 1;
   min-height: 0;

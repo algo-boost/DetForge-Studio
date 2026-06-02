@@ -12,12 +12,26 @@ class PredictRuntimeTests(unittest.TestCase):
         if os.path.isdir(os.path.join(predict_runtime.PROJECT_ROOT, '..', 'DetUnify-Studio')):
             self.assertTrue(root.endswith('DetUnify-Studio'))
 
-    def test_resolve_without_python_uses_inprocess(self):
+    def test_resolve_without_script_uses_inprocess(self):
         s = predict_runtime.resolve_predict_settings({
             'detunify_studio_root': '/tmp/detunify',
             'predict_python_executable': '',
         })
         self.assertFalse(s['use_subprocess'])
+
+    def test_resolve_auto_subprocess_when_worker_script_exists(self):
+        root = predict_runtime.default_detunify_root()
+        if not root:
+            self.skipTest('no detunify root')
+        script = os.path.join(root, 'scripts', 'predict_job_worker.py')
+        if not os.path.isfile(script):
+            self.skipTest('predict_job_worker missing')
+        s = predict_runtime.resolve_predict_settings({
+            'detunify_studio_root': root,
+            'predict_python_executable': '',
+        })
+        self.assertTrue(s['use_subprocess'])
+        self.assertTrue(s.get('predict_subprocess_auto'))
 
     def test_resolve_subprocess_when_configured(self):
         root = predict_runtime.default_detunify_root()

@@ -19,6 +19,16 @@ python app.py
 
 开发模式：`python app.py` + `cd frontend && npm run dev`（5173 代理 API）。
 
+Windows 开发（热重载 + 前端 watch）：
+
+```powershell
+.\scripts\dev.ps1          # 长期开发
+.\scripts\restart.ps1      # 改完代码后快速重启
+.\scripts\restart.ps1 -RebuildFrontend   # 前端也改了
+```
+
+Python 路径：`$env:PC_PYTHON` 或复制 `scripts/dev.local.ps1.example` → `scripts/dev.local.ps1`。
+
 ## 集成组件
 
 | 组件 | 挂载 | 入口 |
@@ -32,7 +42,7 @@ python app.py
 
 - 完整手册：[`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)
 - 配置说明：[`CONFIG_README.md`](CONFIG_README.md)
-- 应用内：**设置 → 使用手册**
+- 应用内：侧栏底部 **帮助 → 使用手册**
 
 ## 架构
 
@@ -70,10 +80,11 @@ DetForge-Studio/
 
 | 分组 | 菜单 |
 |------|------|
-| **数据查询** | 查询 · 查询历史 |
+| **数据查询** | 查询 · 查询历史 · 查询策略 |
+| **质检归档** | 人工质检 · 筛选归档 |
 | **预测评估** | 在线预测 · 预测任务 · 模型 |
-| **平台工具** | 训练平台 · 人工质检 · 样本图库 |
-| **设置** | 侧栏底部 |
+| **平台工具** | 训练平台 · 样本图库 |
+| **帮助**（侧栏底部） | 使用手册 · 设置 |
 
 首次配置可复制 `config.json.example` 为 `config.json` 后编辑，或在 **设置** 页填写。
 

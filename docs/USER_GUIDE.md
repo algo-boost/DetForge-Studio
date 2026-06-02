@@ -388,7 +388,9 @@ training_inbox/
 | `MAGIC_FOX_USERNAME` / `MAGIC_FOX_PASSWORD` | Magic-Fox 账号（可选） |
 | `DEFECTLOOP_CONFIG_KEY` | 配置加密密钥 |
 | `PC_NO_WORKER=1` | 禁用内嵌 worker |
-| `PC_WORKER_CONCURRENCY` | worker 并发 |
+| `PC_WORKER_PREDICT_SLOTS` | 预测专用槽（默认 1） |
+| `PC_WORKER_SYNC_SLOTS` | 数据同步 / I/O 槽（默认 1，与预测并行） |
+| `PC_WORKER_CONCURRENCY` | 设为 N 时改为 N 个通用槽（旧行为，所有类型互斥） |
 | `PC_MAX_CONTENT_MB` | 上传上限（默认 256MB） |
 
 ### 12.2 勿提交 git 的文件
@@ -415,7 +417,7 @@ training_inbox/
 | 内嵌 worker | 默认 `python app.py` 会拉起 worker 子进程 |
 | 独立 worker | 生产建议单独运行：`python worker.py` |
 | 禁用内嵌 | 环境变量 `PC_NO_WORKER=1` |
-| 并发 | `PC_WORKER_CONCURRENCY`（默认 1） |
+| 并发 | 默认 **预测 1 槽 + 同步 1 槽** 并行；`PC_WORKER_CONCURRENCY=N` 可改回通用 N 槽 |
 
 日志：作业详情页 **运行日志** Tab；失败项见 **失败项** Tab。
 

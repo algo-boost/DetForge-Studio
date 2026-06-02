@@ -1,0 +1,11 @@
+{
+  "id": "dedup",
+  "name": "按列去重",
+  "description": "对指定列去重，保留第一条",
+  "icon": "copy",
+  "params_schema": [
+    { "key": "column", "label": "去重列", "type": "select", "default": "product_no",
+      "options": ["product_no","product_id","position","defect_type"] }
+  ],
+  "python_code": "def filter(df, params):\n    col = params.get('column', 'product_no')\n    if col in df.columns:\n        return df.drop_duplicates(subset=[col], keep='first').reset_index(drop=True)\n    return df"
+}

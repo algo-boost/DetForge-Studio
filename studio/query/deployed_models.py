@@ -16,9 +16,20 @@ def _labels_from_extra(extra_result):
         return []
     labels = data.get('labels') or data.get('label_names') or []
     if isinstance(labels, dict):
-        return [str(v).strip() for v in labels.values() if str(v).strip()]
+        return [str(k).strip() for k in labels.keys() if str(k).strip()]
     if isinstance(labels, list):
         return [str(x).strip() for x in labels if str(x).strip()]
+    tc = data.get('train_config') or {}
+    if isinstance(tc, str):
+        try:
+            tc = json.loads(tc)
+        except (json.JSONDecodeError, TypeError):
+            tc = {}
+    if isinstance(tc, dict):
+        ml = tc.get('model_labels')
+        parsed = _labels_from_model_labels(ml)
+        if parsed:
+            return parsed
     return []
 
 
@@ -102,7 +113,8 @@ def _labels_from_model_labels(raw):
         if isinstance(obj, list):
             return [str(x).strip() for x in obj if str(x).strip()]
         if isinstance(obj, dict):
-            return [str(v).strip() for v in obj.values() if str(v).strip()]
+            # Magic-Fox：{"脏污": "rgba(...)"} → 取类别名（key）
+            return [str(k).strip() for k in obj.keys() if str(k).strip()]
     except (json.JSONDecodeError, TypeError):
         pass
     return []

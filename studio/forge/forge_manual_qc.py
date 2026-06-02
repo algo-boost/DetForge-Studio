@@ -31,6 +31,18 @@ _CFG_DEFECT_KEY = 'manual_qc_defect_types'
 _CFG_STRICT_KEY = 'manual_qc_defect_strict'
 
 
+def default_daily_batch_id(when=None):
+    """每日一批：默认 batch_id = YYYY-MM-DD。"""
+    dt = when or datetime.now()
+    return dt.strftime('%Y-%m-%d')
+
+
+def resolve_batch_id(batch_id=None):
+    """未指定批次时使用当日批次。"""
+    bid = str(batch_id or '').strip()
+    return bid or default_daily_batch_id()
+
+
 # ── 类别配置 ───────────────────────────────────────────────────────
 
 def get_categories():
@@ -71,8 +83,45 @@ def _img_path_from_object_key(object_key):
     return base + str(object_key)
 
 
+def _normalize_existing_path(path):
+    """返回磁盘上真实存在的路径；Windows 上尝试 E:/D: 盘符互换。"""
+    path = str(path or '').strip()
+    if not path:
+        return ''
+    if os.path.isfile(path):
+        return path
+    if os.name == 'nt' and len(path) >= 2 and path[1] == ':':
+        drive = path[0].upper()
+        rest = path[2:].lstrip('\\/')
+        for alt_drive in ('E', 'D', 'C'):
+            if alt_drive == drive:
+                continue
+            alt = f'{alt_drive}:/{rest}'.replace('/', '\\')
+            if os.path.isfile(alt):
+                return alt
+    return path
+
+
+def _resolve_detail_img_path(row):
+    """解析平台明细图绝对路径：优先 local_pic_url 原路径，其次 origin_object_key 拼接。"""
+    row = dict(row or {})
+    local_pic = str(row.get('local_pic_url') or '').strip()
+    if local_pic:
+        path = _normalize_existing_path(local_pic.replace('\\', '/'))
+        if path:
+            return path
+
+    ok = str(row.get('origin_object_key') or '').strip()
+    if ok:
+        path = _normalize_existing_path(_img_path_from_object_key(ok))
+        if path:
+            return path
+
+    return local_pic or _img_path_from_object_key(ok) or ''
+
+
 _DETAIL_SELECT = """
-    SELECT d.id, d.product_no, d.origin_object_key, d.ext, d.c_time,
+    SELECT d.id, d.product_no, d.origin_object_key, d.local_pic_url, d.ext, d.c_time,
            d.check_status, d.detection_result_status,
            r.product_type AS product_type
     FROM product_detection_detail_result d
@@ -96,7 +145,7 @@ def find_platform_records_by_sn(sn, limit=50):
     except Exception:
         rows = []
     for row in rows:
-        row['img_path'] = _img_path_from_object_key(row.get('origin_object_key'))
+        row['img_path'] = _resolve_detail_img_path(row)
     return rows
 
 
@@ -109,7 +158,7 @@ def _fetch_detail_record(detail_id):
     except Exception:
         row = None
     if row:
-        row['img_path'] = _img_path_from_object_key(row.get('origin_object_key'))
+        row['img_path'] = _resolve_detail_img_path(row)
     return row or {}
 
 
@@ -146,6 +195,7 @@ def archive_one(product_no, customer_img_path=None, batch_id=None, note=None,
     force=True 时允许重复 SN+客户图归档（否则硬拦截）。
     """
     _validate_defect_type(defect_type)
+    batch_id = resolve_batch_id(batch_id)
     duplicate = forge_db.find_manual_qc_duplicate(product_no, customer_img_path)
     if duplicate and not force:
         raise ValueError(
@@ -198,12 +248,14 @@ def archive_one(product_no, customer_img_path=None, batch_id=None, note=None,
         'matched_img_path': row['matched_img_path'],
         'candidate_count': candidate_count,
         'duplicate_of': duplicate['id'] if duplicate else None,
+        'batch_id': batch_id,
     }
 
 
 def archive_batch(entries, batch_id=None):
     """批量归档：entries=[{product_no, customer_img_path?, note?, defect_type?, qc_category?,
     matched_detail_id?, no_match?}]。"""
+    batch_id = resolve_batch_id(batch_id)
     results = []
     for entry in entries or []:
         results.append(archive_one(
@@ -225,6 +277,20 @@ def archive_batch(entries, batch_id=None):
         'multiple': sum(1 for r in results if r['match_status'] == 'multiple'),
     }
     return {'batch_id': batch_id, 'results': results, 'summary': summary}
+
+
+def get_workflow_summary():
+    """归档库概览：训练交接状态 + 交接收件箱路径。"""
+    summary = forge_db.manual_qc_training_summary()
+    summary['daily_batch_id'] = default_daily_batch_id()
+    summary['handoff_inbox_root'] = handoff_inbox_root()
+    summary['export_default_root'] = os.path.join(BASE_DIR, 'exports', 'manual_qc_export')
+    return summary
+
+
+def list_batch_groups(limit=60):
+    """按 batch_id（缺省按归档日期）汇总批次。"""
+    return forge_db.list_manual_qc_batch_groups(limit=limit)
 
 
 # ── 导出 ───────────────────────────────────────────────────────────

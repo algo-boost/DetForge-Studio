@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { api, toast } from '../api/client';
 import SceneHubNav from '../components/SceneHubNav';
 import ManualQcTabBar from '../components/forge/manual-qc/ManualQcTabBar';
-import { MATCH_LABEL, MATCH_PILL_CLASS } from '../components/forge/manual-qc/manualQcUtils';
-import { buildArchiveEntries, toSqlTime } from '../utils/format';
+import ArchiveLibrary from '../components/forge/manual-qc/ArchiveLibrary';
+import { MATCH_LABEL, MATCH_PILL_CLASS, todayBatchId } from '../components/forge/manual-qc/manualQcUtils';
+import { buildArchiveEntries } from '../utils/format';
 
-const SN_PAGE = 50;
-const QUERY_PAGE = 100;
+const SN_PAGE = 24;
 
 function MatchPill({ status }) {
   const cls = MATCH_PILL_CLASS[status] || 'mqc-pill';
@@ -18,15 +18,6 @@ function UploadIcon() {
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M12 16V8m0 0l-3 3m3-3l3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function ZoomIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M6 10L10 6M10 6H7M10 6V9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   );
 }
@@ -208,8 +199,9 @@ function SingleArchive({ categories, onArchived, onCompare }) {
       };
       const r = await api.forgeManualQcArchive({ entry });
       if (r.success) {
-        if (r.result.duplicate_of) toast(`已归档 #${r.result.id}（注意：疑似与 #${r.result.duplicate_of} 重复）`, 'info');
-        else toast(`已归档 #${r.result.id}：${qcCategory}`);
+        const bid = r.result.batch_id || todayBatchId();
+        if (r.result.duplicate_of) toast(`已归档 #${r.result.id} → 批次 ${bid}（疑似与 #${r.result.duplicate_of} 重复）`, 'info');
+        else toast(`已归档 #${r.result.id} → 批次 ${bid}`);
         reset(); onArchived?.();
       }
     } catch (e) { toast(e.message, 'error'); }
@@ -217,74 +209,141 @@ function SingleArchive({ categories, onArchived, onCompare }) {
   };
 
   const selectedRec = records?.find((r) => r.id === selectedId);
+  const selectedIndex = records?.findIndex((r) => r.id === selectedId) ?? -1;
+
+  const selectByIndex = (idx) => {
+    if (!records?.length) return;
+    const i = ((idx % records.length) + records.length) % records.length;
+    setSelectedId(records[i].id);
+    setNoMatch(false);
+  };
+
+  const goPrev = () => {
+    if (!records?.length) return;
+    selectByIndex(selectedIndex <= 0 ? records.length - 1 : selectedIndex - 1);
+  };
+
+  const goNext = () => {
+    if (!records?.length) return;
+    selectByIndex(selectedIndex < 0 ? 0 : selectedIndex + 1);
+  };
+
+  useEffect(() => {
+    if (records?.length && selectedId == null && !noMatch) {
+      setSelectedId(records[0].id);
+    }
+  }, [records, selectedId, noMatch]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    document.querySelector(`.mqc-tile[data-id="${selectedId}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [selectedId]);
+
+  const customerUrl = customer ? api.imageUrl(customerName || 'img', customer) : null;
+  const platformUrl = selectedRec ? api.imageUrl(`d${selectedRec.id}`, selectedRec.img_path) : null;
 
   return (
     <div className="mqc-archive-workspace">
-      <div className="mqc-archive-grid">
-        <div className="mqc-archive-side">
-          <StepBlock step="1" title="导入客户图" hint="上传待核对的客户侧图片" done={!!customer}>
-            {customer ? (
-              <div className="mqc-thumb-card">
-                <button type="button" className="mqc-thumb-preview" title="点击放大对比"
-                  onClick={() => onCompare({ customer: api.imageUrl(customerName || 'img', customer), platform: selectedRec ? api.imageUrl(`d${selectedRec.id}`, selectedRec.img_path) : null })}>
-                  <img src={api.imageUrl(customerName || 'img', customer)} alt={customerName} />
-                </button>
-                <div className="mqc-thumb-meta">
-                  <span className="mqc-thumb-name" title={customer}>{customerName || customer}</span>
-                  <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setCustomer(''); setCustomerName(''); }}>移除</button>
+      <StepBlock step="1" title="导入客户图" hint="上传待核对的客户侧图片（大图预览）" done={!!customer}>
+        {customer ? (
+          <div className="mqc-customer-hero">
+            <button
+              type="button"
+              className="mqc-customer-hero-img"
+              title="点击放大对比"
+              onClick={() => onCompare({ customer: customerUrl, platform: platformUrl })}
+            >
+              <img src={customerUrl} alt={customerName || '客户图'} />
+            </button>
+            <div className="mqc-customer-hero-bar">
+              <span className="mqc-customer-hero-name" title={customer}>{customerName || customer}</span>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setCustomer(''); setCustomerName(''); }}>移除</button>
+            </div>
+          </div>
+        ) : (
+          <ImageDropZone busy={uploading} onFiles={onFiles} hint="拖拽客户图到此处，或点击选择（导入后大图占屏预览）" />
+        )}
+      </StepBlock>
+
+      <StepBlock step="2" title="输入 SN" hint="按产品序列号检索平台缺陷图" done={!!sn.trim() && records !== null}>
+        <div className="mqc-sn-row">
+          <input ref={snRef} value={sn} onChange={(e) => setSn(e.target.value)} placeholder="客户提供 SN"
+            onKeyDown={(e) => { if (e.key === 'Enter') { setSnLimit(SN_PAGE); lookup(SN_PAGE); } }} />
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => { setSnLimit(SN_PAGE); lookup(SN_PAGE); }} disabled={busy}>
+            {busy ? '查询中…' : '查图'}
+          </button>
+        </div>
+      </StepBlock>
+
+      <StepBlock step="3" title="选择匹配图" hint="← → 切换平台图，或点击下方缩略图" done={noMatch || !!selectedId}>
+        {records === null && (
+          <div className="mqc-empty-state">
+            <p>输入 SN 后点击「查图」，将展示该 SN 的平台缺陷图。</p>
+          </div>
+        )}
+        {records !== null && !records.length && (
+          <div className="mqc-empty-state mqc-empty-inline">该 SN 无平台图</div>
+        )}
+        {records !== null && records.length > 0 && (
+          <>
+            <div className="mqc-compare-stage">
+              <div className="mqc-compare-pane">
+                <div className="mqc-compare-label">客户图</div>
+                <div className="mqc-compare-viewport">
+                  {customerUrl
+                    ? <img src={customerUrl} alt="客户图" />
+                    : <div className="mqc-empty-state">未导入客户图</div>}
                 </div>
               </div>
-            ) : <ImageDropZone busy={uploading} onFiles={onFiles} />}
-          </StepBlock>
-
-          <StepBlock step="2" title="输入 SN" hint="按产品序列号检索平台缺陷图" done={!!sn.trim() && records !== null}>
-            <div className="mqc-sn-row">
-              <input ref={snRef} value={sn} onChange={(e) => setSn(e.target.value)} placeholder="客户提供 SN"
-                onKeyDown={(e) => { if (e.key === 'Enter') { setSnLimit(SN_PAGE); lookup(SN_PAGE); } }} />
-              <button type="button" className="btn btn-sm btn-primary" onClick={() => { setSnLimit(SN_PAGE); lookup(SN_PAGE); }} disabled={busy}>
-                {busy ? '查询中…' : '查图'}
+              <div className={`mqc-compare-pane${noMatch ? ' is-muted' : ''}`}>
+                <div className="mqc-compare-label">
+                  平台图
+                  {!noMatch && selectedRec && (
+                    <span className="mqc-compare-meta">
+                      #{selectedRec.id} · {selectedRec.product_type || '—'}
+                      {' · '}{selectedIndex + 1}/{records.length}
+                    </span>
+                  )}
+                </div>
+                <div className="mqc-compare-nav">
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={goPrev} disabled={noMatch || busy} aria-label="上一张">←</button>
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={() => platformUrl && onCompare({ customer: customerUrl, platform: platformUrl })} disabled={noMatch || !platformUrl}>
+                    放大对比
+                  </button>
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={goNext} disabled={noMatch || busy} aria-label="下一张">→</button>
+                </div>
+                <div className="mqc-compare-viewport">
+                  {noMatch
+                    ? <div className="mqc-empty-state">已标记：拍不到 / 找不到</div>
+                    : platformUrl
+                      ? <img src={platformUrl} alt={`#${selectedRec?.id}`} />
+                      : <div className="mqc-empty-state">请选择平台图</div>}
+                </div>
+              </div>
+            </div>
+            <div className="mqc-gallery mqc-gallery-strip">
+              {records.map((r) => (
+                <div key={r.id} data-id={r.id} className={`mqc-tile${selectedId === r.id ? ' is-selected' : ''}`} title={r.img_path}>
+                  <button type="button" className="mqc-tile-img" onClick={() => selectCard(r.id)}>
+                    <img src={api.imageUrl(`d${r.id}`, r.img_path)} alt={`#${r.id}`} loading="lazy" />
+                    <span className="mqc-tile-cap">#{r.id}</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="mqc-gallery-actions">
+              <button type="button" className={`btn btn-sm ${noMatch ? 'btn-primary' : 'btn-ghost'}`} onClick={markNoMatch}>
+                {noMatch ? '已标记：拍不到 / 找不到' : '标记为拍不到 / 找不到'}
               </button>
+              {hasMore && <button type="button" className="btn btn-sm btn-ghost" onClick={loadMore} disabled={busy}>加载更多</button>}
+              <span className="mqc-kbd-hint">← → 切换 · N 标记无图</span>
             </div>
-          </StepBlock>
-        </div>
-
-        <StepBlock step="3" title="选择匹配图" hint="点选对应平台图，或标记拍不到 / 找不到" done={noMatch || !!selectedId}>
-          {records === null && (
-            <div className="mqc-empty-state">
-              <p>输入 SN 后点击「查图」，将展示该 SN 的全部平台缺陷图。</p>
-            </div>
-          )}
-          {records !== null && (
-            <>
-              <div className="mqc-gallery">
-                {records.map((r) => (
-                  <div key={r.id} className={`mqc-tile${selectedId === r.id ? ' is-selected' : ''}`} title={r.img_path}>
-                    <button type="button" className="mqc-tile-zoom" title="放大对比"
-                      onClick={() => onCompare({ customer: customer ? api.imageUrl(customerName || 'img', customer) : null, platform: api.imageUrl(`d${r.id}`, r.img_path) })}>
-                      <ZoomIcon />
-                    </button>
-                    <button type="button" className="mqc-tile-img" onClick={() => selectCard(r.id)}>
-                      <img src={api.imageUrl(`d${r.id}`, r.img_path)} alt={`#${r.id}`} />
-                      <span className="mqc-tile-cap">#{r.id} · {r.product_type || '—'}</span>
-                    </button>
-                  </div>
-                ))}
-                {!records.length && <div className="mqc-empty-state mqc-empty-inline">该 SN 无平台图</div>}
-              </div>
-              <div className="mqc-gallery-actions">
-                <button type="button" className={`btn btn-sm ${noMatch ? 'btn-primary' : 'btn-ghost'}`} onClick={markNoMatch}>
-                  {noMatch ? '已标记：拍不到 / 找不到' : '标记为拍不到 / 找不到'}
-                </button>
-                {hasMore && <button type="button" className="btn btn-sm btn-ghost" onClick={loadMore} disabled={busy}>加载更多</button>}
-                <span className="mqc-kbd-hint">方向键切换 · N 标记无图</span>
-              </div>
-            </>
-          )}
-        </StepBlock>
-      </div>
+          </>
+        )}
+      </StepBlock>
 
       <div className="mqc-verdict-bar" onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); archive(); } }}>
-        <StepBlock step="4" title="标注并归档" hint="Ctrl/⌘ + Enter 快速提交">
+        <StepBlock step="4" title="标注并归档" hint={`自动归入当日批次 ${todayBatchId()} · Ctrl/⌘ + Enter 提交`}>
           <div className="forge-form-grid mqc-verdict-form">
             <label>缺陷类型
               {categories.defect_strict ? (
@@ -325,7 +384,7 @@ function SingleArchive({ categories, onArchived, onCompare }) {
 
 function BatchArchive({ categories, onArchived }) {
   const [rows, setRows] = useState([]);
-  const [batchId, setBatchId] = useState('');
+  const [batchId, setBatchId] = useState(() => todayBatchId());
   const [summary, setSummary] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -352,15 +411,26 @@ function BatchArchive({ categories, onArchived }) {
     setBusy(true);
     try {
       const r = await api.forgeManualQcArchive({ entries, batch_id: batchId.trim() || undefined });
-      if (r.success) { setSummary(r.summary); toast(`批量归档完成：匹配 ${r.summary.matched}/${r.summary.total}`); setRows([]); onArchived?.(); }
+      if (r.success) {
+        setSummary(r.summary);
+        toast(`批量归档完成 → 批次 ${r.batch_id || batchId}：匹配 ${r.summary.matched}/${r.summary.total}`);
+        setRows([]);
+        onArchived?.();
+      }
     } catch (e) { toast(e.message, 'error'); }
     finally { setBusy(false); }
   };
 
   return (
-    <SurfaceCard title="批量导入" desc="拖入多张客户图，逐条填写 SN 与类别，系统将按 SN 自动匹配最新平台图">
+    <SurfaceCard title="批量导入" desc="拖入多张客户图，逐条填写 SN 与类别；默认归入当日批次">
       <div className="forge-form-grid mqc-batch-meta">
-        <label>批次 ID<input value={batchId} onChange={(e) => setBatchId(e.target.value)} placeholder="可选，便于检索 / 导出" /></label>
+        <label>批次 ID
+          <input value={batchId} onChange={(e) => setBatchId(e.target.value)} placeholder="默认当日 YYYY-MM-DD" />
+        </label>
+        <label className="mqc-batch-today-hint">
+          <span className="muted">每日一批</span>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setBatchId(todayBatchId())}>设为今日 {todayBatchId()}</button>
+        </label>
       </div>
       <ImageDropZone multiple compact busy={uploading} onFiles={onFiles} hint="拖拽多张客户图到此处批量导入" />
       {rows.length > 0 && (
@@ -394,207 +464,6 @@ function BatchArchive({ categories, onArchived }) {
       {summary && (
         <div className="mqc-summary-bar">
           共 {summary.total} 条 · 匹配 {summary.matched} · 未找到 {summary.not_found} · 多条 {summary.multiple}
-        </div>
-      )}
-    </SurfaceCard>
-  );
-}
-
-function QueryExport({ categories, reloadKey }) {
-  const [start, setStart] = useState('');
-  const [end, setEnd] = useState('');
-  const [cats, setCats] = useState([]);
-  const [defects, setDefects] = useState([]);
-  const [include, setInclude] = useState('both');
-  const [outDir, setOutDir] = useState('');
-  const [rows, setRows] = useState(null);
-  const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
-  const [busy, setBusy] = useState(false);
-  const [exportRes, setExportRes] = useState(null);
-
-  const toggle = (setter, list) => (c) => setter(list.includes(c) ? list.filter((x) => x !== c) : [...list, c]);
-
-  const baseParams = () => ({
-    start: toSqlTime(start) || undefined, end: toSqlTime(end) || undefined,
-    categories: cats.length ? cats : undefined, defect_types: defects.length ? defects : undefined,
-  });
-
-  const buildQs = (off = 0) => {
-    const q = new URLSearchParams();
-    if (start) q.set('start', toSqlTime(start));
-    if (end) q.set('end', toSqlTime(end));
-    cats.forEach((c) => q.append('category', c));
-    defects.forEach((d) => q.append('defect_type', d));
-    q.set('limit', String(QUERY_PAGE)); q.set('offset', String(off));
-    return q.toString();
-  };
-
-  const query = async (off = 0) => {
-    setBusy(true); setExportRes(null);
-    try {
-      const r = await api.forgeManualQcList(`?${buildQs(off)}`);
-      if (r.success) { setRows(r.data || []); setTotal(r.total || 0); setOffset(off); }
-    } catch (e) { toast(e.message, 'error'); }
-    finally { setBusy(false); }
-  };
-
-  const exportDir = async () => {
-    setBusy(true);
-    try { const r = await api.forgeManualQcExport({ ...baseParams(), include, out_dir: outDir.trim() || undefined }); if (r.success) { setExportRes(r); toast(`已导出 ${r.copied} 张到目录`); } }
-    catch (e) { toast(e.message, 'error'); }
-    finally { setBusy(false); }
-  };
-
-  const exportZip = async () => {
-    setBusy(true);
-    try { await api.forgeManualQcExportZip({ ...baseParams(), include }); toast('ZIP 已开始下载'); }
-    catch (e) { toast(e.message, 'error'); }
-    finally { setBusy(false); }
-  };
-
-  const exportAsync = async () => {
-    setBusy(true);
-    try { const r = await api.forgeManualQcExport({ ...baseParams(), include, out_dir: outDir.trim() || undefined, async: true }); if (r.success) toast(`已创建后台导出作业 #${r.job_id}，到「任务」页查看`); }
-    catch (e) { toast(e.message, 'error'); }
-    finally { setBusy(false); }
-  };
-
-  useEffect(() => { if (reloadKey && rows !== null) query(offset); /* eslint-disable-next-line */ }, [reloadKey]);
-
-  return (
-    <SurfaceCard title="筛选与导出" desc="按时段、成像类别与缺陷类型查询归档记录，并导出图片">
-      <div className="forge-form-grid">
-        <label>开始时间<input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} /></label>
-        <label>结束时间<input type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} /></label>
-        <label className="forge-span2">成像情况（不选 = 全部）
-          <div className="forge-chips">
-            {categories.imaging_categories.map((c) => (
-              <button type="button" key={c} className={`forge-chip${cats.includes(c) ? ' is-on' : ''}`} onClick={() => toggle(setCats, cats)(c)}>{c}</button>
-            ))}
-          </div>
-        </label>
-        <label className="forge-span2">缺陷类型（不选 = 全部）
-          <div className="forge-chips">
-            {categories.defect_types.map((d) => (
-              <button type="button" key={d} className={`forge-chip${defects.includes(d) ? ' is-on' : ''}`} onClick={() => toggle(setDefects, defects)(d)}>{d}</button>
-            ))}
-          </div>
-        </label>
-        <label>导出内容
-          <select value={include} onChange={(e) => setInclude(e.target.value)}>
-            <option value="both">平台图 + 客户图</option>
-            <option value="platform">仅平台缺陷图</option>
-            <option value="customer">仅客户图</option>
-          </select>
-        </label>
-        <label>导出目录<input value={outDir} onChange={(e) => setOutDir(e.target.value)} placeholder="留空 = exports/manual_qc_export/<时间戳>" /></label>
-      </div>
-      <div className="mqc-action-bar">
-        <button type="button" className="btn btn-sm btn-ghost" onClick={() => query(0)} disabled={busy} data-testid="mqc-query-export-query">查询</button>
-        <button type="button" className="btn btn-sm btn-primary" onClick={exportDir} disabled={busy} data-testid="mqc-query-export-dir">导出到目录</button>
-        <button type="button" className="btn btn-sm btn-ghost" onClick={exportZip} disabled={busy}>下载 ZIP</button>
-        <button type="button" className="btn btn-sm btn-ghost" onClick={exportAsync} disabled={busy}>后台导出</button>
-      </div>
-      {exportRes && (
-        <div className="forge-banner-ok">
-          导出完成：{exportRes.copied} 张图 / {exportRes.records} 条记录（缺失 {exportRes.missing}）→ <code className="forge-path">{exportRes.out_dir}</code>
-        </div>
-      )}
-      {rows !== null && (
-        <div className="mqc-query-results">
-          <div className="mqc-query-toolbar">
-            <span className="muted">共 {total} 条 · 当前 {offset + 1}–{offset + rows.length}</span>
-            <span className="mqc-query-pager">
-              <button type="button" className="btn btn-sm btn-ghost" disabled={busy || offset <= 0} onClick={() => query(Math.max(0, offset - QUERY_PAGE))}>上一页</button>
-              <button type="button" className="btn btn-sm btn-ghost" disabled={busy || offset + QUERY_PAGE >= total} onClick={() => query(offset + QUERY_PAGE)}>下一页</button>
-            </span>
-          </div>
-          <div className="mqc-table-wrap">
-            <table className="models-table mqc-table">
-              <thead><tr><th>#</th><th>SN</th><th>成像</th><th>缺陷</th><th>状态</th><th>款型</th><th>时间</th></tr></thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id}>
-                    <td>{r.id}</td><td>{r.product_no}</td><td>{r.qc_category || '—'}</td>
-                    <td>{r.defect_type || '—'}</td><td><MatchPill status={r.match_status} /></td>
-                    <td>{r.product_type || '—'}</td><td className="forge-path">{r.archived_at || ''}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </SurfaceCard>
-  );
-}
-
-function RecentTable({ categories, recent, reload, onCompare }) {
-  const [editId, setEditId] = useState(null);
-  const [draft, setDraft] = useState({});
-
-  const startEdit = (r) => { setEditId(r.id); setDraft({ qc_category: r.qc_category || '', defect_type: r.defect_type || '', note: r.note || '' }); };
-  const save = async (id) => {
-    try { const r = await api.forgeManualQcUpdate(id, draft); if (r.success) { toast('已更新'); setEditId(null); reload(); } }
-    catch (e) { toast(e.message, 'error'); }
-  };
-  const del = async (id) => {
-    try { const r = await api.forgeManualQcDelete(id); if (r.success) { toast('已删除'); reload(); } }
-    catch (e) { toast(e.message, 'error'); }
-  };
-
-  return (
-    <SurfaceCard
-      title="最近归档"
-      desc={recent.length ? `最近 ${recent.length} 条记录，支持编辑与对比` : '暂无归档记录'}
-      actions={<button type="button" className="btn btn-sm btn-ghost" onClick={reload}>刷新</button>}
-    >
-      {!recent.length ? (
-        <div className="mqc-empty-state"><p>完成首次归档后，记录将显示在此处。</p></div>
-      ) : (
-        <div className="mqc-table-wrap">
-          <table className="models-table mqc-table">
-            <thead><tr><th>#</th><th>SN</th><th>成像</th><th>缺陷</th><th>状态</th><th>款型</th><th>匹配图</th><th>备注</th><th>操作</th></tr></thead>
-            <tbody>
-              {recent.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.id}</td><td>{r.product_no}</td>
-                  {editId === r.id ? (
-                    <>
-                      <td><select value={draft.qc_category} onChange={(e) => setDraft({ ...draft, qc_category: e.target.value })}>
-                        <option value="">—</option>{categories.imaging_categories.map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select></td>
-                      <td><input list="forge-defect-types" value={draft.defect_type} onChange={(e) => setDraft({ ...draft, defect_type: e.target.value })} /></td>
-                      <td><MatchPill status={r.match_status} /></td>
-                      <td>{r.product_type || '—'}</td>
-                      <td><code className="forge-path">{r.matched_img_path || '—'}</code></td>
-                      <td><input value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
-                      <td className="forge-actions">
-                        <button type="button" className="btn btn-sm btn-primary" onClick={() => save(r.id)}>保存</button>
-                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => setEditId(null)}>取消</button>
-                      </td>
-                    </>
-                  ) : (
-                    <>
-                      <td>{r.qc_category || '—'}</td><td>{r.defect_type || '—'}</td>
-                      <td><MatchPill status={r.match_status} /></td><td>{r.product_type || '—'}</td>
-                      <td>
-                        {r.matched_img_path
-                          ? <button type="button" className="btn btn-sm btn-ghost" onClick={() => onCompare({ customer: r.customer_img_path ? api.imageUrl('c', r.customer_img_path) : null, platform: api.imageUrl('m', r.matched_img_path) })}>对比</button>
-                          : <span className="muted">—</span>}
-                      </td>
-                      <td className="forge-path">{r.note || '—'}</td>
-                      <td className="forge-actions">
-                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => startEdit(r)}>编辑</button>
-                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => del(r.id)}>删除</button>
-                      </td>
-                    </>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       )}
     </SurfaceCard>
@@ -656,7 +525,7 @@ function CategoryConfig({ categories, onSaved }) {
 
 export default function ManualQcPage() {
   const [categories, setCategories] = useState({ imaging_categories: [], defect_types: [], defect_strict: false });
-  const [recent, setRecent] = useState([]);
+  const [summary, setSummary] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [lightbox, setLightbox] = useState(null);
   const [activeTab, setActiveTab] = useState('archive');
@@ -665,36 +534,40 @@ export default function ManualQcPage() {
     try { const r = await api.forgeManualQcCategories(); if (r.success) setCategories({ imaging_categories: r.imaging_categories || [], defect_types: r.defect_types || [], defect_strict: !!r.defect_strict }); }
     catch (e) { /* ignore */ }
   };
-  const loadRecent = async () => {
-    try { const r = await api.forgeManualQcList('?limit=50'); if (r.success) setRecent(r.data || []); }
+  const loadSummary = async () => {
+    try { const r = await api.forgeManualQcSummary(); if (r.success) setSummary(r); }
     catch (e) { /* ignore */ }
   };
 
-  useEffect(() => { loadCategories(); loadRecent(); }, []);
-  const onArchived = () => { loadRecent(); setReloadKey((k) => k + 1); };
+  useEffect(() => { loadCategories(); loadSummary(); }, []);
+  const onArchived = () => { loadSummary(); setReloadKey((k) => k + 1); };
 
-  const tabCounts = { records: recent.length };
+  const tabCounts = { library: summary?.pending || 0 };
 
   return (
     <div className="panel active mqc-page">
-      <SceneHubNav variant="query" />
+      <SceneHubNav variant="qc" />
       <header className="mqc-header">
         <div>
           <div className="topbar-title">人工质检</div>
-          <p className="mqc-header-desc">导入客户图 → 检索 SN → 匹配平台图 → 标注归档 → 按时段导出</p>
+          <p className="mqc-header-desc">
+            导入客户图 → 匹配平台图 → 标注归档（每日一批 <code>{todayBatchId()}</code>）→
+            {' '}<button type="button" className="mqc-inline-link" onClick={() => setActiveTab('library')}>归档库</button>
+            {' '}查看 / 导出 / 交接训练
+          </p>
         </div>
         <div className="mqc-header-stats">
           <div className="mqc-stat">
-            <span className="mqc-stat-value">{recent.length}</span>
-            <span className="mqc-stat-label">最近记录</span>
+            <span className="mqc-stat-value">{summary?.total ?? 0}</span>
+            <span className="mqc-stat-label">总归档</span>
+          </div>
+          <div className="mqc-stat mqc-stat-warn">
+            <span className="mqc-stat-value">{summary?.pending ?? 0}</span>
+            <span className="mqc-stat-label">待交接</span>
           </div>
           <div className="mqc-stat">
-            <span className="mqc-stat-value">{categories.imaging_categories.length}</span>
-            <span className="mqc-stat-label">成像类别</span>
-          </div>
-          <div className="mqc-stat">
-            <span className="mqc-stat-value">{categories.defect_types.length}</span>
-            <span className="mqc-stat-label">缺陷类型</span>
+            <span className="mqc-stat-value">{summary?.handoff_ready ?? 0}</span>
+            <span className="mqc-stat-label">已交接</span>
           </div>
         </div>
       </header>
@@ -708,8 +581,9 @@ export default function ManualQcPage() {
           </SurfaceCard>
         )}
         {activeTab === 'batch' && <BatchArchive categories={categories} onArchived={onArchived} />}
-        {activeTab === 'query' && <QueryExport categories={categories} reloadKey={reloadKey} />}
-        {activeTab === 'records' && <RecentTable categories={categories} recent={recent} reload={loadRecent} onCompare={setLightbox} />}
+        {activeTab === 'library' && (
+          <ArchiveLibrary categories={categories} reloadKey={reloadKey} onCompare={setLightbox} />
+        )}
         {activeTab === 'settings' && <CategoryConfig categories={categories} onSaved={loadCategories} />}
         <datalist id="forge-defect-types">{categories.defect_types.map((d) => <option key={d} value={d} />)}</datalist>
       </div>

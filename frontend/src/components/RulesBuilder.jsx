@@ -199,6 +199,9 @@ export function RulesBuilder({ studio, showCodePreview = false, complexHint = fa
           <label className="rb-toggle">
             <input type="checkbox" checked={removeEmpty} onChange={(e) => setRemoveEmpty(e.target.checked)} />
             <span>移除空框行</span>
+            <span className="muted rules-hint-inline" title="仅丢弃筛选后 ext 里没有任何检测框的图片；保留的图片不删框">
+              （只丢无框图，保留图内全部框）
+            </span>
           </label>
           <button type="button" className="btn btn-sm btn-primary" onClick={() => setRules((r) => [...r, newRule()])}>+ 添加规则</button>
           <details className="rules-pipeline-details" open={pipelineOpen} onToggle={(e) => { setPipelineOpen(e.target.open); if (e.target.open) loadPipelines(); }}>

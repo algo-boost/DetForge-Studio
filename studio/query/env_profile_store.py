@@ -8,7 +8,8 @@ import re
 from datetime import datetime
 
 from studio.paths import PROJECT_ROOT
-from studio.query.env_context import extract_template_vars, resolve_strategy_env_schema
+from studio.query.env_context import extract_template_vars
+from studio.query.strategy_env_schema import merge_strategy_env_schema
 from studio.query.strategy_loader import get_all_strategies, get_all_templates
 from studio.flow.flow_compiler import normalize_strategy
 
@@ -147,7 +148,7 @@ def suggest_vars(strategy_ids=None):
         if not raw:
             continue
         strategy = normalize_strategy(dict(raw), templates)
-        for row in resolve_strategy_env_schema(strategy):
+        for row in merge_strategy_env_schema(strategy, templates):
             key = row['key']
             if key not in merged:
                 merged[key] = {

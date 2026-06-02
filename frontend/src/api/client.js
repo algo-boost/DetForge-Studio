@@ -10,6 +10,18 @@ export function getApiToken() {
 export function setApiToken(token) {
   try { token ? localStorage.setItem('pc_api_token', token) : localStorage.removeItem('pc_api_token'); } catch { /* ignore */ }
 }
+
+/** 为 <img src> 等无法带请求头的 URL 附加 ?token=（后端启用 api_token 时必需） */
+export function appendApiToken(url) {
+  const t = getApiToken();
+  if (!t || !url) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}token=${encodeURIComponent(t)}`;
+}
+
+export function predictResultPreviewUrl(resultId) {
+  return appendApiToken(`/api/forge/predict-result/${resultId}/preview`);
+}
 function authHeaders() {
   const t = getApiToken();
   return t ? { 'X-API-Token': t } : {};
@@ -115,6 +127,9 @@ export const api = {
   getStrategies: () => request('/api/strategies'),
   getStrategy: (id) => request(`/api/strategies/${id}`),
   getStrategyVariables: (id) => request(`/api/strategies/${id}/variables`),
+  getPythonPresets: () => request('/api/python-presets'),
+  getPipelineTemplates: () => request('/api/pipeline-templates'),
+  compileProcessPipeline: (body) => request('/api/strategies/compile-pipeline', { method: 'POST', body: JSON.stringify(body) }),
 
   listEnvProfiles: () => request('/api/env-profiles'),
   getEnvProfile: (id) => request(`/api/env-profiles/${encodeURIComponent(id)}`),
@@ -182,15 +197,14 @@ export const api = {
   forgeJobItems: (id, params = '') => request(`/api/forge/jobs/${id}/items${params}`),
   forgeJobResults: (id, params = '') => request(`/api/forge/jobs/${id}/results${params}`),
   forgeJobOpenViz: (id, body = {}) => request(`/api/forge/jobs/${id}/viz`, { method: 'POST', body: JSON.stringify(body) }),
-  forgePredictResultPreviewUrl: (id) => {
-    const t = getApiToken();
-    return `/api/forge/predict-result/${id}/preview${t ? `?token=${encodeURIComponent(t)}` : ''}`;
-  },
+  forgePredictResultPreviewUrl: (id) => predictResultPreviewUrl(id),
   forgeModelHealth: (id, device) => request(`/api/forge/models/${id}/health`, { method: 'POST', body: JSON.stringify(device ? { device } : {}) }),
   forgePredictResultSource: () => request('/api/forge/predict-result/source'),
 
   forgeManualQcLookup: (sn) => request(`/api/forge/manual-qc/lookup?sn=${encodeURIComponent(sn)}`),
   forgeManualQcList: (params = '') => request(`/api/forge/manual-qc${params}`),
+  forgeManualQcSummary: () => request('/api/forge/manual-qc/summary'),
+  forgeManualQcBatches: (params = '') => request(`/api/forge/manual-qc/batches${params}`),
   forgeManualQcArchive: (body) => request('/api/forge/manual-qc', { method: 'POST', body: JSON.stringify(body) }),
   forgeManualQcCategories: () => request('/api/forge/manual-qc/categories'),
   forgeManualQcSaveCategories: (body) => request('/api/forge/manual-qc/categories', { method: 'POST', body: JSON.stringify(body) }),

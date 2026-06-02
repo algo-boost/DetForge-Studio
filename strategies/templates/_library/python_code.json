@@ -1,0 +1,10 @@
+{
+  "id": "python_code",
+  "name": "自定义 Python",
+  "description": "编写自定义 Python 筛选逻辑（高级）",
+  "icon": "code",
+  "params_schema": [
+    { "key": "code", "label": "Python 代码", "type": "code", "default": "def filter(df, params):\n    # df: pandas DataFrame\n    # params: dict, 此处可添加额外参数\n    # 返回: 筛选后的 DataFrame\n    return df" }
+  ],
+  "python_code": "__CUSTOM__"
+}

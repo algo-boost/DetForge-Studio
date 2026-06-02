@@ -1,0 +1,11 @@
+{
+  "id": "preset_apply_filter_rules",
+  "name": "执行筛选规则",
+  "description": "调用 apply_filter_rules(df)，使用 Flow 规则循环编译结果",
+  "icon": "filter",
+  "category": "预设步骤",
+  "preset_group": "filter",
+  "pipeline": true,
+  "inject_functions": ["filter_df_by_ext", "strip_boxes_below_confidence", "remove_empty_ext_rows"],
+  "process_lines": ["df = apply_filter_rules(df)"]
+}

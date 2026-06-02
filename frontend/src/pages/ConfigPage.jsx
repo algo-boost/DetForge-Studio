@@ -26,11 +26,27 @@ function SurfaceCard({ title, desc, badge, actions, children }) {
   );
 }
 
+function formatReadonlyValue(value) {
+  if (value == null || value === '') return '—';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return JSON.stringify(value);
+}
+
+function formatPlatformRootCandidate(candidate) {
+  if (candidate == null) return '—';
+  if (typeof candidate === 'string') return candidate;
+  const root = candidate.platform_root || candidate.local_file_base || '—';
+  const count = candidate.sample_count;
+  return count != null ? `${root}（${count} 条样本）` : root;
+}
+
 function ReadonlyRow({ label, value }) {
   return (
     <div className="settings-readonly-row">
       <span className="settings-readonly-label">{label}</span>
-      <code className="settings-readonly-value">{value ?? '—'}</code>
+      <code className="settings-readonly-value">{formatReadonlyValue(value)}</code>
     </div>
   );
 }
@@ -45,6 +61,7 @@ export default function ConfigPage({ embedded = false }) {
   const [activeTab, setActiveTab] = useState('connection');
   const [id2nameText, setId2nameText] = useState('');
   const [syncRootsText, setSyncRootsText] = useState('');
+  const [configWarning, setConfigWarning] = useState('');
 
   const load = async () => {
     const r = await api.getConfig();
@@ -55,8 +72,18 @@ export default function ConfigPage({ embedded = false }) {
       setPathChecks(r.path_checks || {});
       setId2nameText(id2nameToText(c.id2name));
       setSyncRootsText(rootsToText(c.dataset_sync_roots));
-      setDbOk(c.db_connected);
+      setDbOk(c.db_connected === true);
       setMfOk(c.magic_fox_configured ? true : null);
+      if (c.config_decrypt_errors?.length) {
+        setConfigWarning(c.config_decrypt_hint || '配置口令无法解密，请检查 .config.key 是否与 config.json 配对');
+        toast(c.config_decrypt_hint || '配置口令无法解密', 'error');
+      } else if (c.config_file_exists === false) {
+        setConfigWarning('未找到 config.json，当前为默认配置；保存后将创建项目根目录下的 config.json');
+      } else {
+        setConfigWarning('');
+      }
+    } else {
+      toast(r.error || '加载配置失败', 'error');
     }
   };
 
@@ -77,17 +104,25 @@ export default function ConfigPage({ embedded = false }) {
       if (!res.success) throw new Error(res.error);
       toast(res.message || '配置已保存');
       res.warnings?.forEach((w) => toast(w, 'error'));
-      setLoaded({ ...payload });
-      setConfig(payload);
+      if (res.db_connected != null) setDbOk(!!res.db_connected);
+      if (res.auth?.magic_fox_reachable === true) setMfOk(true);
+      else if (res.auth?.magic_fox_reachable === false) setMfOk(false);
       const fresh = await api.getConfig();
-      if (fresh.success) setPathChecks(fresh.path_checks || {});
+      if (fresh.success) {
+        setPathChecks(fresh.path_checks || {});
+        const c = fresh.config || {};
+        if (res.db_connected == null) setDbOk(c.db_connected === true);
+        if (res.auth?.magic_fox_reachable == null && c.magic_fox_configured) setMfOk(true);
+      }
+      await load();
     } catch (e) { toast(e.message, 'error'); }
   };
 
   const onTest = async () => {
     const res = await api.testConnection({ host: config.db_host, user: config.db_user, password: config.db_password, database: config.db_database });
-    setDbOk(res.success);
-    toast(res.success ? res.message : res.error, res.success ? 'info' : 'error');
+    setDbOk(!!(res.success && (res.db_connected !== false)));
+    toast(res.success ? (res.message || '数据库连接成功') : res.error, res.success ? 'info' : 'error');
+    if (res.success && res.saved) load();
   };
 
   const onTestMagicFox = async () => {
@@ -151,9 +186,9 @@ export default function ConfigPage({ embedded = false }) {
               <StatusPill ok={dbOk} labelOk="数据库已连接" labelErr="数据库未连接" labelPending="数据库待验证" />
               <StatusPill
                 ok={mfOk === true ? true : mfOk === false ? false : config.magic_fox_configured ? true : null}
-                labelOk="Magic-Fox 已配置"
-                labelErr="Magic-Fox 认证失败"
-                labelPending="Magic-Fox 未验证"
+                labelOk="Magic-Fox 可用"
+                labelErr="Magic-Fox 不可用"
+                labelPending="Magic-Fox 未配置"
               />
               {config.viz_available != null && (
                 <StatusPill ok={config.viz_available} labelOk="样本图库可用" labelErr="样本图库不可用" labelPending="图库未检测" />
@@ -171,9 +206,9 @@ export default function ConfigPage({ embedded = false }) {
             <StatusPill ok={dbOk} labelOk="数据库已连接" labelErr="数据库未连接" labelPending="数据库待验证" />
             <StatusPill
               ok={mfOk === true ? true : mfOk === false ? false : config.magic_fox_configured ? true : null}
-              labelOk="Magic-Fox 已配置"
-              labelErr="Magic-Fox 认证失败"
-              labelPending="Magic-Fox 未验证"
+              labelOk="Magic-Fox 可用"
+              labelErr="Magic-Fox 不可用"
+              labelPending="Magic-Fox 未配置"
             />
             {config.viz_available != null && (
               <StatusPill ok={config.viz_available} labelOk="样本图库可用" labelErr="样本图库不可用" labelPending="图库未检测" />
@@ -184,6 +219,15 @@ export default function ConfigPage({ embedded = false }) {
       )}
 
       <SettingsTabBar activeTab={activeTab} onTabChange={setActiveTab} />
+
+      {configWarning && (
+        <div className="config-hint-warn settings-config-banner" role="alert">
+          {configWarning}
+          {config.config_file && (
+            <span className="muted"> · 文件：<code>{config.config_file}</code></span>
+          )}
+        </div>
+      )}
 
       <div className="settings-workspace">
         {activeTab === 'connection' && (
@@ -199,7 +243,10 @@ export default function ConfigPage({ embedded = false }) {
               <div className="config-field"><label>用户 db_user</label><input value={config.db_user || ''} onChange={(e) => set('db_user', e.target.value)} /></div>
               <div className="config-field"><label>密码 db_password</label><input type="password" placeholder="留空保持原密码" value={config.db_password || ''} onChange={(e) => set('db_password', e.target.value)} /></div>
             </div>
-            <p className="config-hint">也可通过环境变量 DB_HOST / DB_USER / DB_PASSWORD / DB_DATABASE 覆盖（优先级高于配置文件）。</p>
+            <p className="config-hint">
+              测试成功会<strong>自动写入 config.json</strong>，下次打开无需再测（密码框留空表示沿用已保存密码）。
+              也可通过环境变量 DB_HOST / DB_USER / DB_PASSWORD / DB_DATABASE 覆盖（优先级高于配置文件）。
+            </p>
           </SurfaceCard>
         )}
 
@@ -222,6 +269,18 @@ export default function ConfigPage({ embedded = false }) {
                   类别来源：{config.defect_categories_source || '—'}
                   {catMeta.table && <> · 表 <code>{catMeta.table}</code></>}
                   {' · '}共 {(config.defect_categories || []).length} 个类别
+                  {catMeta.deploy_skipped_newer?.length > 0 && (
+                    <> · 已跳过较新的错漏装部署，采用 {catMeta.deploy_name || '—'} 的缺陷类别</>
+                  )}
+                  {catMeta.deploy_skipped_wrong_task?.length > 0 && !catMeta.deploy_skipped_newer?.length && (
+                    <> · 当前部署均为错漏装/总成类，已改用 config 缺陷词表（{catMeta.deploy_name || '—'}）</>
+                  )}
+                  {catMeta.train_skipped_wrong_task?.length > 0 && (
+                    <> · 已忽略非缺陷检测训练类别</>
+                  )}
+                  {catMeta.label_table_skipped?.length > 0 && (
+                    <> · 已忽略 label 表成像/面别标签（{catMeta.label_table_skipped.length} 项）</>
+                  )}
                 </div>
                 <div className="config-chips">{(config.defect_categories || []).map((c) => <span key={c} className="config-chip">{c}</span>)}</div>
               </div>
@@ -287,7 +346,11 @@ export default function ConfigPage({ embedded = false }) {
                       <div className="config-field">
                         <label>候选平台根（只读）</label>
                         <div className="settings-readonly-list">
-                          {config.platform_root_candidates.map((p) => <code key={p}>{p}</code>)}
+                          {config.platform_root_candidates.map((p, i) => (
+                            <code key={typeof p === 'string' ? p : (p.platform_root || p.local_file_base || i)}>
+                              {formatPlatformRootCandidate(p)}
+                            </code>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -398,9 +461,9 @@ export default function ConfigPage({ embedded = false }) {
               badge={
                 <StatusPill
                   ok={mfOk === true ? true : mfOk === false ? false : config.magic_fox_configured ? true : null}
-                  labelOk="已配置"
-                  labelErr="认证失败"
-                  labelPending="未验证"
+                  labelOk="可用"
+                  labelErr="不可用"
+                  labelPending="未配置"
                 />
               }
               actions={
@@ -583,7 +646,6 @@ export default function ConfigPage({ embedded = false }) {
               </div>
               <div className="config-actions">
                 <button type="button" className="btn btn-sm btn-ghost" onClick={load}>刷新状态</button>
-                <Link className="btn btn-sm btn-ghost" to="/config?section=docs">使用手册</Link>
               </div>
             </div>
           </SurfaceCard>

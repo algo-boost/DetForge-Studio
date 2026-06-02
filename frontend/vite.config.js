@@ -13,5 +13,7 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: true,
+    // 避免懒加载路由预加载 CSS 失败时整页白屏（旧 index.js 缓存 + 新 hash 不一致）
+    modulePreload: false,
   },
 });

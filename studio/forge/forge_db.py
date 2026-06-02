@@ -976,6 +976,36 @@ def manual_qc_training_summary():
     return summary
 
 
+def list_manual_qc_batch_groups(limit=60):
+    """按 batch_id 汇总；无 batch_id 时按归档日期归组。"""
+    lim = max(1, min(int(limit or 60), 200))
+    rows = _client().fetchall(
+        f"""SELECT
+              COALESCE(NULLIF(TRIM(batch_id), ''), DATE_FORMAT(archived_at, '%%Y-%%m-%%d')) AS batch_key,
+              MAX(batch_id) AS batch_id,
+              DATE(MIN(archived_at)) AS batch_day,
+              COUNT(*) AS total,
+              SUM(CASE WHEN training_status = 'pending' THEN 1 ELSE 0 END) AS pending,
+              SUM(CASE WHEN training_status = 'handoff_ready' THEN 1 ELSE 0 END) AS handoff_ready,
+              SUM(CASE WHEN match_status = 'matched' THEN 1 ELSE 0 END) AS matched,
+              MIN(archived_at) AS first_at,
+              MAX(archived_at) AS last_at
+            FROM {_t('manual_qc')}
+            GROUP BY batch_key
+            ORDER BY last_at DESC
+            LIMIT %s""",
+        (lim,),
+    )
+    for r in rows:
+        if r.get('batch_day') is not None:
+            r['batch_day'] = str(r['batch_day'])
+        if r.get('first_at') is not None:
+            r['first_at'] = str(r['first_at'])
+        if r.get('last_at') is not None:
+            r['last_at'] = str(r['last_at'])
+    return rows
+
+
 def update_manual_qc_training_batch(qc_ids, training_status, handoff_dir=None):
     if not qc_ids:
         return 0

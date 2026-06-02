@@ -1,6 +1,6 @@
 """Serve React SPA."""
 import os
-from flask import Blueprint, send_from_directory, abort
+from flask import Blueprint, abort, make_response, send_from_directory
 
 spa_bp = Blueprint('spa', __name__)
 
@@ -26,5 +26,13 @@ def serve_spa(path):
         abort(503, description='React 前端未构建，请运行: cd frontend && npm install && npm run build')
 
     if path and os.path.isfile(os.path.join(FRONTEND_DIST, path)):
-        return send_from_directory(FRONTEND_DIST, path)
-    return send_from_directory(FRONTEND_DIST, 'index.html')
+        resp = make_response(send_from_directory(FRONTEND_DIST, path))
+        # 带 hash 的静态资源可长期缓存；index.html 禁止缓存，避免 JS/CSS 哈希不一致
+        if path.startswith('assets/'):
+            resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        return resp
+
+    resp = make_response(send_from_directory(FRONTEND_DIST, 'index.html'))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
