@@ -4,6 +4,7 @@
   "name": "日常捞图",
   "description": "多规则循环筛选缺陷框，移除空行后限量采样",
   "category": "内置",
+  "data_source": "detail",
   "sql_template": "SELECT d.*, r.product_type AS result_product_type FROM `product_detection_detail_result` d LEFT JOIN (SELECT product_no, MAX(product_type) AS product_type FROM product_detection_result GROUP BY product_no) r ON d.product_no = r.product_no WHERE d.c_time BETWEEN '${START_TIME}' AND '${END_TIME}' AND d.ext NOT LIKE '%\"original_predictions\": []%'",
   "sample_size": 200,
   "env_schema": [
@@ -22,6 +23,14 @@
       "description": "相同种子可复现采样结果"
     }
   ],
+  "query_ui_mode": "compact",
+  "query_compact_hide": {
+    "data_source": true,
+    "predict_job": true,
+    "preview_button": true,
+    "strategy_tools": true,
+    "compact_hint": true
+  },
   "filter_mode": "flow",
   "flow": {
     "version": 2,

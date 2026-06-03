@@ -109,15 +109,27 @@ def _csv2coco_predict_layout(csv_file, coco_file, id2name, query_meta):
         id2name=id2name or DEFAULT_ID2NAME,
         info_meta=query_meta,
         image_id_key='_viz_id',
-        abs_file_name=True,
+        abs_file_name=False,
     )
 
 
-def sync_coco_image_file_names(coco_path, image_paths_by_id, *, image_dir=None):
-    """将 COCO images[].file_name 对齐到可读的实际路径（样本图库 / 导出 ZIP 依赖此项）。
+def _coco_file_name_for_export(target, base_dir):
+    """COCO images[].file_name 仅存相对路径或文件名，不写磁盘绝对路径。"""
+    target = os.path.abspath(target)
+    base_dir = os.path.abspath(base_dir)
+    try:
+        rel = os.path.relpath(target, base_dir)
+        if not rel.startswith('..') and not os.path.isabs(rel):
+            return rel.replace('\\', '/')
+    except ValueError:
+        pass
+    return os.path.basename(target)
 
-    image_paths_by_id: {image_id: 绝对路径}，通常为导出目录内 ``{idx}_{basename}`` 或原图绝对路径。
-    若条目已是存在的绝对路径则跳过（预测结果布局）。
+
+def sync_coco_image_file_names(coco_path, image_paths_by_id, *, image_dir=None):
+    """将 COCO images[].file_name 对齐到任务目录内相对路径或文件名（不含原图绝对路径）。
+
+    image_paths_by_id: {image_id: 绝对路径}，通常为导出目录内 ``{idx}_{basename}``。
     """
     if not image_paths_by_id or not os.path.isfile(coco_path):
         return False
@@ -134,20 +146,14 @@ def sync_coco_image_file_names(coco_path, image_paths_by_id, *, image_dir=None):
         if not target or not os.path.isfile(target):
             continue
         target = os.path.abspath(target)
+        new_name = _coco_file_name_for_export(target, base_dir)
         current = str(img.get('file_name') or '').strip()
         if current:
             cur_path = current if os.path.isabs(current) else os.path.join(base_dir, current)
-            if os.path.isfile(cur_path):
+            if os.path.isfile(cur_path) and not os.path.isabs(current) and current == new_name:
                 continue
-        if current != target:
-            try:
-                rel = os.path.relpath(target, base_dir)
-                if not rel.startswith('..') and not os.path.isabs(rel):
-                    img['file_name'] = rel.replace('\\', '/')
-                else:
-                    img['file_name'] = target
-            except ValueError:
-                img['file_name'] = target
+        if current != new_name:
+            img['file_name'] = new_name
             changed = True
     if changed:
         with open(coco_path, 'w', encoding='utf-8') as f:

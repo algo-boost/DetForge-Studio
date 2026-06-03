@@ -105,13 +105,24 @@ def resolve_category_id(name, name2id, id2name, categories_out):
     return next_id
 
 
-def predictions_to_coco_annotations(image_id, predictions, name2id, id2name, categories_out):
+def predictions_to_coco_annotations(
+    image_id,
+    predictions,
+    name2id,
+    id2name,
+    categories_out,
+    *,
+    defect_only=False,
+    defect_check=None,
+):
     anns = []
     for pred in predictions or []:
         bbox = pred.get('bbox')
         if not bbox:
             continue
-        name = pred.get('name') or '未知'
+        name = (pred.get('name') or pred.get('category') or '未知').strip() or '未知'
+        if defect_only and defect_check is not None and not defect_check(name):
+            continue
         cat_id = resolve_category_id(name, name2id, id2name, categories_out)
         w, h = bbox[2], bbox[3]
         anns.append({

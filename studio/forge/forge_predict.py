@@ -184,15 +184,23 @@ def _run_predict_subprocess(job, model, params, threshold, device, max_size, sto
         'images': [{'path': item['ref_key'], 'threshold': threshold} for item in items],
     }
     timeout = max(3600, len(items) * 120)
+    settings = predict_runtime.resolve_predict_settings()
     job_log.append(
         job['id'],
-        f'子进程批量预测 {len(items)} 张（加载模型 + 推理，期间日志可能较少）…',
+        f'子进程批量预测 {len(items)} 张 · timeout={timeout}s · '
+        f'python={settings.get("predict_python_executable") or "—"}',
     )
+    job_log.append(
+        job['id'],
+        f'模型 {model.get("name")} · {model.get("framework")} · device={device} · '
+        f'threshold={threshold} · max_size={max_size}',
+    )
+    job_log.append(job['id'], f'权重 {model.get("checkpoint_path") or "—"}')
 
     def _subprocess_log(line):
         line = str(line or '').strip()
         if line:
-            job_log.append_throttled(job['id'], f'[predict] {line}', key='subprocess', min_interval=3.0)
+            job_log.append(job['id'], line)
 
     batch_results = predict_runtime.run_batch_predict(
         payload, timeout=timeout, log_line=_subprocess_log,
@@ -200,6 +208,8 @@ def _run_predict_subprocess(job, model, params, threshold, device, max_size, sto
     job_log.append(job['id'], f'子进程预测返回 {len(batch_results)} 条结果，开始写库 …')
     by_path = {r.get('path'): r for r in batch_results}
 
+    written = 0
+    failed_write = 0
     for item in items:
         if stop_check and stop_check():
             break
@@ -208,9 +218,14 @@ def _run_predict_subprocess(job, model, params, threshold, device, max_size, sto
         res = by_path.get(img_path)
         if not res:
             forge_db.mark_item_failed(item['id'], error='子进程未返回该图结果', max_attempts=MAX_ITEM_ATTEMPTS)
+            failed_write += 1
+            job_log.append(job['id'], f'[写库失败] 无子进程结果: {img_path}')
             continue
         if not res.get('ok'):
-            forge_db.mark_item_failed(item['id'], error=res.get('error') or 'predict failed', max_attempts=MAX_ITEM_ATTEMPTS)
+            err = res.get('error') or 'predict failed'
+            forge_db.mark_item_failed(item['id'], error=err, max_attempts=MAX_ITEM_ATTEMPTS)
+            failed_write += 1
+            job_log.append(job['id'], f'[预测失败] {img_path} · {err}')
             continue
         predictions = res.get('predictions') or []
         meta = _meta_for(params, img_path)
@@ -236,16 +251,30 @@ def _run_predict_subprocess(job, model, params, threshold, device, max_size, sto
         }
         result_id = forge_db.insert_predict_result(row)
         forge_db.mark_item_done(item['id'], result_ref=result_id)
+        written += 1
         forge_db.recompute_job_progress(job['id'])
         if on_progress:
             on_progress()
+        if written == 1 or written % 20 == 0 or written == len(items):
+            job_log.append_throttled(
+                job['id'],
+                f'写库进度 {written}/{len(items)}（失败 {failed_write}）',
+                key='db_write',
+                min_interval=2.0,
+            )
 
+    job_log.append(
+        job['id'],
+        f'写库完成：成功 {written}，失败 {failed_write}，共 {len(items)} 张',
+    )
     return forge_db.recompute_job_progress(job['id'])
 
 
 def _run_with_loaded(job, loaded, model, params, threshold, intra, stop_check, on_progress):
     items = forge_db.pending_items(job['id'])
     write_lock = threading.Lock()
+
+    done_count = {'ok': 0, 'fail': 0}
 
     def process(item):
         if stop_check and stop_check():
@@ -279,10 +308,21 @@ def _run_with_loaded(job, loaded, model, params, threshold, intra, stop_check, o
             with write_lock:
                 result_id = forge_db.insert_predict_result(row)
                 forge_db.mark_item_done(item['id'], result_ref=result_id)
+                done_count['ok'] += 1
+                n = done_count['ok'] + done_count['fail']
+                if n == 1 or n % 20 == 0:
+                    job_log.append_throttled(
+                        job['id'],
+                        f'进程内预测 {n}/{len(items)}（完成 {done_count["ok"]}，失败 {done_count["fail"]}）',
+                        key='inprocess',
+                        min_interval=2.0,
+                    )
             return 'done'
         except Exception as e:  # noqa: BLE001
             with write_lock:
                 forge_db.mark_item_failed(item['id'], error=str(e), max_attempts=MAX_ITEM_ATTEMPTS)
+                done_count['fail'] += 1
+            job_log.append(job['id'], f'[预测失败] {img_path} · {e}')
             return 'failed'
 
     if intra > 1 and len(items) > 1:

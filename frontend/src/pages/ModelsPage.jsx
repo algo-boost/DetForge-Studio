@@ -4,6 +4,7 @@ import { api, toast } from '../api/client';
 import ModelsTabBar from '../components/models/ModelsTabBar';
 import SceneHubNav from '../components/SceneHubNav';
 import { SOURCE_LABEL, SOURCE_PILL_CLASS } from '../components/models/modelsUtils';
+import { formatDisplayTime } from '../lib/timezone';
 
 function SurfaceCard({ title, desc, actions, children }) {
   return (
@@ -277,7 +278,7 @@ export default function ModelsPage() {
                   <td className="models-name">{m.model_name || m.name || '—'}</td>
                   <td><span className="models-tag">{m.model_type || '—'}</span></td>
                   <td>{m.train_progress || '—'}</td>
-                  <td>{m.c_time || '—'}</td>
+                  <td>{formatDisplayTime(m.c_time)}</td>
                   <td className="models-path-cell"><span className="models-path-note">{m.snapshot_note || m.remark || '—'}</span></td>
                   <td><SourcePill source="platform" /></td>
                 </tr>

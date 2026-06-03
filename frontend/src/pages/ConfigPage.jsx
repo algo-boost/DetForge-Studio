@@ -5,6 +5,7 @@ import {
   id2nameToText, rootsToText, textToId2name, textToRoots,
 } from '../components/settings/settingsUtils';
 import { api, toast, getApiToken, setApiToken } from '../api/client';
+import { setAppTimezone, TIMEZONE_OPTIONS, timezoneLabel } from '../lib/timezone';
 
 function SurfaceCard({ title, desc, badge, actions, children }) {
   return (
@@ -51,6 +52,31 @@ function ReadonlyRow({ label, value }) {
   );
 }
 
+function TimezoneSettingsCard({ config, onTimezoneChange }) {
+  const options = config.timezone_options?.length ? config.timezone_options : TIMEZONE_OPTIONS;
+  const tz = config.timezone || 'Asia/Shanghai';
+  return (
+    <SurfaceCard
+      title="显示时区"
+      desc="界面时间、查询「今天/近7天」快捷、日志与归档目录名；默认北京时间"
+    >
+      <div className="config-card-body config-grid-2 settings-form">
+        <div className="config-field config-span-2">
+          <label>timezone</label>
+          <select value={tz} onChange={(e) => onTimezoneChange(e.target.value)}>
+            {options.map((opt) => (
+              <option key={opt.id} value={opt.id}>{opt.label}</option>
+            ))}
+          </select>
+          <p className="config-hint">
+            当前：<strong>{timezoneLabel(tz)}</strong>。库内无时区的检测时间按字面显示；带 UTC 偏移的时间会换算到此时区。修改后需点右上角「保存配置」。
+          </p>
+        </div>
+      </div>
+    </SurfaceCard>
+  );
+}
+
 export default function ConfigPage({ embedded = false }) {
   const [config, setConfig] = useState({});
   const [loaded, setLoaded] = useState({});
@@ -67,8 +93,9 @@ export default function ConfigPage({ embedded = false }) {
     const r = await api.getConfig();
     if (r.success) {
       const c = r.config || {};
-      setConfig(c);
+      setConfig({ timezone_options: r.timezone_options, ...c });
       setLoaded(c);
+      setAppTimezone(c.timezone);
       setPathChecks(r.path_checks || {});
       setId2nameText(id2nameToText(c.id2name));
       setSyncRootsText(rootsToText(c.dataset_sync_roots));
@@ -102,6 +129,7 @@ export default function ConfigPage({ embedded = false }) {
       const payload = buildSavePayload();
       const res = await api.saveConfig(payload);
       if (!res.success) throw new Error(res.error);
+      setAppTimezone(payload.timezone);
       toast(res.message || '配置已保存');
       res.warnings?.forEach((w) => toast(w, 'error'));
       if (res.db_connected != null) setDbOk(!!res.db_connected);
@@ -248,6 +276,13 @@ export default function ConfigPage({ embedded = false }) {
               也可通过环境变量 DB_HOST / DB_USER / DB_PASSWORD / DB_DATABASE 覆盖（优先级高于配置文件）。
             </p>
           </SurfaceCard>
+        )}
+
+        {activeTab === 'connection' && (
+          <TimezoneSettingsCard
+            config={config}
+            onTimezoneChange={(v) => set('timezone', v)}
+          />
         )}
 
         {activeTab === 'project' && (
@@ -401,6 +436,16 @@ export default function ConfigPage({ embedded = false }) {
                   <option value="prompt">prompt — 弹窗询问是否打开</option>
                   <option value="auto">auto — ≤50 条结果自动跳转</option>
                   <option value="off">off — 不自动提示</option>
+                </select>
+              </div>
+              <div className="config-field config-span-2">
+                <label>viz_open_new_window 打开样本图库</label>
+                <select
+                  value={config.viz_open_new_window ? '1' : '0'}
+                  onChange={(e) => set('viz_open_new_window', e.target.value === '1')}
+                >
+                  <option value="0">同窗口 — 看图后可通过「返回查询结果」回到结果栏</option>
+                  <option value="1">新窗口 — 默认在新标签打开，查询页保留结果</option>
                 </select>
               </div>
                 <Link className="btn btn-sm btn-ghost" to="/viewer">打开样本图库</Link>
@@ -629,9 +674,17 @@ export default function ConfigPage({ embedded = false }) {
         )}
 
         {activeTab === 'system' && (
-          <SurfaceCard title="系统状态" desc="当前运行环境与只读诊断信息（保存配置后部分项会刷新）">
+          <TimezoneSettingsCard
+            config={config}
+            onTimezoneChange={(v) => set('timezone', v)}
+          />
+        )}
+
+        {activeTab === 'system' && (
+          <SurfaceCard title="运行诊断" desc="只读状态（保存配置后部分项会刷新）">
             <div className="config-card-body settings-form">
               <div className="settings-readonly-block">
+                <ReadonlyRow label="显示时区" value={timezoneLabel(config.timezone)} />
                 <ReadonlyRow label="数据库连接" value={config.db_connected ? '已连接' : '未连接'} />
                 <ReadonlyRow label="写库 forge_database" value={config.forge_database || 'detforge'} />
                 <ReadonlyRow label="样本图库 viz_available" value={config.viz_available ? '是' : '否'} />

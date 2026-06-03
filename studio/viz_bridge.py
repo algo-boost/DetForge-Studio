@@ -25,6 +25,19 @@ def _task_export_dir(task_id):
     return os.path.join(PROJECT_ROOT, 'exports', str(task_id))
 
 
+def _resolve_viz_coco_and_image_dir(export_dir, *, selected_indices=None):
+    """查询/预测导出目录：COCO→.coco/（file_name 为原图绝对路径），供 ensure_viz_dataset 映射。"""
+    from studio.export.viz_workspace import prepare_export_dir_for_viz, should_use_viz_workspace
+
+    export_dir = os.path.abspath(export_dir)
+    if should_use_viz_workspace(export_dir):
+        return prepare_export_dir_for_viz(export_dir, selected_indices=selected_indices)
+    coco_path = os.path.join(export_dir, '_annotations.coco.json')
+    if not os.path.isfile(coco_path):
+        raise FileNotFoundError(f'COCO 文件不存在: {coco_path}')
+    return coco_path, export_dir
+
+
 def open_from_task(task_id, dataset_name=None, selected_indices=None):
     """从查询 task_id 打开 COCO 看图会话。"""
     task_id = str(task_id or '').strip()
@@ -34,15 +47,15 @@ def open_from_task(task_id, dataset_name=None, selected_indices=None):
     if not os.path.isdir(export_dir):
         raise FileNotFoundError(f'导出目录不存在: {export_dir}')
 
-    coco_path = os.path.join(export_dir, '_annotations.coco.json')
-    if not os.path.isfile(coco_path):
-        raise FileNotFoundError(f'COCO 文件不存在: {coco_path}')
+    coco_path, image_dir = _resolve_viz_coco_and_image_dir(
+        export_dir, selected_indices=selected_indices,
+    )
 
     from server.viz_mount import get_coco_dataset_service
     svc = get_coco_dataset_service()
     name = dataset_name or f'query-{task_id}'
     stable_id = f'query-{task_id}'
-    payload = svc.ensure_viz_dataset(coco_path, export_dir, name, dataset_id=stable_id)
+    payload = svc.ensure_viz_dataset(coco_path, image_dir, name, dataset_id=stable_id)
 
     if selected_indices is not None:
         indices = set(int(i) for i in selected_indices)
@@ -63,11 +76,24 @@ def open_from_paths(coco_json_path, image_dir=None, dataset_name='dataset'):
         image_dir = os.path.abspath(image_dir)
         if not forge_paths.safe_read_path(image_dir) and not os.path.isdir(image_dir):
             raise ValueError('图片目录不在允许范围内')
+    else:
+        image_dir = os.path.dirname(coco_json_path)
 
-    from server.viz_mount import get_coco_dataset_service
-    payload = get_coco_dataset_service().load_single(
-        coco_json_path, image_dir or os.path.dirname(coco_json_path), dataset_name,
-    )
+    root_dir = image_dir if os.path.isdir(image_dir) else os.path.dirname(coco_json_path)
+    from studio.export.viz_workspace import should_use_viz_workspace
+
+    if should_use_viz_workspace(root_dir):
+        from studio.export.viz_workspace import prepare_export_dir_for_viz
+        coco_json_path, image_dir = prepare_export_dir_for_viz(root_dir)
+        from server.viz_mount import get_coco_dataset_service
+        payload = get_coco_dataset_service().ensure_viz_dataset(
+            coco_json_path, image_dir, dataset_name,
+        )
+    else:
+        from server.viz_mount import get_coco_dataset_service
+        payload = get_coco_dataset_service().load_single(
+            coco_json_path, image_dir, dataset_name,
+        )
     return _store_session(payload, source='path', coco_json_path=coco_json_path)
 
 

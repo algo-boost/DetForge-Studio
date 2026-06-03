@@ -2,6 +2,7 @@ import { Component, Suspense, lazy } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ToastHost } from './components/ToastHost';
+import { QueryJobsProvider } from './context/QueryJobsContext';
 
 const QueryPage = lazy(() => import('./pages/QueryPage'));
 const ConfigRoute = lazy(() => import('./components/ConfigRoute'));
@@ -48,11 +49,12 @@ class ErrorBoundary extends Component {
 export default function App() {
   return (
     <BrowserRouter>
-      <ToastHost />
-      <ErrorBoundary>
-        <Suspense fallback={<div className="panel active" style={{ padding: 24 }}>加载中…</div>}>
-          <Routes>
-            <Route element={<Layout />}>
+      <QueryJobsProvider>
+        <ToastHost />
+        <ErrorBoundary>
+          <Suspense fallback={<div className="panel active" style={{ padding: 24 }}>加载中…</div>}>
+            <Routes>
+              <Route element={<Layout />}>
               <Route index element={<QueryPage />} />
               <Route path="config" element={<ConfigRoute />} />
               <Route path="strategies" element={<AdminPage />} />
@@ -71,9 +73,10 @@ export default function App() {
               <Route path="compare" element={<Navigate to="/online-predict" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
-          </Routes>
-        </Suspense>
-      </ErrorBoundary>
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
+      </QueryJobsProvider>
     </BrowserRouter>
   );
 }

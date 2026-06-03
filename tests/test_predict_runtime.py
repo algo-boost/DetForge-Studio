@@ -47,6 +47,17 @@ class PredictRuntimeTests(unittest.TestCase):
         })
         self.assertTrue(s['use_subprocess'])
 
+    def test_parse_subprocess_stdout_with_leading_noise(self):
+        payload = '{"success": true, "results": [{"path": "/a.jpg", "ok": true}]}'
+        noisy = f'670 670\n{payload}'
+        data = predict_runtime.parse_subprocess_stdout(noisy)
+        self.assertTrue(data['success'])
+        self.assertEqual(len(data['results']), 1)
+
+    def test_parse_subprocess_stdout_strict_json(self):
+        data = predict_runtime.parse_subprocess_stdout('{"success": true, "results": []}')
+        self.assertTrue(data['success'])
+
     @patch('studio.forge.predict_runtime.subprocess.run')
     def test_run_batch_predict_parses_stdout(self, mock_run):
         from unittest.mock import Mock

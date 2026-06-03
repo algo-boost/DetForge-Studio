@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildFilterHint, getProductNo, getProductType } from '../lib/resultFilters';
 import { isPredictResultRow } from '../lib/resultImage';
 import { ResultImage } from './ResultImage';
+import { formatDisplayTime } from '../lib/timezone';
 
 function isNg(item) {
   return String(item?.check_status) === '1';
@@ -188,7 +189,7 @@ export function InspectionResultsLayout({
           <dl className="detail-meta-list">
             <div className="detail-meta-row">
               <dt>检测时间</dt>
-              <dd>{activeItem.c_time || '—'}</dd>
+              <dd>{formatDisplayTime(activeItem.c_time)}</dd>
             </div>
             {getProductType(activeItem) && (
               <div className="detail-meta-row">

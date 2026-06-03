@@ -73,8 +73,28 @@ class FlowCompilerTests(unittest.TestCase):
         result = compile_filter_rules(flow, {})
         self.assertTrue(result['valid'], result.get('errors'))
         compile(result['python_code'], '<rules>', 'exec')
+        self.assertIn('filter_df_by_ext(df', result['python_code'])
+        self.assertIn('for _loop_rule in _rules', result['python_code'])
+        self.assertNotIn('select_df_rows_by_rules_union', result['python_code'])
+
+    def test_compile_filter_rules_trawl_semantics_uses_row_union(self):
+        flow = {
+            'version': 2,
+            'nodes': [{
+                'id': 'loop1', 'type': 'control.loop',
+                'params': {
+                    'loop_mode': 'rules',
+                    'rules_semantics': 'keep_matching_rows',
+                    'rules': [{'categories': ['脏污'], 'confidence_range': [0, 1], 'random_drop_ratio': 1.0}],
+                },
+                'body': [
+                    {'id': 'f1', 'type': 'builtin.filter_df_by_ext', 'params': {'bind_loop_rule': 'loop_rule'}},
+                ],
+            }],
+        }
+        result = compile_filter_rules(flow, {})
+        self.assertTrue(result['valid'], result.get('errors'))
         self.assertIn('select_df_rows_by_rules_union', result['python_code'])
-        self.assertNotIn('filter_df_by_ext(df', result['python_code'])
 
     def test_compile_process_data_delegates_rules(self):
         templates = _load_templates()

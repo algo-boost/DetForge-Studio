@@ -1,3 +1,5 @@
+import { zonedParts } from '../../../lib/timezone';
+
 export const MQC_TABS = [
   { id: 'archive', label: '核对归档', desc: '单条客户图匹配' },
   { id: 'batch', label: '批量归档', desc: '多图逐条填 SN' },
@@ -14,9 +16,9 @@ export const TRAINING_LABEL = {
 };
 
 export function todayBatchId() {
-  const d = new Date();
+  const p = zonedParts();
   const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
 }
 
 export const MATCH_PILL_CLASS = {

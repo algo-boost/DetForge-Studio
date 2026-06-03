@@ -12,12 +12,6 @@ import {
   saveStrategyEnv,
 } from '../lib/envVars';
 
-const TIME_PRESETS = [
-  { id: 'yesterday', label: '昨天' },
-  { id: 'today', label: '今天' },
-  { id: 'last_7d', label: '近 7 天' },
-];
-
 const FILTER_MODES = [
   { id: 'ng_only', label: '有框（FP）' },
   { id: 'clean_only', label: '无框（FN）' },
@@ -199,7 +193,6 @@ export default function ReplayRunWizard({ initialJobId, onCreated, onCancel }) {
   const [stage2Id, setStage2Id] = useState('');
   const [stage1Env, setStage1Env] = useState({});
   const [stage2Env, setStage2Env] = useState({});
-  const [timePreset, setTimePreset] = useState('yesterday');
   const [modelId, setModelId] = useState('');
   const [threshold, setThreshold] = useState('0.1');
   const [stage1Preview, setStage1Preview] = useState(null);
@@ -236,7 +229,6 @@ export default function ReplayRunWizard({ initialJobId, onCreated, onCancel }) {
   }, [stage2Id]);
 
   const runBody = useMemo(() => ({
-    time_window: { preset: timePreset },
     stage1: stage1Id ? { strategy_id: stage1Id } : { skip: true },
     stage2: { strategy_id: stage2Id },
     predict: {
@@ -244,7 +236,7 @@ export default function ReplayRunWizard({ initialJobId, onCreated, onCancel }) {
       threshold: threshold !== '' ? Number(threshold) : 0.1,
     },
     ...buildStageEnvPayload(stage1Env, stage2Env),
-  }), [timePreset, stage1Id, stage2Id, modelId, threshold, stage1Env, stage2Env]);
+  }), [stage1Id, stage2Id, modelId, threshold, stage1Env, stage2Env]);
 
   const previewStage1 = async () => {
     if (!stage1Id) {
@@ -315,7 +307,7 @@ export default function ReplayRunWizard({ initialJobId, onCreated, onCancel }) {
       <div className="replay-wizard-head">
         <div>
           <h2>历史回跑</h2>
-          <p className="muted">选择策略后自动显示可调参数（在策略「可调参数」页配置中文名），一键串行 Stage1 → 预测 → Stage2。</p>
+          <p className="muted">Stage1/Stage2 时段与参数在下方可调参数区配置（含开始/结束时间）；一键串行 Stage1 → 预测 → Stage2。</p>
         </div>
         {onCancel && mode !== 'quick' && (
           <button type="button" className="btn btn-sm btn-ghost" onClick={onCancel}>返回</button>
@@ -353,21 +345,6 @@ export default function ReplayRunWizard({ initialJobId, onCreated, onCancel }) {
               onChange={setStage1Id}
               testId="replay-stage1-strategy"
             />
-            <div className="replay-label">
-              时间范围
-              <div className="replay-mode-tabs replay-time-tabs">
-                {TIME_PRESETS.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className={`replay-mode-tab${timePreset === p.id ? ' is-active' : ''}`}
-                    onClick={() => setTimePreset(p.id)}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-            </div>
             <StrategySelect
               label="Stage2 策略"
               value={stage2Id}

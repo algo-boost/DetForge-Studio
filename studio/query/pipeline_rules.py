@@ -173,7 +173,7 @@ def _uid():
     return 'n' + uuid.uuid4().hex[:8]
 
 
-def build_rules_flow(rules, remove_empty=True):
+def build_rules_flow(rules, remove_empty=True, rules_semantics='prune_boxes'):
     body = [{
         'id': _uid(),
         'type': 'builtin.filter_df_by_ext',
@@ -191,7 +191,11 @@ def build_rules_flow(rules, remove_empty=True):
         'nodes': [{
             'id': _uid(),
             'type': 'control.loop',
-            'params': {'loop_mode': 'rules', 'rules': list(rules or [])},
+            'params': {
+                'loop_mode': 'rules',
+                'rules': list(rules or []),
+                'rules_semantics': rules_semantics or 'prune_boxes',
+            },
             'body': body,
         }],
     }
@@ -354,7 +358,8 @@ def fetch_pipeline_filter_rules(
         all_rules.extend(rules)
 
     rules = dedupe_rules(all_rules)
-    flow = build_rules_flow(rules, remove_empty=remove_empty)
+    semantics = 'keep_matching_rows' if float(random_drop_ratio or 0) >= 1.0 else 'prune_boxes'
+    flow = build_rules_flow(rules, remove_empty=remove_empty, rules_semantics=semantics)
     return {
         'rules': rules,
         'flow': flow,

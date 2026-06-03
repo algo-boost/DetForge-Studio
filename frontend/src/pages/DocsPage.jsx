@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { marked } from 'marked';
 import { api } from '../api/client';
+import { formatDisplayTime } from '../lib/timezone';
 import '../styles/docs.css';
 
 marked.setOptions({ gfm: true, breaks: false });
@@ -75,7 +76,7 @@ export default function DocsPage({ embedded = false }) {
           <div>
             <div className="topbar-title">使用手册</div>
             <div className="topbar-sub">
-              {doc?.tagline || (doc?.updated_at ? `更新于 ${doc.updated_at}` : '产品说明与操作指引')}
+              {doc?.tagline || (doc?.updated_at ? `更新于 ${formatDisplayTime(doc.updated_at)}` : '产品说明与操作指引')}
             </div>
           </div>
         </div>

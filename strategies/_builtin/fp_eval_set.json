@@ -4,6 +4,14 @@
   "name": "误检水平评测集（按款型分层）",
   "description": "从预测结果表按 product_type 分层，每个款型随机取定量，构建覆盖各款型的误检评测集",
   "category": "评测集",
+  "data_source": "predict_result",
+  "query_ui_mode": "compact",
+  "query_compact_hide": {
+    "data_source": true,
+    "predict_job": true,
+    "preview_button": true,
+    "strategy_tools": true
+  },
   "sql_template": "SELECT * FROM detforge.predict_result WHERE c_time BETWEEN '${START_TIME}' AND '${END_TIME}'",
   "sample_size": 0,
   "filter_mode": "code",

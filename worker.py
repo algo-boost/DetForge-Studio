@@ -105,11 +105,12 @@ def _dispatch(job, worker_id):
             if total > 0:
                 done = int(prog.get('done', 0))
                 failed = int(prog.get('failed', 0))
+                min_iv = 3.0 if job.get('job_type') == 'predict' else 6.0
                 job_log.append_throttled(
                     job['id'],
                     f'进度 {done + failed}/{total}（完成 {done}，失败 {failed}，剩余 {prog.get("remaining", 0)}）',
                     key='item_progress',
-                    min_interval=6.0,
+                    min_interval=min_iv,
                 )
         except Exception:
             pass

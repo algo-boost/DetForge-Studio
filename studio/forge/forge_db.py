@@ -758,7 +758,32 @@ def get_predict_result(result_id):
     return row
 
 
+def fetch_predict_ext_by_ids(result_ids, config=None):
+    """按主键批量拉取 ext（查询 SQL 未 SELECT ext 时供规则筛选补全）。"""
+    ids = []
+    for raw in result_ids or []:
+        if raw is None or str(raw).strip() == '':
+            continue
+        try:
+            ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        return {}
+    if len(ids) > 10000:
+        ids = ids[:10000]
+    placeholders = ','.join(['%s'] * len(ids))
+    rows = _client().fetchall(
+        f"SELECT id, ext FROM {_t('predict_result', config)} WHERE id IN ({placeholders})",
+        tuple(ids),
+    )
+    return {int(r['id']): r.get('ext') for r in rows}
+
+
 def _predict_result_where(job_id, filters=None, result_ids=None):
+    from studio.forge.predict_result_filters import append_predict_result_filter_sql, normalize_filter_dict
+
     where = ['job_id=%s']
     args = [int(job_id)]
     if result_ids:
@@ -767,29 +792,7 @@ def _predict_result_where(job_id, filters=None, result_ids=None):
             placeholders = ','.join(['%s'] * len(ids))
             where.append(f'id IN ({placeholders})')
             args.extend(ids)
-    f = filters or {}
-    if f.get('min_box_count') is not None and str(f.get('min_box_count')).strip() != '':
-        where.append('box_count >= %s')
-        args.append(int(f['min_box_count']))
-    if f.get('only_with_boxes'):
-        where.append('box_count > 0')
-    if f.get('zero_boxes_only'):
-        where.append('box_count = 0')
-    if f.get('product_type'):
-        where.append('product_type LIKE %s')
-        args.append(f'%{f["product_type"]}%')
-    if f.get('min_max_score') is not None:
-        where.append('max_score IS NOT NULL AND max_score >= %s')
-        args.append(float(f['min_max_score']))
-    if f.get('max_max_score') is not None:
-        where.append('(max_score IS NULL OR max_score <= %s)')
-        args.append(float(f['max_max_score']))
-    if f.get('q'):
-        where.append('img_path LIKE %s')
-        args.append(f'%{f["q"]}%')
-    if f.get('product_no'):
-        where.append('product_no LIKE %s')
-        args.append(f'%{f["product_no"]}%')
+    append_predict_result_filter_sql(where, args, normalize_filter_dict(filters))
     return where, args
 
 

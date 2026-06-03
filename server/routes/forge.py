@@ -176,8 +176,13 @@ def get_job(job_id):
 def get_job_log(job_id):
     try:
         from studio.forge import job_log
-        lines = job_log.read_tail(job_id)
-        return jsonify({'success': True, 'lines': lines})
+        raw_limit = request.args.get('limit', '0')
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            limit = 0
+        lines = job_log.read_tail(job_id, limit=limit)
+        return jsonify({'success': True, 'lines': lines, 'total': len(lines)})
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
@@ -276,17 +281,25 @@ def job_results(job_id):
     try:
         limit = request.args.get('limit', default=200, type=int)
         offset = request.args.get('offset', default=0, type=int)
+        from studio.forge.predict_result_filters import normalize_filter_dict
+
         filters = {}
-        for key in ('min_box_count', 'only_with_boxes', 'q', 'product_no', 'sort'):
+        for key in (
+            'min_box_count', 'only_with_boxes', 'zero_boxes_only', 'q', 'product_no',
+            'product_type', 'sort', 'categories', 'min_pred_confidence', 'max_pred_confidence',
+        ):
             val = request.args.get(key)
             if val is not None and val != '':
                 filters[key] = val
         if request.args.get('only_with_boxes') in ('1', 'true', 'yes'):
             filters['only_with_boxes'] = True
+        if request.args.get('zero_boxes_only') in ('1', 'true', 'yes'):
+            filters['zero_boxes_only'] = True
         for fkey in ('min_max_score', 'max_max_score'):
             val = request.args.get(fkey, type=float)
             if val is not None:
                 filters[fkey] = val
+        filters = normalize_filter_dict(filters)
         result_ids = request.args.get('result_ids')
         ids = None
         if result_ids:
@@ -478,7 +491,8 @@ def manual_qc_upload():
             return jsonify({'success': False, 'error': '未收到图片文件'}), 400
         if len(files) > _MAX_UPLOAD_FILES:
             return jsonify({'success': False, 'error': f'单次最多上传 {_MAX_UPLOAD_FILES} 张'}), 400
-        day_dir = os.path.join(MANUAL_QC_UPLOAD_DIR, datetime.now().strftime('%Y%m%d'))
+        from studio.timezone_util import stamp_day
+        day_dir = os.path.join(MANUAL_QC_UPLOAD_DIR, stamp_day())
         os.makedirs(day_dir, exist_ok=True)
         saved = []
         for f in files:

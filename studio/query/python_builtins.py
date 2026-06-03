@@ -11,13 +11,9 @@ def parse_ext(ext_value):
     if ext_value is None or (isinstance(ext_value, float) and pd.isna(ext_value)):
         return []
     try:
-        obj = json.loads(ext_value) if isinstance(ext_value, str) else ext_value
-        if isinstance(obj, dict):
-            preds = obj.get('original_predictions', [])
-        elif isinstance(obj, list):
-            preds = obj
-        else:
-            preds = []
+        from studio.forge.predict_result_filters import _coerce_ext_object
+        obj = _coerce_ext_object(ext_value)
+        preds = obj.get('original_predictions', [])
         return preds if isinstance(preds, list) else []
     except Exception:
         return []
@@ -85,8 +81,8 @@ def _strip_ext(ext_val, categories, min_confidence):
             if not isinstance(pred, dict):
                 kept.append(pred)
                 continue
-            name = pred.get('name', '')
-            conf = float(pred.get('confidence', 0) or 0)
+            name = str(pred.get('name') or pred.get('category') or '').strip()
+            conf = float(pred.get('confidence', pred.get('score', 0)) or 0)
             if name in categories and conf < min_confidence:
                 continue
             kept.append(pred)
@@ -100,8 +96,8 @@ def _row_has_matching_pred(ext_val, categories, min_c, max_c):
     for pred in parse_ext(ext_val):
         if not isinstance(pred, dict):
             continue
-        name = pred.get('name', '')
-        conf = float(pred.get('confidence', 0) or 0)
+        name = str(pred.get('name') or pred.get('category') or '').strip()
+        conf = float(pred.get('confidence', pred.get('score', 0)) or 0)
         if name in categories and min_c <= conf <= max_c:
             return True
     return False
@@ -220,8 +216,8 @@ def _filter_ext(ext_val, categories, min_c, max_c, random_drop_ratio):
             if not isinstance(pred, dict):
                 kept.append(pred)
                 continue
-            name = pred.get('name', '')
-            conf = float(pred.get('confidence', 0) or 0)
+            name = str(pred.get('name') or pred.get('category') or '').strip()
+            conf = float(pred.get('confidence', pred.get('score', 0)) or 0)
             if name in categories and min_c <= conf <= max_c:
                 if random.random() < random_drop_ratio:
                     continue
@@ -250,7 +246,7 @@ def count_category_boxes(df):
     for ext_val in df['ext']:
         for pred in parse_ext(ext_val):
             if isinstance(pred, dict):
-                counter[pred.get('name', '未知')] += 1
+                counter[str(pred.get('name') or pred.get('category') or '未知').strip() or '未知'] += 1
     if not counter:
         return pd.DataFrame(columns=['category', 'count'])
     rows = [{'category': k, 'count': v} for k, v in counter.items()]

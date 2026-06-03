@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { getProductNo, getProductType } from '../lib/resultFilters';
 import { isPredictResultRow, resolveItemImageSrc } from '../lib/resultImage';
+import { formatDisplayTime } from '../lib/timezone';
 
 export function ImageViewer({ items, index, selected, onClose, onNav, onToggleSelect, dataSource = 'detail' }) {
   const item = items[index];
@@ -62,7 +63,7 @@ export function ImageViewer({ items, index, selected, onClose, onNav, onToggleSe
         <div className="imodal-right">
           <div className="imodal-meta">
             <div className="imeta-row"><span className="imeta-label">文件名</span><span>{item.img_name}</span></div>
-            <div className="imeta-row"><span className="imeta-label">时间</span><span>{item.c_time}</span></div>
+            <div className="imeta-row"><span className="imeta-label">时间</span><span>{formatDisplayTime(item.c_time)}</span></div>
             {getProductType(item) && (
               <div className="imeta-row"><span className="imeta-label">型号</span><span>{getProductType(item)}</span></div>
             )}

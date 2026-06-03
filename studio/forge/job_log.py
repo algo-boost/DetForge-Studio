@@ -22,7 +22,8 @@ def clear(job_id):
 
 def append(job_id, message):
     os.makedirs(LOG_DIR, exist_ok=True)
-    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    from studio.timezone_util import format_now
+    ts = format_now()
     line = f'[{ts}] {message}'
     with open(_path(job_id), 'a', encoding='utf-8') as f:
         f.write(line + '\n')
@@ -41,12 +42,13 @@ def append_throttled(job_id, message, key='progress', min_interval=8.0):
     return append(jid, message)
 
 
-def read_tail(job_id, limit=5000):
+def read_tail(job_id, limit=0):
+    """读取作业日志。limit=0 表示返回全部行；limit>0 时仅返回末尾 N 行。"""
     p = _path(job_id)
     if not os.path.isfile(p):
         return []
     with open(p, 'r', encoding='utf-8', errors='replace') as f:
         lines = f.read().splitlines()
-    if limit and len(lines) > limit:
-        return lines[-limit:]
+    if limit and len(lines) > int(limit):
+        return lines[-int(limit):]
     return lines

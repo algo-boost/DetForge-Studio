@@ -75,6 +75,42 @@ def resolve_predict_settings(config=None):
     }
 
 
+def parse_subprocess_stdout(stdout):
+    """从子进程 stdout 解析 JSON；容忍 ml_backend 等在 JSON 前的 print（如尺寸日志）。"""
+    text = (stdout or '').strip()
+    if not text:
+        raise ValueError('子进程 stdout 为空')
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    for line in reversed([ln.strip() for ln in text.splitlines() if ln.strip()]):
+        if not line.startswith('{'):
+            continue
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+    start = -1
+    for marker in ('{"success"', '{"ok"', '{"framework"'):
+        idx = text.find(marker)
+        if idx >= 0 and (start < 0 or idx < start):
+            start = idx
+    if start < 0:
+        start = text.find('{')
+    if start >= 0:
+        try:
+            obj, _end = json.JSONDecoder().raw_decode(text, start)
+            return obj
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError(f'无法从 stdout 解析 JSON: {text[:500]}')
+
+
 def validate_predict_settings(config=None):
     """供设置页展示的检查结果。"""
     s = resolve_predict_settings(config)
@@ -90,6 +126,34 @@ def validate_predict_settings(config=None):
     return s, checks
 
 
+def _log_stream_line(log_line, tag, text):
+    """写入作业日志；超大 JSON 结果行仅记长度，避免撑爆日志文件。"""
+    if not log_line:
+        return
+    s = (text or '').strip()
+    if not s:
+        return
+    if tag == 'stdout' and len(s) > 800 and s.lstrip().startswith('{'):
+        log_line(f'[stdout] (省略 JSON 结果行，{len(s)} 字符)')
+        return
+    log_line(f'[{tag}] {s}')
+
+
+def _log_stdout_tail(log_line, stdout, max_chars=4000):
+    if not log_line or not stdout:
+        return
+    text = stdout.strip()
+    if not text:
+        return
+    if len(text) <= max_chars:
+        for ln in text.splitlines():
+            _log_stream_line(log_line, 'stdout', ln)
+        return
+    log_line(f'[stdout] (失败/异常时输出摘要，共 {len(text)} 字符)')
+    for ln in text[-max_chars:].splitlines()[-40:]:
+        _log_stream_line(log_line, 'stdout', ln)
+
+
 def run_batch_predict(payload, config=None, timeout=None, log_line=None):
     """子进程批量预测；返回 results 列表。失败抛 RuntimeError。
 
@@ -103,10 +167,45 @@ def run_batch_predict(payload, config=None, timeout=None, log_line=None):
 
     python_exe = settings['predict_python_executable']
     script = settings['predict_script']
+    cwd = settings['detunify_studio_root'] or None
+    images = payload.get('images') or []
+    model_cfg = payload.get('model') or {}
+
+    if log_line:
+        log_line(f'[cmd] {python_exe} {script} --payload-file <tmp>')
+        if cwd:
+            log_line(f'[cwd] {cwd}')
+        log_line(
+            f'[payload] images={len(images)} device={payload.get("device")} '
+            f'threshold={payload.get("threshold")} max_size={payload.get("max_size")} '
+            f'framework={model_cfg.get("framework")} sub_type={model_cfg.get("sub_type")}'
+        )
+        ckpt = model_cfg.get('checkpoint_path') or ''
+        if ckpt:
+            log_line(f'[payload] checkpoint={ckpt}')
 
     with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False, encoding='utf-8') as tf:
         json.dump(payload, tf, ensure_ascii=False)
         payload_path = tf.name
+
+    stdout_lines = []
+    stderr_lines = []
+
+    def _drain(stream, buf, tag):
+        if not stream:
+            return
+        try:
+            for line in stream:
+                s = line.rstrip('\n\r')
+                if not s:
+                    continue
+                buf.append(s)
+                _log_stream_line(log_line, tag, s)
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
 
     try:
         proc = subprocess.Popen(
@@ -114,45 +213,72 @@ def run_batch_predict(payload, config=None, timeout=None, log_line=None):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            cwd=settings['detunify_studio_root'] or None,
+            cwd=cwd,
         )
 
-        def _drain(stream, prefix=''):
-            if not stream:
-                return
-            for line in stream:
-                s = line.rstrip()
-                if s and log_line:
-                    log_line(f'{prefix}{s}' if prefix else s)
-
-        err_thread = threading.Thread(target=_drain, args=(proc.stderr, ''), daemon=True)
+        out_thread = threading.Thread(
+            target=_drain, args=(proc.stdout, stdout_lines, 'stdout'), daemon=True,
+        )
+        err_thread = threading.Thread(
+            target=_drain, args=(proc.stderr, stderr_lines, 'stderr'), daemon=True,
+        )
+        out_thread.start()
         err_thread.start()
         try:
-            stdout, _stderr_rest = proc.communicate(timeout=timeout)
+            returncode = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.communicate()
+            proc.wait()
+            out_thread.join(timeout=2.0)
+            err_thread.join(timeout=2.0)
+            if log_line:
+                log_line(f'[error] 预测子进程超时（>{timeout}s）')
             raise RuntimeError(f'预测子进程超时（>{timeout}s）')
-        err_thread.join(timeout=1.0)
-        returncode = proc.returncode
+        out_thread.join(timeout=5.0)
+        err_thread.join(timeout=5.0)
+        stdout = '\n'.join(stdout_lines)
+        stderr_text = '\n'.join(stderr_lines)
     finally:
         try:
             os.unlink(payload_path)
         except OSError:
             pass
 
+    if log_line:
+        log_line(f'[exit] returncode={returncode} stdout_lines={len(stdout_lines)} stderr_lines={len(stderr_lines)}')
+
     if returncode != 0:
-        err = (stdout or '').strip() or f'exit {returncode}'
-        raise RuntimeError(f'预测子进程失败: {err}')
+        err = (stderr_text or stdout or '').strip() or f'exit {returncode}'
+        _log_stdout_tail(log_line, stdout)
+        if stderr_text and log_line:
+            for ln in stderr_text.splitlines()[-30:]:
+                _log_stream_line(log_line, 'stderr', ln)
+        raise RuntimeError(f'预测子进程失败: {err[:2000]}')
 
     try:
-        data = json.loads(stdout)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f'预测子进程输出非 JSON: {(stdout or "")[:500]}') from e
+        data = parse_subprocess_stdout(stdout)
+    except ValueError as e:
+        _log_stdout_tail(log_line, stdout)
+        if log_line:
+            log_line(f'[error] 解析子进程 JSON 失败: {e}')
+        raise RuntimeError(f'预测子进程输出非 JSON: {e}') from e
 
     if not data.get('success'):
-        raise RuntimeError(data.get('error') or '预测子进程返回 success=false')
-    return data.get('results') or []
+        err = data.get('error') or '预测子进程返回 success=false'
+        trace = data.get('trace') or ''
+        if log_line:
+            log_line(f'[error] {err}')
+            if trace:
+                for ln in str(trace).splitlines()[:40]:
+                    log_line(f'[trace] {ln}')
+        raise RuntimeError(err)
+
+    results = data.get('results') or []
+    if log_line:
+        ok_n = sum(1 for r in results if r.get('ok'))
+        fail_n = len(results) - ok_n
+        log_line(f'[done] 子进程返回 results={len(results)}（成功 {ok_n}，失败 {fail_n}）')
+    return results
 
 
 _DETECT_SNIPPET = (
@@ -250,7 +376,10 @@ def run_health_check(model, device=None, threshold=0.5, max_size=1536, config=No
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or '').strip()
         return {'ok': False, 'error': err or f'exit {proc.returncode}', 'device': payload['device']}
-    data = json.loads(proc.stdout)
+    try:
+        data = parse_subprocess_stdout(proc.stdout)
+    except ValueError as e:
+        return {'ok': False, 'error': str(e), 'device': payload['device']}
     return {
         'ok': bool(data.get('ok')),
         'error': data.get('error'),

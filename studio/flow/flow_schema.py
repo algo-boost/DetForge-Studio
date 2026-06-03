@@ -140,6 +140,20 @@ def validate_flow(flow):
     return errors
 
 
+VALID_DATA_SOURCES = frozenset({'detail', 'predict_result'})
+
+
+def normalize_strategy_data_source(data_source, sql_template=''):
+    """策略保存/加载时统一数据源：显式字段优先，否则按 SQL 推断。"""
+    raw = str(data_source or '').strip().lower()
+    if raw in VALID_DATA_SOURCES:
+        return raw
+    sql = str(sql_template or '').lower()
+    if 'predict_result' in sql:
+        return 'predict_result'
+    return 'detail'
+
+
 def prepare_strategy(data):
     """保存前规范化 Strategy v2。"""
     from studio.flow.process_pipeline import (
@@ -152,6 +166,19 @@ def prepare_strategy(data):
 
     s = dict(data or {})
     s['schema_version'] = STRATEGY_SCHEMA_VERSION
+    s['data_source'] = normalize_strategy_data_source(s.get('data_source'), s.get('sql_template'))
+    job_raw = s.get('default_predict_job_id')
+    if s['data_source'] == 'predict_result' and job_raw not in (None, ''):
+        try:
+            jid = int(job_raw)
+            if jid > 0:
+                s['default_predict_job_id'] = jid
+            else:
+                s.pop('default_predict_job_id', None)
+        except (TypeError, ValueError):
+            s.pop('default_predict_job_id', None)
+    else:
+        s.pop('default_predict_job_id', None)
     s.setdefault('filter_mode', 'flow' if s.get('flow', {}).get('nodes') else 'code')
     if s.get('flow'):
         if 'remove_empty_rows' in s:
@@ -187,6 +214,25 @@ def prepare_strategy(data):
     # v2 不再使用 pipeline
     s.pop('pipeline', None)
     s.pop('type', None)
+    ui_mode = s.get('query_ui_mode')
+    allowed_hide = {
+        'data_source', 'predict_job', 'strategy_params', 'filter_rules',
+        'preview_button', 'preview_stats', 'compact_hint', 'strategy_tools',
+    }
+    if ui_mode not in ('full', 'compact'):
+        s.pop('query_ui_mode', None)
+        s.pop('query_compact_hide', None)
+    else:
+        s['query_ui_mode'] = ui_mode
+        hide = s.get('query_compact_hide')
+        if ui_mode != 'compact':
+            s.pop('query_compact_hide', None)
+        elif isinstance(hide, dict):
+            s['query_compact_hide'] = {
+                k: bool(hide[k]) for k in allowed_hide if k in hide
+            }
+        elif hide is not None:
+            s.pop('query_compact_hide', None)
     return s
 
 

@@ -43,6 +43,18 @@ def create_app():
     _install_optional_auth(app)
     register_routes(app)
 
+    try:
+        from studio.query import query_jobs
+        query_jobs.init_query_jobs(app)
+    except Exception as e:  # noqa: BLE001
+        print(f'⚠️ 查询任务队列初始化失败: {e}')
+
+    try:
+        from studio.export import archive_jobs
+        archive_jobs.init_archive_jobs(app)
+    except Exception as e:  # noqa: BLE001
+        print(f'⚠️ 归档任务队列初始化失败: {e}')
+
     # 后台作业 worker（PID 防重复；PC_NO_WORKER=1 可禁用）
     try:
         import sys

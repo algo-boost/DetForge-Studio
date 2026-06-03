@@ -7,20 +7,19 @@ from studio.paths import PROJECT_ROOT
 
 
 def _predict_result_filters(kwargs):
+    from studio.forge.predict_result_filters import normalize_filter_dict
+
     keys = (
-        'min_box_count', 'min_max_score', 'max_max_score', 'only_with_boxes',
-        'q', 'product_no', 'sort',
+        'min_box_count', 'min_max_score', 'max_max_score', 'only_with_boxes', 'zero_boxes_only',
+        'q', 'product_no', 'product_type', 'sort', 'categories',
+        'min_pred_confidence', 'max_pred_confidence',
     )
     out = {}
     for k in keys:
         v = (kwargs or {}).get(k)
         if v is not None and v != '':
             out[k] = v
-    if out.get('only_with_boxes') in (True, '1', 'true', 1):
-        out['only_with_boxes'] = True
-    elif 'only_with_boxes' in out:
-        del out['only_with_boxes']
-    return out
+    return normalize_filter_dict(out)
 
 
 def _resolve_model_name(job, rows):
@@ -52,8 +51,34 @@ def export_predict_job_coco(job_id, filters=None, result_ids=None):
     if not rows:
         raise ValueError('没有符合条件的预测结果')
 
+    import json
+
+    import pandas as pd
+
     export_dir = os.path.join(PROJECT_ROOT, 'exports', f'predict_job_{int(job_id)}')
+    os.makedirs(export_dir, exist_ok=True)
     model_name = _resolve_model_name(job, rows)
+
+    csv_rows = []
+    for row in rows:
+        csv_rows.append({
+            'id': row.get('id'),
+            'img_path': row.get('img_path'),
+            'product_no': row.get('product_no'),
+            'job_id': row.get('job_id'),
+        })
+    pd.DataFrame(csv_rows).to_csv(
+        os.path.join(export_dir, 'result.csv'), index=False, encoding='utf-8',
+    )
+    meta_path = os.path.join(export_dir, 'query_meta.json')
+    with open(meta_path, 'w', encoding='utf-8') as f:
+        json.dump({
+            'data_source': 'predict_result',
+            'query_mode': 'predict_job',
+            'job_id': int(job_id),
+            'model_name': model_name,
+        }, f, ensure_ascii=False, indent=2)
+
     gt_path, _pred_path, count, _src = build_predict_view_coco(
         rows,
         export_dir=export_dir,
@@ -65,6 +90,8 @@ def export_predict_job_coco(job_id, filters=None, result_ids=None):
             'model_name': model_name,
         },
         image_id_key='id',
+        merge_nearby_gt=False,
+        emit_pred_sidecar=False,
     )
     return export_dir, gt_path, count
 

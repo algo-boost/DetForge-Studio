@@ -46,7 +46,7 @@ function isMinThresholdRule(r) {
   return r?.confidence_mode === 'min_threshold' || r?.min_confidence != null;
 }
 
-function buildRulesFlow(rules, removeEmpty) {
+function buildRulesFlow(rules, removeEmpty, rulesSemantics = 'prune_boxes') {
   const body = [{
     id: uid(), type: 'builtin.filter_df_by_ext',
     params: { bind_loop_rule: 'loop_rule', categories: [], confidence_range: [0, 1], random_drop_ratio: 1 },
@@ -56,7 +56,11 @@ function buildRulesFlow(rules, removeEmpty) {
     version: 2,
     nodes: [{
       id: uid(), type: 'control.loop',
-      params: { loop_mode: 'rules', rules: JSON.parse(JSON.stringify(rules)) },
+      params: {
+        loop_mode: 'rules',
+        rules: JSON.parse(JSON.stringify(rules)),
+        rules_semantics: rulesSemantics,
+      },
       body,
     }],
   };
@@ -65,13 +69,14 @@ function buildRulesFlow(rules, removeEmpty) {
 export function useRulesStudio(onChange) {
   const [rules, setRules] = useState([]);
   const [removeEmpty, setRemoveEmpty] = useState(true);
+  const [rulesSemantics, setRulesSemantics] = useState('prune_boxes');
   const [categoryOptions, setCategoryOptions] = useState([]);
   const [compiledCode, setCompiledCode] = useState('');
   const [filterMode, setFilterMode] = useState('rules');
 
   const flow = useMemo(
-    () => FlowTree.prepareFlow(buildRulesFlow(rules, removeEmpty)),
-    [rules, removeEmpty],
+    () => FlowTree.prepareFlow(buildRulesFlow(rules, removeEmpty, rulesSemantics)),
+    [rules, removeEmpty, rulesSemantics],
   );
 
   useEffect(() => {
@@ -87,7 +92,15 @@ export function useRulesStudio(onChange) {
     }
     try {
       const res = await api.compileFlow({ flow, target: 'filter_rules' });
-      const code = res.success ? (res.python_code || '') : '';
+      if (!res.success) {
+        setCompiledCode('');
+        return '';
+      }
+      const code = (res.python_code || '').trim();
+      if (!code) {
+        setCompiledCode('');
+        return '';
+      }
       setCompiledCode(code);
       return code;
     } catch {
@@ -150,6 +163,8 @@ export function useRulesStudio(onChange) {
     const f = FlowTree.prepareFlow(incoming || { version: 2, nodes: [] });
     const loop = FlowTree.findRulesLoopNode(f);
     setRules(JSON.parse(JSON.stringify(loop?.params?.rules || [])));
+    const sem = loop?.params?.rules_semantics;
+    setRulesSemantics(sem === 'keep_matching_rows' ? 'keep_matching_rows' : 'prune_boxes');
     setRemoveEmpty(FlowTree.inferRemoveEmptyRows(
       f,
       options.filterRulesCode,
@@ -163,6 +178,7 @@ export function useRulesStudio(onChange) {
     qs.set('random_drop_ratio', trawl ? '1' : '0');
     const res = await api.getPipelineRules(pipelineId, `?${qs}`);
     if (!res.success) throw new Error(res.error || '导入失败');
+    setRulesSemantics(trawl ? 'keep_matching_rows' : 'prune_boxes');
     applySnapshot({ rules: res.rules || [], removeEmpty: true });
     return res;
   }, [applySnapshot]);
@@ -172,6 +188,8 @@ export function useRulesStudio(onChange) {
     setRules,
     removeEmpty,
     setRemoveEmpty,
+    rulesSemantics,
+    setRulesSemantics,
     categoryOptions,
     compiledCode,
     filterMode,

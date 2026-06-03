@@ -7,6 +7,7 @@ import os
 import shutil
 from datetime import datetime
 
+from studio.timezone_util import format_now
 from studio.curation.dispositions import (
     DISPOSITION_LABELS,
     INTENT_LABELS,
@@ -168,7 +169,7 @@ def assemble_handoff_dir(
     prov = {
         'intent_type': intent_type,
         'intent_label': INTENT_LABELS.get(intent_type, intent_type),
-        'handoff_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'handoff_at': format_now(),
         'image_count': len(coco_data.get('images') or []),
         'annotation_count': len(coco_data.get('annotations') or []),
     }

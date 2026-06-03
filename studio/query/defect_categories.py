@@ -289,6 +289,47 @@ def merge_id2name(base_id2name, categories):
     return categories_to_id2name(categories, base)
 
 
+def defect_name_set(*, categories=None, id2name=None):
+    """表面缺陷检测允许使用的类别名集合。"""
+    names = set()
+    for c in categories or []:
+        n = str(c or '').strip()
+        if n:
+            names.add(n)
+    for v in (id2name or {}).values():
+        n = str(v or '').strip()
+        if n:
+            names.add(n)
+    return names
+
+
+def is_defect_category_name(name, *, categories=None, id2name=None, fallback=None):
+    """是否为表面缺陷类（排除错漏装/总成 UI 类名）。"""
+    name = str(name or '').strip()
+    if not name or name in _NON_DEFECT_LABEL_HINTS:
+        return False
+    allowed = defect_name_set(categories=categories, id2name=id2name)
+    if name in allowed:
+        return True
+    if name in _defect_vocab(fallback):
+        return True
+    return _labels_match_defect_vocab([name], fallback or DEFAULT_FALLBACK_CATEGORIES)
+
+
+def filter_id2name_map(id2name, *, categories=None, fallback=None):
+    """过滤 id2name，仅保留缺陷检测类别（不采用错漏装 deploy 类别表覆盖词表）。"""
+    fb = fallback or DEFAULT_FALLBACK_CATEGORIES
+    vocab = _defect_vocab(fb)
+    out = {}
+    for k, v in (id2name or {}).items():
+        name = str(v or '').strip()
+        if name in vocab:
+            out[k] = v
+        elif is_defect_category_name(name, categories=None, id2name=id2name, fallback=fb):
+            out[k] = v
+    return out if out else {k: v for k, v in (id2name or {}).items() if str(v).strip() in vocab}
+
+
 def inject_category_options(nodes, categories):
     if not categories:
         return nodes

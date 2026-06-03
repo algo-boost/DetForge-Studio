@@ -13,7 +13,10 @@ import ProcessPipelineEditor from '../components/ProcessPipelineEditor';
 import { defaultPipelineFromPresets } from '../lib/processPipeline';
 import { envDefaultsFromSchema, parseEnvRandomSeed, parseEnvSampleSize } from '../lib/envVars';
 import { TIME_ENV_FIELDS } from '../lib/strategyEnvSchema';
+import { STRATEGY_DATA_SOURCES } from '../lib/strategyDataSource';
 import { FILTER_MODE_LABEL, STRATEGY_EDITOR_TABS } from '../components/strategy/strategyUtils';
+import QueryCompactHideEditor from '../components/strategy/QueryCompactHideEditor';
+import { mergeCompactHideMap, serializeCompactHideForSave } from '../lib/queryCompactHide';
 
 function StrategyEditorTabBar({ activeTab, onTabChange, hideRules }) {
   const tabs = STRATEGY_EDITOR_TABS.filter((t) => !(hideRules && t.id === 'rules'));
@@ -92,7 +95,13 @@ export default function AdminPage({ embedded = false }) {
       if (key === 'START_TIME' || key === 'END_TIME') return { ...row, type: 'datetime' };
       return row;
     });
-    setDraft({ ...s, env_schema: envSchema, filter_mode: uiFilterMode(s.filter_mode || 'flow') });
+    setDraft({
+      ...s,
+      env_schema: envSchema,
+      filter_mode: uiFilterMode(s.filter_mode || 'flow'),
+      query_ui_mode: s.query_ui_mode === 'compact' ? 'compact' : 'full',
+      query_compact_hide: mergeCompactHideMap(s.query_compact_hide),
+    });
     setEditorTab('meta');
     originalFlowRef.current = s.flow ? JSON.parse(JSON.stringify(s.flow)) : null;
     studio.setFlow(s.flow || { version: 2, nodes: [] }, {
@@ -104,10 +113,11 @@ export default function AdminPage({ embedded = false }) {
   const newStrategy = () => {
     const id = `saved_${Date.now()}`;
     const s = {
-      id, name: '新策略', category: 'custom', filter_mode: 'split',
+      id, name: '新策略', category: 'custom', filter_mode: 'rules',
       sql_template: "SELECT * FROM product_detection_detail_result\nWHERE c_time BETWEEN '${START_TIME}' AND '${END_TIME}'",
       python_code: '',
       flow: { version: 2, nodes: [] },
+      data_source: 'detail',
       env_schema: [...TIME_ENV_FIELDS],
       python_presets: ['observe', 'filter'],
       process_pipeline: defaultPipelineFromPresets(['observe', 'filter']),
@@ -132,11 +142,16 @@ export default function AdminPage({ embedded = false }) {
 
   const saveDraft = async () => {
     if (!draft) return;
-    const mode = draft.filter_mode === 'flow' ? 'rules' : (draft.filter_mode || 'split');
+    const mode = draft.filter_mode === 'flow' ? 'rules' : uiFilterMode(draft.filter_mode || 'rules');
     const envDefaults = envDefaultsFromSchema(draft.env_schema);
+    const queryUiMode = draft.query_ui_mode === 'compact' ? 'compact' : 'full';
     const payload = {
       ...draft,
       filter_mode: mode,
+      query_ui_mode: queryUiMode,
+      query_compact_hide: queryUiMode === 'compact'
+        ? serializeCompactHideForSave(draft.query_compact_hide)
+        : undefined,
       sample_size: parseEnvSampleSize(envDefaults, draft.sample_size || 300),
       random_seed: parseEnvRandomSeed(envDefaults, draft.random_seed ?? 42),
       flow: mergeFlowForSave(originalFlowRef.current, studio.flow, studio.removeEmpty),
@@ -196,7 +211,7 @@ export default function AdminPage({ embedded = false }) {
     } catch (e) { toast(e.message, 'error'); }
   };
 
-  const filterMode = draft?.filter_mode === 'flow' ? 'rules' : (draft?.filter_mode || 'split');
+  const filterMode = draft?.filter_mode === 'flow' ? 'rules' : uiFilterMode(draft?.filter_mode || 'rules');
   const hideRulesTab = filterMode === 'code';
 
   const q = sidebarFilter.trim().toLowerCase();
@@ -343,7 +358,6 @@ export default function AdminPage({ embedded = false }) {
                     <div className="form-row">
                       <div className="form-group"><label>筛选模式</label>
                         <select className="form-select" value={filterMode} onChange={(e) => setDraft({ ...draft, filter_mode: e.target.value })}>
-                          <option value="split">规则 + 代码</option>
                           <option value="rules">仅规则</option>
                           <option value="code">仅代码</option>
                         </select>
@@ -353,7 +367,74 @@ export default function AdminPage({ embedded = false }) {
                     <div className="form-row">
                       <div className="form-group form-group-wide"><label>描述</label><input className="form-input" value={draft.description || ''} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></div>
                     </div>
-                    <p className="muted strategy-panel-hint">采样数量、随机种子等业务参数请在「可调参数」页配置（如 SAMPLE_SIZE、RANDOM_SEED）。</p>
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>数据源 data_source</label>
+                        <select
+                          className="form-select"
+                          value={draft.data_source === 'predict_result' ? 'predict_result' : 'detail'}
+                          onChange={(e) => {
+                            const data_source = e.target.value;
+                            setDraft({
+                              ...draft,
+                              data_source,
+                              ...(data_source !== 'predict_result' ? { default_predict_job_id: undefined } : {}),
+                            });
+                          }}
+                        >
+                          {STRATEGY_DATA_SOURCES.map((opt) => (
+                            <option key={opt.id} value={opt.id}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      {draft.data_source === 'predict_result' && (
+                        <div className="form-group">
+                          <label>默认预测批次 ID（可选）</label>
+                          <input
+                            className="form-input"
+                            type="number"
+                            min={1}
+                            placeholder="留空则查询页自动匹配最近批次"
+                            value={draft.default_predict_job_id ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value.trim();
+                              setDraft({
+                                ...draft,
+                                default_predict_job_id: v ? Number(v) : undefined,
+                              });
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>查询页默认视图</label>
+                        <select
+                          className="form-select"
+                          value={draft.query_ui_mode === 'compact' ? 'compact' : 'full'}
+                          onChange={(e) => setDraft({ ...draft, query_ui_mode: e.target.value })}
+                        >
+                          <option value="full">完整 — SQL / 规则 / Python 可编辑</option>
+                          <option value="compact">简洁 — 参数 + 筛选规则（可配置隐藏项）</option>
+                        </select>
+                      </div>
+                    </div>
+                    {draft.query_ui_mode === 'compact' && (
+                      <div className="form-row form-row-stack">
+                        <div className="form-group form-group-wide">
+                          <label>简洁模式隐藏项</label>
+                          <QueryCompactHideEditor
+                            value={draft.query_compact_hide || {}}
+                            onChange={(query_compact_hide) => setDraft({ ...draft, query_compact_hide })}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    <p className="muted strategy-panel-hint">
+                      <strong>数据源</strong>在策略中写定后，查询页加载该策略会自动切换明细表/预测结果表及 SQL，无需操作员再选。
+                      采样数量、随机种子等业务参数请在「可调参数」页配置（如 SAMPLE_SIZE、RANDOM_SEED）。
+                    </p>
                   </div>
                 )}
                 {editorTab === 'params' && (

@@ -4,6 +4,7 @@
   "name": "按缺陷分类导出",
   "description": "按指定缺陷类型筛选（默认脏污+划伤），去重采样 500 张",
   "category": "分类统计",
+  "data_source": "detail",
   "sql_template": "SELECT * FROM `product_detection_detail_result` WHERE check_status='1' AND c_time BETWEEN '${START_TIME}' AND '${END_TIME}'",
   "sample_size": 500,
   "filter_mode": "code",

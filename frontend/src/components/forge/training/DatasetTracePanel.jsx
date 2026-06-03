@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, toast } from '../../../api/client';
+import { formatDisplayTime } from '../../../lib/timezone';
 
 const TRACE_LABEL = {
   matched: 'object_key',
@@ -24,11 +25,6 @@ const PAGE_SIZE = 50;
 function TracePill({ status }) {
   const cls = TRACE_CLASS[status] || 'platform-trace-pill-muted';
   return <span className={`platform-trace-pill ${cls}`}>{TRACE_LABEL[status] || status || '—'}</span>;
-}
-
-function fmtTime(val) {
-  if (!val) return '—';
-  return String(val).replace('T', ' ').slice(0, 19);
 }
 
 export default function DatasetTracePanel({ datasets, projectId }) {
@@ -258,7 +254,7 @@ export default function DatasetTracePanel({ datasets, projectId }) {
                 <td><code>{row.product_no || '—'}</code></td>
                 <td>{row.product_type || '—'}</td>
                 <td>{row.position || '—'}</td>
-                <td className="platform-dataset-time">{fmtTime(row.platform_c_time)}</td>
+                <td className="platform-dataset-time">{formatDisplayTime(row.platform_c_time)}</td>
                 <td>
                   {row.source_detail_id ? (
                     <code className="platform-trace-id">#{row.source_detail_id}</code>

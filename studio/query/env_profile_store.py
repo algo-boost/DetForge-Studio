@@ -48,7 +48,8 @@ def normalize_profile(data: dict, profile_id: str | None = None) -> dict:
     pid = (profile_id or data.get('id') or '').strip()
     if not pid:
         raise ValueError('模版 id 不能为空')
-    now = datetime.now().isoformat()
+    from studio.timezone_util import format_iso_now
+    now = format_iso_now()
     vars_in = data.get('vars')
     rows = []
     if isinstance(vars_in, dict):

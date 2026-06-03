@@ -1,5 +1,5 @@
 export const SETTINGS_TABS = [
-  { id: 'connection', label: '数据库', desc: 'MySQL 连接' },
+  { id: 'connection', label: '数据库', desc: 'MySQL · 显示时区' },
   { id: 'project', label: '检测项目', desc: '本地总控 Approach 与类别' },
   { id: 'labels', label: '类别映射', desc: 'id2name / COCO' },
   { id: 'paths', label: '图片路径', desc: '解析与归档' },
@@ -8,7 +8,7 @@ export const SETTINGS_TABS = [
   { id: 'platform', label: 'Magic-Fox', desc: '训练平台认证' },
   { id: 'security', label: '安全', desc: 'Token 与写库' },
   { id: 'query', label: '查询', desc: '默认 SQL' },
-  { id: 'system', label: '系统', desc: '运行状态' },
+  { id: 'system', label: '系统', desc: '时区 · 运行诊断' },
 ];
 
 export function id2nameToText(obj) {

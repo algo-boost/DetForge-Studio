@@ -49,6 +49,44 @@ class TestPrepareStrategyManual(unittest.TestCase):
         self.assertIn('唯一标记xyz', out['python_code'])
         self.assertTrue(out.get('python_code_manual'))
 
+    def test_data_source_normalized_on_save(self):
+        strategy = {
+            'id': 'test_ds',
+            'name': 't',
+            'sql_template': 'SELECT * FROM detforge.predict_result WHERE job_id=1',
+            'flow': {'version': 2, 'nodes': []},
+        }
+        out = prepare_strategy(strategy)
+        self.assertEqual(out['data_source'], 'predict_result')
+
+        strategy2 = {
+            'id': 'test_ds2',
+            'data_source': 'detail',
+            'sql_template': 'SELECT * FROM predict_result',
+            'flow': {'version': 2, 'nodes': []},
+        }
+        out2 = prepare_strategy(strategy2)
+        self.assertEqual(out2['data_source'], 'detail')
+
+    def test_query_compact_hide_persists_false(self):
+        strategy = {
+            'id': 'test_compact_hide',
+            'name': 't',
+            'query_ui_mode': 'compact',
+            'query_compact_hide': {
+                'preview_button': False,
+                'data_source': True,
+                'strategy_tools': True,
+            },
+            'flow': {'version': 2, 'nodes': []},
+        }
+        out = prepare_strategy(strategy)
+        self.assertEqual(out['query_ui_mode'], 'compact')
+        hide = out['query_compact_hide']
+        self.assertFalse(hide['preview_button'])
+        self.assertTrue(hide['data_source'])
+        self.assertTrue(hide['strategy_tools'])
+
 
 if __name__ == '__main__':
     unittest.main()

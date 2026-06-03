@@ -2,6 +2,7 @@ const BASE = '';
 
 import { formatSampleGalleryError } from '../lib/sampleGallery';
 import { appNavigate } from '../lib/appNavigate';
+import { appendViewerNavParams } from '../lib/viewerNav';
 
 // 可选 API Token（后端配置 api_token 时启用）；存于 localStorage.pc_api_token
 export function getApiToken() {
@@ -27,11 +28,35 @@ function authHeaders() {
   return t ? { 'X-API-Token': t } : {};
 }
 
+function isNetworkFetchError(err) {
+  const msg = String(err?.message || err || '');
+  return (
+    err?.name === 'TypeError'
+    || /failed to fetch/i.test(msg)
+    || /networkerror/i.test(msg)
+    || /load failed/i.test(msg)
+  );
+}
+
+function formatFetchError(err, path) {
+  if (!isNetworkFetchError(err)) return err;
+  const hint = '无法连接后端（http://127.0.0.1:5050）。若刚保存代码或重启过服务，请稍等几秒后重试。';
+  const wrapped = new Error(`${hint}（${path}）`);
+  wrapped.cause = err;
+  wrapped.isNetwork = true;
+  return wrapped;
+}
+
 async function request(path, options = {}) {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...authHeaders(), ...(options.headers || {}) },
-    ...options,
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      headers: { 'Content-Type': 'application/json', ...authHeaders(), ...(options.headers || {}) },
+      ...options,
+    });
+  } catch (err) {
+    throw formatFetchError(err, path);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok && data.success !== true) {
     const err = new Error(data.error || data.message || `HTTP ${res.status}`);
@@ -121,6 +146,16 @@ export const api = {
   testMagicFoxConnection: (body) => request('/api/config/test-magic-fox', { method: 'POST', body: JSON.stringify(body || {}) }),
 
   query: (body) => request('/api/query', { method: 'POST', body: JSON.stringify(body) }),
+  submitQueryJob: (body) => request('/api/query/jobs', { method: 'POST', body: JSON.stringify(body) }),
+  listQueryJobs: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.limit) q.set('limit', String(params.limit));
+    if (params.active_only) q.set('active_only', '1');
+    const qs = q.toString();
+    return request(`/api/query/jobs${qs ? `?${qs}` : ''}`);
+  },
+  getQueryJob: (jobId) => request(`/api/query/jobs/${encodeURIComponent(jobId)}`),
+  queryTask: (taskId) => request(`/api/query/task/${encodeURIComponent(taskId)}`),
   previewFilter: (body) => request('/api/preview-filter', { method: 'POST', body: JSON.stringify(body) }),
   runPython: (body) => request('/api/run-python-code', { method: 'POST', body: JSON.stringify(body) }),
 
@@ -175,7 +210,10 @@ export const api = {
 
   forgeJobs: (params = '') => request(`/api/forge/jobs${params}`),
   forgeJob: (id) => request(`/api/forge/jobs/${id}`),
-  forgeJobLog: (id) => request(`/api/forge/jobs/${id}/log`),
+  forgeJobLog: (id, { limit = 0 } = {}) => {
+    const q = limit > 0 ? `?limit=${limit}` : '?limit=0';
+    return request(`/api/forge/jobs/${id}/log${q}`);
+  },
   forgeExportDownloadUrl: (relPath) => {
     const t = getApiToken();
     const q = new URLSearchParams({ path: relPath });
@@ -311,6 +349,7 @@ export const api = {
   exportCocoUrl: (taskId) => `/api/export/${taskId}`,
   exportCsvUrl: (taskId) => `/api/export-csv/${taskId}`,
   archive: (taskId, body) => request(`/api/archive/${taskId}`, { method: 'POST', body: JSON.stringify(body) }),
+  getArchiveJob: (jobId) => request(`/api/archive/jobs/${encodeURIComponent(jobId)}`),
 
   vizStatus: () => request('/api/viz/status'),
   vizOpen: (body) => request('/api/viz/open', { method: 'POST', body: JSON.stringify(body) }),
@@ -330,16 +369,21 @@ export function sampleGalleryViewerPath(record) {
   return '/viewer';
 }
 
-/** 在应用内打开样本图库（同窗口 iframe 页） */
-export function openSampleGallery(record) {
-  const path = sampleGalleryViewerPath(record);
+/** 在应用内或新窗口打开样本图库 */
+export function openSampleGallery(record, options = {}) {
+  const { newWindow = false, taskId, returnTo } = options;
+  const path = appendViewerNavParams(sampleGalleryViewerPath(record), { taskId, returnTo });
+  if (newWindow) {
+    window.open(path, '_blank', 'noopener,noreferrer');
+    return;
+  }
   if (!appNavigate(path)) {
     window.location.assign(path);
   }
 }
 
 /** 准备样本图库会话后直接跳转看图页 */
-export async function openSampleGalleryWhenReady(prepare, context = '') {
+export async function openSampleGalleryWhenReady(prepare, context = '', options = {}) {
   const status = await api.vizStatus().catch(() => ({ available: false }));
   if (status && status.available === false) {
     throw new Error(formatSampleGalleryError('样本图库不可用', context));
@@ -349,7 +393,7 @@ export async function openSampleGalleryWhenReady(prepare, context = '') {
     if (!record?.success && record?.error) {
       throw new Error(record.error);
     }
-    openSampleGallery(record);
+    openSampleGallery(record, options);
     return { record };
   } catch (err) {
     throw new Error(formatSampleGalleryError(err, context));

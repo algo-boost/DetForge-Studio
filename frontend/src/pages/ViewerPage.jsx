@@ -34,6 +34,9 @@ export default function ViewerPage() {
 
   const showOverlay = preparing || !iframeReady;
   const canOpenExternal = iframeSrc && iframeSrc !== '/viz/';
+  const taskId = params.get('task');
+  const returnTo = params.get('return')
+    || (taskId ? `/?task=${encodeURIComponent(taskId)}&view=results` : '/');
 
   return (
     <div className="viewer-page viewer-page-immersive">
@@ -55,7 +58,7 @@ export default function ViewerPage() {
       </div>
       <div className="viewer-hover-bar" aria-label="看图页快捷操作">
         <div className="viewer-hover-bar-inner">
-          <Link className="viewer-hover-btn" to="/">返回查询</Link>
+          <Link className="viewer-hover-btn" to={returnTo}>返回查询结果</Link>
           {canOpenExternal && (
             <a
               className="viewer-hover-btn"

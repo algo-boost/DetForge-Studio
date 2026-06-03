@@ -88,7 +88,10 @@ def _compile_filter(params, in_rules_loop=False):
             "min_confidence=float(_loop_rule.get('min_confidence', (_loop_rule.get('confidence_range') or [0, 1])[0])), "
             "positions=_loop_rule.get('positions') or None)",
             "else:",
-            "    pass  # 捞图规则在循环外由 select_df_rows_by_rules_union 一次处理",
+            "    df = filter_df_by_ext(df, categories=_loop_rule.get('categories', []), "
+            "confidence_range=tuple(_loop_rule.get('confidence_range', [0, 1])), "
+            "random_drop_ratio=_loop_rule.get('random_drop_ratio', 1.0), "
+            "positions=_loop_rule.get('positions') or None)",
         ]
     cats = p.get('categories') or []
     cr = p.get('confidence_range') or [0, 1]
@@ -208,11 +211,14 @@ def _compile_container(node, templates, tpl_defs, tpl_order, errors, in_rules_lo
             lines.append(f'df = {FILTER_RULES_FUNC}(df)')
             return lines
         lines.append(f'_rules = {_repr_value(rules)}')
+        semantics = (p.get('rules_semantics') or 'prune_boxes').strip()
         has_trawl_filter = any(
             (n.get('type') == 'builtin.filter_df_by_ext')
             for n in (body or [])
         )
-        if has_trawl_filter:
+        # keep_matching_rows：捞图选行（命中规则保留整行，ext 不删框）
+        # prune_boxes（默认）：按规则剔除 ext 内框，与 UI「剔除」一致
+        if has_trawl_filter and semantics == 'keep_matching_rows':
             lines.append('df = select_df_rows_by_rules_union(df, _rules)')
             post_nodes = [
                 n for n in (body or [])

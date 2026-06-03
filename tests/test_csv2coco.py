@@ -48,6 +48,23 @@ class Csv2CocoTests(unittest.TestCase):
         self.assertIn('脏污', cat_names)
         self.assertIn('焊丝', cat_names)
 
+    def test_sync_coco_image_file_names_replaces_absolute_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local = os.path.join(tmp, '0_photo.jpg')
+            open(local, 'wb').write(b'x')
+            coco_path = os.path.join(tmp, '_annotations.coco.json')
+            bad_abs = r'D:\data\remote\photo.jpg'
+            with open(coco_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'images': [{'id': 0, 'file_name': bad_abs}],
+                    'annotations': [],
+                    'categories': [],
+                }, f)
+            self.assertTrue(sync_coco_image_file_names(coco_path, {0: local}, image_dir=tmp))
+            with open(coco_path, encoding='utf-8') as f:
+                coco = json.load(f)
+            self.assertEqual(coco['images'][0]['file_name'], '0_photo.jpg')
+
     def test_sync_coco_image_file_names_local_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
             local = os.path.join(tmp, '0_photo.jpg')
@@ -62,7 +79,8 @@ class Csv2CocoTests(unittest.TestCase):
             self.assertTrue(sync_coco_image_file_names(coco_path, {0: local}, image_dir=tmp))
             with open(coco_path, encoding='utf-8') as f:
                 coco = json.load(f)
-            self.assertEqual(coco['images'][0]['file_name'], os.path.abspath(local))
+            self.assertEqual(coco['images'][0]['file_name'], '0_photo.jpg')
+            self.assertFalse(os.path.isabs(coco['images'][0]['file_name']))
 
 
 if __name__ == '__main__':

@@ -43,6 +43,10 @@ def parse_replay_filters(body=None):
         filters['product_type'] = str(body['product_type']).strip()
     if body.get('q'):
         filters['q'] = str(body['q']).strip()
+    if body.get('categories'):
+        filters['categories'] = str(body['categories']).strip()
+    if body.get('min_pred_confidence') is not None and str(body.get('min_pred_confidence')).strip() != '':
+        filters['min_pred_confidence'] = float(body['min_pred_confidence'])
     return filters, mode
 
 

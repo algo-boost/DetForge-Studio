@@ -47,8 +47,13 @@ const DEFAULT_RESULT_FILTERS = {
   q: '',
   min_box_count: '',
   min_max_score: '',
+  max_max_score: '',
+  categories: '',
+  min_pred_confidence: '',
+  max_pred_confidence: '',
   sort: 'score_desc',
   only_with_boxes: false,
+  zero_boxes_only: false,
 };
 
 function exportRelPath(absPath) {
@@ -69,7 +74,18 @@ function buildResultsQuery(filters, offset, limit) {
   if (filters.min_max_score !== '' && filters.min_max_score != null) {
     p.set('min_max_score', String(filters.min_max_score));
   }
+  if (filters.max_max_score !== '' && filters.max_max_score != null) {
+    p.set('max_max_score', String(filters.max_max_score));
+  }
+  if (filters.categories?.trim()) p.set('categories', filters.categories.trim());
+  if (filters.min_pred_confidence !== '' && filters.min_pred_confidence != null) {
+    p.set('min_pred_confidence', String(filters.min_pred_confidence));
+  }
+  if (filters.max_pred_confidence !== '' && filters.max_pred_confidence != null) {
+    p.set('max_pred_confidence', String(filters.max_pred_confidence));
+  }
   if (filters.only_with_boxes) p.set('only_with_boxes', '1');
+  if (filters.zero_boxes_only) p.set('zero_boxes_only', '1');
   if (filters.sort) p.set('sort', filters.sort);
   return `?${p.toString()}`;
 }
@@ -83,7 +99,18 @@ function filtersPayload(filters) {
   if (filters.min_max_score !== '' && filters.min_max_score != null) {
     out.min_max_score = Number(filters.min_max_score);
   }
+  if (filters.max_max_score !== '' && filters.max_max_score != null) {
+    out.max_max_score = Number(filters.max_max_score);
+  }
+  if (filters.categories?.trim()) out.categories = filters.categories.trim();
+  if (filters.min_pred_confidence !== '' && filters.min_pred_confidence != null) {
+    out.min_pred_confidence = Number(filters.min_pred_confidence);
+  }
+  if (filters.max_pred_confidence !== '' && filters.max_pred_confidence != null) {
+    out.max_pred_confidence = Number(filters.max_pred_confidence);
+  }
   if (filters.only_with_boxes) out.only_with_boxes = true;
+  if (filters.zero_boxes_only) out.zero_boxes_only = true;
   return out;
 }
 
@@ -158,12 +185,6 @@ export function JobDetail({ job }) {
     refreshCount(filters);
   }, [job.id, job.job_type, job.status, tab, filters, refreshCount]);
 
-  useEffect(() => {
-    if (isDone && job.job_type === 'predict' && tab === 'log') {
-      setTab('results');
-    }
-  }, [isDone, job.job_type, tab]);
-
   const applyFilters = () => setFilters({ ...filtersDraft });
   const resetFilters = () => {
     setFiltersDraft({ ...DEFAULT_RESULT_FILTERS });
@@ -195,7 +216,11 @@ export function JobDetail({ job }) {
     if (!resultCount) return counting ? '统计中…' : '暂无结果';
     const parts = [`共 ${resultCount} 张`];
     if (filters.only_with_boxes) parts.push('仅有框');
-    if (filters.min_max_score !== '') parts.push(`score≥${filters.min_max_score}`);
+    if (filters.zero_boxes_only) parts.push('无框');
+    if (filters.min_max_score !== '') parts.push(`max≥${filters.min_max_score}`);
+    if (filters.max_max_score !== '') parts.push(`max≤${filters.max_max_score}`);
+    if (filters.categories?.trim()) parts.push(`类别:${filters.categories.trim()}`);
+    if (filters.min_pred_confidence !== '') parts.push(`框置信≥${filters.min_pred_confidence}`);
     return parts.join(' · ');
   }, [resultCount, counting, filters]);
 
@@ -254,10 +279,26 @@ export function JobDetail({ job }) {
         {tab === 'log' && (
           <div className="pjobs-log-panel">
             <p className="pjobs-log-hint muted">
-              完整运行日志（文件 <code>exports/job_logs/{job.id}.log</code>）
-              {isActive ? ' · 运行中自动刷新' : ''}
-              {logLines.length > 0 ? ` · ${logLines.length} 行` : ''}
+              完整运行日志（<code>exports/job_logs/{job.id}.log</code>，含子进程 stderr/stdout）
+              {isActive ? ' · 每 1.5s 刷新' : ''}
+              {logLines.length > 0 ? ` · 共 ${logLines.length} 行` : ''}
             </p>
+            {logLines.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost pjobs-log-download"
+                onClick={() => {
+                  const blob = new Blob([logLines.join('\n')], { type: 'text/plain;charset=utf-8' });
+                  const a = document.createElement('a');
+                  a.href = URL.createObjectURL(blob);
+                  a.download = `job-${job.id}-log.txt`;
+                  a.click();
+                  URL.revokeObjectURL(a.href);
+                }}
+              >
+                下载日志
+              </button>
+            )}
             <div className="pjobs-log-wrap" ref={logWrapRef}>
               {logLines.length ? (
                 <pre className="pjobs-log">{logLines.join('\n')}</pre>
@@ -323,9 +364,27 @@ export function JobDetail({ job }) {
                   min={0}
                   max={1}
                   step={0.05}
-                  placeholder="最低 score"
+                  placeholder="行 max_score ≥"
                   value={filtersDraft.min_max_score}
                   onChange={(e) => setFiltersDraft((f) => ({ ...f, min_max_score: e.target.value }))}
+                />
+                <input
+                  className="pjobs-filter-input"
+                  placeholder="缺陷类别（逗号分隔）"
+                  value={filtersDraft.categories}
+                  onChange={(e) => setFiltersDraft((f) => ({ ...f, categories: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === 'Enter') applyFilters(); }}
+                />
+                <input
+                  className="pjobs-filter-input pjobs-filter-num"
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  placeholder="框置信度 ≥"
+                  title="按 ext 内各预测框的 confidence 筛选"
+                  value={filtersDraft.min_pred_confidence}
+                  onChange={(e) => setFiltersDraft((f) => ({ ...f, min_pred_confidence: e.target.value }))}
                 />
                 <select
                   className="pjobs-filter-select"
@@ -340,9 +399,25 @@ export function JobDetail({ job }) {
                   <input
                     type="checkbox"
                     checked={filtersDraft.only_with_boxes}
-                    onChange={(e) => setFiltersDraft((f) => ({ ...f, only_with_boxes: e.target.checked }))}
+                    onChange={(e) => setFiltersDraft((f) => ({
+                      ...f,
+                      only_with_boxes: e.target.checked,
+                      zero_boxes_only: e.target.checked ? false : f.zero_boxes_only,
+                    }))}
                   />
                   仅有框
+                </label>
+                <label className="pjobs-filter-check">
+                  <input
+                    type="checkbox"
+                    checked={filtersDraft.zero_boxes_only}
+                    onChange={(e) => setFiltersDraft((f) => ({
+                      ...f,
+                      zero_boxes_only: e.target.checked,
+                      only_with_boxes: e.target.checked ? false : f.only_with_boxes,
+                    }))}
+                  />
+                  无框
                 </label>
                 <button type="button" className="btn btn-sm btn-primary" onClick={applyFilters}>筛选</button>
                 <button type="button" className="btn btn-sm btn-ghost" onClick={resetFilters}>重置</button>
@@ -350,7 +425,7 @@ export function JobDetail({ job }) {
             </div>
             <div className="pjobs-result-actions">
               <p className="pjobs-result-actions-hint muted">
-                设置筛选条件后，直接打开样本图库浏览标注框，或到查询页做 SQL 二次筛选。
+                筛选按 predict_result 表字段与 ext 内预测框（类别、单框置信度）；规则筛选请到查询页。
               </p>
               <div className="pjobs-result-actions-btns">
                 <button

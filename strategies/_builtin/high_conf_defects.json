@@ -4,6 +4,7 @@
   "name": "高置信度缺陷筛选",
   "description": "置信度 ≥ 0.5 的缺陷图片，按产品去重后随机采样 300 张",
   "category": "质量分析",
+  "data_source": "detail",
   "sql_template": "SELECT * FROM `product_detection_detail_result` WHERE check_status='1' AND c_time BETWEEN '${START_TIME}' AND '${END_TIME}'",
   "sample_size": 300,
   "filter_mode": "code",

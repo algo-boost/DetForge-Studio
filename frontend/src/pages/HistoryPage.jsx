@@ -4,6 +4,7 @@ import { toast } from '../api/client';
 import { Modal } from '../components/Modal';
 import SceneHubNav from '../components/SceneHubNav';
 import { clearHistory, loadHistory } from '../lib/history';
+import { formatDisplayTime } from '../lib/timezone';
 import {
   applyHistoryFilters,
   countByStrategy,
@@ -33,8 +34,9 @@ function EmptyHistory() {
   );
 }
 
-function HistoryRow({ item, onRestore, onSaveAsStrategy }) {
+function HistoryRow({ item, onRestore, onViewResults, onSaveAsStrategy }) {
   const hasSnapshot = !!(item.snapshot || item.strategy_id);
+  const hasTask = Boolean(item.task_id);
   return (
     <tr
       className="history-row"
@@ -44,12 +46,15 @@ function HistoryRow({ item, onRestore, onSaveAsStrategy }) {
       onKeyDown={(e) => e.key === 'Enter' && onRestore(item)}
     >
       <td className="history-col-dot"><SnapshotDot hasSnapshot={hasSnapshot} /></td>
-      <td className="history-col-time">{item.time?.slice(0, 16) || '—'}</td>
+      <td className="history-col-time">{formatDisplayTime(item.time, { seconds: false })}</td>
       <td className="history-col-range muted">{item.start} — {item.end}</td>
       <td className="history-col-mode">{item.mode_label || '—'}</td>
       <td className="history-col-count"><strong>{item.count ?? '—'}</strong></td>
       <td className="history-col-actions" onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="btn btn-xs btn-primary" onClick={() => onRestore(item)}>恢复</button>
+        {hasTask && (
+          <button type="button" className="btn btn-xs btn-primary" onClick={() => onViewResults(item)}>结果</button>
+        )}
+        <button type="button" className={`btn btn-xs ${hasTask ? 'btn-ghost' : 'btn-primary'}`} onClick={() => onRestore(item)}>恢复</button>
         <button type="button" className="btn btn-xs btn-ghost" onClick={() => onRestore(item, true)}>重跑</button>
         <button type="button" className="btn btn-xs btn-ghost" onClick={() => onSaveAsStrategy(item)} disabled={!hasSnapshot}>存策略</button>
       </td>
@@ -57,7 +62,7 @@ function HistoryRow({ item, onRestore, onSaveAsStrategy }) {
   );
 }
 
-function StrategySection({ group, onRestore, onSaveAsStrategy }) {
+function StrategySection({ group, onRestore, onViewResults, onSaveAsStrategy }) {
   return (
     <section className="history-strategy-section">
       <header className="history-strategy-head">
@@ -82,6 +87,7 @@ function StrategySection({ group, onRestore, onSaveAsStrategy }) {
               key={item.ts || index}
               item={item}
               onRestore={onRestore}
+              onViewResults={onViewResults}
               onSaveAsStrategy={onSaveAsStrategy}
             />
           ))}
@@ -101,6 +107,14 @@ export default function HistoryPage() {
 
   const restore = (item, autoExecute = false) => {
     navigate('/', { state: { restore: item, autoExecute } });
+  };
+
+  const viewResults = (item) => {
+    if (!item.task_id) {
+      toast('该记录无任务快照，请使用「恢复」后重新查询', 'error');
+      return;
+    }
+    navigate(`/?task=${encodeURIComponent(item.task_id)}&view=results`);
   };
 
   const saveAsStrategy = (item) => {
@@ -216,6 +230,7 @@ export default function HistoryPage() {
                 key={group.id}
                 group={group}
                 onRestore={restore}
+                onViewResults={viewResults}
                 onSaveAsStrategy={saveAsStrategy}
               />
             ))}
@@ -238,6 +253,7 @@ export default function HistoryPage() {
                   key={item.ts || index}
                   item={item}
                   onRestore={restore}
+                  onViewResults={viewResults}
                   onSaveAsStrategy={saveAsStrategy}
                 />
               ))}

@@ -22,10 +22,18 @@ python app.py
 Windows 开发（热重载 + 前端 watch）：
 
 ```powershell
-.\scripts\dev.ps1          # 长期开发
-.\scripts\restart.ps1      # 改完代码后快速重启
-.\scripts\restart.ps1 -RebuildFrontend   # 前端也改了
+.\scripts\dev.ps1                    # 长期开发（前端 watch + Flask 热重载）
+.\scripts\restart.ps1                # 仅重启后端（最快，不编译前端）
+.\scripts\restart.ps1 -Full          # 前端 npm run build + 重启（改 UI 后必用）
+.\scripts\restart.ps1 -RebuildFrontend   # 同 -Full
 ```
+
+也可双击（`scripts/` 目录下）：
+
+| 脚本 | 作用 |
+|------|------|
+| `restart.bat` | 只重启后端 |
+| `restart-full.bat` | 重新编译前端并重启 |
 
 Python 路径：`$env:PC_PYTHON` 或复制 `scripts/dev.local.ps1.example` → `scripts/dev.local.ps1`。
 

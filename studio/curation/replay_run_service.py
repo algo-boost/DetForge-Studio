@@ -7,6 +7,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
+from studio.timezone_util import format_datetime, now_local
 from studio.curation import curation_service
 from studio.curation.dispositions import INTENT_REPLAY_EVAL
 from studio.curation.replay_eval_service import _apply_replay_dispositions
@@ -22,32 +23,45 @@ def resolve_time_window(spec=None):
     if spec.get('start_time') and spec.get('end_time'):
         return str(spec['start_time']), str(spec['end_time'])
     preset = str(spec.get('preset') or spec.get('mode') or 'yesterday').strip().lower()
-    now = datetime.now()
+    now = now_local()
     fmt = '%Y-%m-%d %H:%M:%S'
     if preset in ('today', '当日'):
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        return start.strftime(fmt), now.strftime(fmt)
+        return format_datetime(start, fmt), format_datetime(now, fmt)
     if preset in ('yesterday', '昨日'):
         y = now.date() - timedelta(days=1)
-        start = datetime.combine(y, datetime.min.time())
-        end = datetime.combine(y, datetime.max.time().replace(microsecond=0))
-        return start.strftime(fmt), end.strftime(fmt)
+        start = datetime.combine(y, datetime.min.time(), tzinfo=now.tzinfo)
+        end = datetime.combine(y, datetime.max.time().replace(microsecond=0), tzinfo=now.tzinfo)
+        return format_datetime(start, fmt), format_datetime(end, fmt)
     if preset in ('last_7d', '7d', '近7天'):
         start = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
-        return start.strftime(fmt), now.strftime(fmt)
+        return format_datetime(start, fmt), format_datetime(now, fmt)
     raise ValueError(f'未知时间 preset: {preset}')
 
 
 def _build_context(body, *, job_id=None, stage=None, run_id=None):
     body = body or {}
-    start, end = resolve_time_window(body.get('time_window') or {})
+    stage_env = {}
+    if stage == 'stage1':
+        stage_env = (body.get('stage1_env') or {})
+    elif stage == 'stage2':
+        stage_env = (body.get('stage2_env') or {})
+    start = str(stage_env.get('START_TIME') or '').strip()
+    end = str(stage_env.get('END_TIME') or '').strip()
+    if not start or not end:
+        tw_start, tw_end = resolve_time_window(body.get('time_window') or {})
+        if not start:
+            start = tw_start
+        if not end:
+            end = tw_end
     return build_stage_context(
         body,
         stage=stage,
         job_id=job_id,
         run_id=run_id,
-        start_time=start,
-        end_time=end,
+        start_time=start or None,
+        end_time=end or None,
+        time_preset='yesterday',
     )
 
 
@@ -98,10 +112,17 @@ def _normalize_spec(body):
     for key in ('stage1', 'stage2'):
         if spec.get(key):
             spec[key] = _snapshot_stage(spec[key], strategies)
-    tw = spec.get('time_window') or {}
+    stage1_env = spec.get('stage1_env') or {}
+    tw = dict(spec.get('time_window') or {})
+    if stage1_env.get('START_TIME'):
+        tw['start_time'] = stage1_env['START_TIME']
+    if stage1_env.get('END_TIME'):
+        tw['end_time'] = stage1_env['END_TIME']
     if not (tw.get('start_time') and tw.get('end_time')):
         start, end = resolve_time_window(tw)
-        spec['time_window'] = {**tw, 'start_time': start, 'end_time': end}
+        tw['start_time'] = start
+        tw['end_time'] = end
+    spec['time_window'] = tw
     return spec
 
 

@@ -32,9 +32,10 @@ _CFG_STRICT_KEY = 'manual_qc_defect_strict'
 
 
 def default_daily_batch_id(when=None):
-    """每日一批：默认 batch_id = YYYY-MM-DD。"""
-    dt = when or datetime.now()
-    return dt.strftime('%Y-%m-%d')
+    """每日一批：默认 batch_id = YYYY-MM-DD（配置时区）。"""
+    from studio.timezone_util import format_datetime, now_local
+    dt = when or now_local()
+    return format_datetime(dt, '%Y-%m-%d')
 
 
 def resolve_batch_id(batch_id=None):
@@ -314,7 +315,8 @@ def export_records(start=None, end=None, categories=None, defect_types=None,
         limit=limit or 1000000,
     )
     if not out_dir:
-        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        from studio.timezone_util import stamp_compact
+        stamp = stamp_compact()
         out_dir = os.path.join(BASE_DIR, 'exports', 'manual_qc_export', stamp)
     out_dir = os.path.abspath(out_dir)
     # 安全：导出目录必须落在白名单根目录内（默认 exports/）
@@ -389,7 +391,8 @@ def generate_training_handoff(start=None, end=None, categories=None, batch_id=No
     if not rows:
         raise ValueError('无可用平台匹配图，无法生成交接包')
 
-    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    from studio.timezone_util import stamp_compact
+    stamp = stamp_compact()
     run_code = f'qc_{stamp}_{uuid.uuid4().hex[:6]}'
     out_dir = os.path.join(handoff_inbox_root(), run_code)
 

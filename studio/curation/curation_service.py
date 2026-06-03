@@ -48,7 +48,8 @@ README_EXPORT = """# 筛选批次出站包
 
 
 def _now():
-    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    from studio.timezone_util import format_now
+    return format_now()
 
 
 def _task_dir(task_id):
@@ -323,7 +324,8 @@ def _load_query_meta(task_dir):
 
 
 def _make_batch_code():
-    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    from studio.timezone_util import stamp_compact
+    stamp = stamp_compact()
     short = uuid.uuid4().hex[:6]
     return f'cb_{stamp}_{short}'
 

@@ -39,10 +39,14 @@ def ensure_predict_job_scope(sql, job_id):
 def infer_data_source(strategy, context=None, explicit=None):
     if explicit:
         return explicit
+    strategy = strategy or {}
+    configured = str(strategy.get('data_source') or '').strip().lower()
+    if configured in ('detail', 'predict_result'):
+        return configured
     ctx = context or {}
     if ctx.get('JOB_ID') or ctx.get('DATA_SOURCE') == 'predict_result':
         return 'predict_result'
-    sql = (strategy or {}).get('sql_template') or ''
+    sql = strategy.get('sql_template') or ''
     if 'predict_result' in sql.lower():
         return 'predict_result'
     return 'detail'
@@ -100,6 +104,10 @@ def execute_filter_strategy(
             'query_sql_executed': sql,
         }
 
+    if ds == 'predict_result':
+        from studio.forge.predict_result_filters import hydrate_predict_result_df
+        df = hydrate_predict_result_df(df)
+
     input_rows, input_cols = len(df), len(df.columns)
     python_code = ''
     console_output = ''
@@ -127,6 +135,10 @@ def execute_filter_strategy(
             'input_rows': input_rows,
             'input_cols': input_cols,
         }
+
+    if ds == 'predict_result':
+        from studio.forge.predict_result_filters import finalize_predict_result_df
+        df = finalize_predict_result_df(df)
 
     rows_before_sample = len(df)
     ctx_sample = sample_size_from_env(context)

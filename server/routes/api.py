@@ -13,6 +13,13 @@ from server.core import *
 from server.core import _fetch_approaches, _resolve_query_python, _resolve_filter_rules_code
 from studio.export.csv2coco import build_coco_info
 from studio.export.task_images import normalize_coco_images_for_task
+from studio.timezone_util import (
+    format_iso_now,
+    format_timestamp,
+    resolve_timezone,
+    stamp_compact,
+    timezone_options_for_api,
+)
 from studio.flow.flow_compiler import (
     compile_filter_rules,
     normalize_strategy,
@@ -56,7 +63,7 @@ def get_user_guide():
         'title': f'{PRODUCT_NAME} 用户使用手册',
         'tagline': PRODUCT_TAGLINE,
         'content': content,
-        'updated_at': datetime.fromtimestamp(os.path.getmtime(path)).strftime('%Y-%m-%d %H:%M'),
+        'updated_at': format_timestamp(os.path.getmtime(path)),
     })
 
 
@@ -135,6 +142,7 @@ def get_config():
             'config': safe_config,
             'path_checks': path_checks,
             'config_secrets': config_secrets,
+            'timezone_options': timezone_options_for_api(),
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -178,6 +186,12 @@ def save_config_api():
         # 如果使用拼接模式，需要 img_base_path
         if config.get('img_path_mode', 'concat') == 'concat' and not str(config.get('img_base_path') or '').strip():
             return jsonify({'success': False, 'error': '使用拼接模式时需要提供 img_base_path'}), 400
+
+        tz_raw = str(config.get('timezone') or '').strip()
+        if tz_raw:
+            config['timezone'] = str(resolve_timezone(tz_raw).key)
+        else:
+            config['timezone'] = 'Asia/Shanghai'
 
         # 更新配置并重新连接
         if update_config_and_reconnect(config):
@@ -292,140 +306,67 @@ def test_magic_fox_connection():
         return jsonify({'success': False, 'error': str(e)}), 400
 
 
+def _run_query_sync(data):
+    from studio.query.query_runner import run_query_request
+    return run_query_request(
+        data,
+        get_db_client=get_db_client,
+        execute_python_filter=execute_python_filter,
+        build_query_task=build_query_task,
+        sample_size_from_env=sample_size_from_env,
+        parse_random_seed=parse_random_seed,
+        resolve_query_python=_resolve_query_python,
+    )
+
+
 @api_bp.route('/api/query', methods=['POST'])
 def query_database():
-    """执行 SQL 查询"""
+    """执行 SQL 查询（同步，兼容旧客户端）"""
     try:
         data = request.json
-        sql_template = data.get('sql', '')
-        start_time = data.get('start_time', '')
-        end_time = data.get('end_time', '')
-        templates = _get_all_templates()
-        flow = data.get('flow')
-        filter_mode = data.get('filter_mode', '')
+        result = _run_query_sync(data)
+        status = result.pop('status_code', 200 if result.get('success') else 500)
+        return jsonify(result), status
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
-        try:
-            python_code = _resolve_query_python(data, templates)
-        except ValueError as e:
-            return jsonify({'success': False, 'error': str(e)}), 400
-        
-        if not sql_template:
+
+@api_bp.route('/api/query/jobs', methods=['POST'])
+def create_query_job():
+    """提交后台查询任务（可切换页面、可并发多条）。"""
+    try:
+        from studio.query import query_jobs
+        data = dict(request.json or {})
+        label = (data.pop('label', None) or data.pop('strategy_name', None) or '').strip()
+        if not str(data.get('sql', '')).strip():
             return jsonify({'success': False, 'error': 'SQL 查询语句不能为空'}), 400
+        job = query_jobs.submit_query_job(data, label=label)
+        return jsonify({'success': True, 'query_job_id': job['id'], 'job': job})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
-        strategy = _get_all_strategies().get((data.get('strategy_id') or '').strip()) if data.get('strategy_id') else None
-        env_schema = data.get('env_schema')
-        if strategy and not env_schema:
-            from studio.query.strategy_env_schema import merge_strategy_env_schema
-            env_schema = merge_strategy_env_schema(strategy, templates)
 
-        env_ctx = build_stage_context(
-            data,
-            start_time=start_time,
-            end_time=end_time,
-            job_id=data.get('predict_job_id') or data.get('job_id'),
-            env_schema=env_schema,
-        )
-        sample_size = sample_size_from_env(env_ctx)
-        random_seed = parse_random_seed(env_ctx.get('RANDOM_SEED'))
-        sql = substitute_template(sql_template, env_ctx)
-        unresolved = find_unresolved_template_vars(sql)
-        if unresolved:
-            return jsonify({
-                'success': False,
-                'error': format_unresolved_vars_error(unresolved, env_schema),
-                'unresolved_vars': unresolved,
-            }), 400
-        
-        # 执行查询
-        client = get_db_client()
-        df = client.query(sql)
-        
-        if df is None:
-            detail = getattr(client, 'last_query_error', None) or ''
-            msg = f'查询失败：{detail}' if detail else '查询失败，请检查 SQL 语句和数据库连接'
-            return jsonify({'success': False, 'error': msg}), 500
-        
-        if df.empty:
-            return jsonify({'success': True, 'data': [], 'count': 0, 'message': '查询结果为空'})
+@api_bp.route('/api/query/jobs', methods=['GET'])
+def list_query_jobs_route():
+    try:
+        from studio.query import query_jobs
+        limit = min(50, int(request.args.get('limit', 30)))
+        active_only = request.args.get('active_only', '').lower() in ('1', 'true', 'yes')
+        jobs = query_jobs.list_query_jobs(limit=limit, active_only=active_only)
+        return jsonify({'success': True, 'jobs': jobs})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
-        console_output = ''
-        execution_time = 0.0
-        input_rows, input_cols = len(df), len(df.columns)
-        rows_before_sample = len(df)
 
-        if python_code and python_code.strip():
-            try:
-                df, console_output, execution_time = execute_python_filter(
-                    df,
-                    python_code,
-                    capture_output=True,
-                    env_context=env_ctx,
-                    strategy=strategy,
-                )
-            except Exception as e:
-                return jsonify({
-                    'success': False,
-                    'error': f'Python 筛选失败: {str(e)}',
-                    'traceback': traceback.format_exc(),
-                    'console_output': console_output
-                }), 500
-
-            if df.empty:
-                resp = {'success': True, 'data': [], 'count': 0, 'message': '筛选后结果为空'}
-                if console_output:
-                    resp['console_output'] = console_output
-                    resp['execution_time'] = execution_time
-                return jsonify(resp)
-
-        rows_before_sample = len(df)
-        flow_payload = flow if flow and flow.get('nodes') else None
-        post_sample_skipped = True
-
-        query_meta = {
-            'query_sql': sql_template,
-            'query_sql_executed': sql,
-            'python_code': python_code or '',
-            'flow': flow_payload,
-            'filter_mode': filter_mode or ('flow' if flow_payload else 'code'),
-            'start_time': env_ctx.get('START_TIME', start_time),
-            'end_time': env_ctx.get('END_TIME', end_time),
-            'sample_size': sample_size,
-            'random_seed': random_seed,
-            'rows_before_sample': rows_before_sample,
-            'post_sample_skipped': post_sample_skipped,
-            'query_mode': 'free_query',
-            'data_source': data.get('data_source') or 'detail',
-        }
-        if query_meta['data_source'] == 'predict_result':
-            if 'model_name' in df.columns and not df['model_name'].dropna().empty:
-                query_meta['model_name'] = str(df['model_name'].dropna().iloc[0])
-            if 'job_id' in df.columns and not df['job_id'].dropna().empty:
-                try:
-                    query_meta['job_id'] = int(df['job_id'].dropna().iloc[0])
-                except (TypeError, ValueError):
-                    pass
-
-        result_data, task_id = build_query_task(df, query_meta)
-
-        resp = {
-            'success': True,
-            'data': result_data,
-            'count': len(result_data),
-            'task_id': task_id,
-            'post_sample_skipped': post_sample_skipped,
-            'sample_size': sample_size,
-            'random_seed': random_seed,
-            'rows_before_sample': rows_before_sample,
-        }
-        if python_code and python_code.strip():
-            resp['console_output'] = console_output
-            resp['execution_time'] = execution_time
-            resp['input_rows'] = input_rows
-            resp['input_cols'] = input_cols
-            resp['output_rows'] = rows_before_sample
-            resp['output_cols'] = len(df.columns)
-        return jsonify(resp)
-    
+@api_bp.route('/api/query/jobs/<job_id>', methods=['GET'])
+def get_query_job_route(job_id):
+    try:
+        from studio.query import query_jobs
+        job = query_jobs.get_query_job(job_id)
+        if not job:
+            return jsonify({'success': False, 'error': '任务不存在'}), 404
+        return jsonify({'success': True, 'job': job})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -488,6 +429,7 @@ def preview_filter():
         filter_rows = sql_rows
         execution_time = 0.0
         console_output = ''
+        filter_python_ran = False
 
         if preview_mode != 'full':
             from studio.flow.process_pipeline import ensure_process_pipeline
@@ -499,6 +441,14 @@ def preview_filter():
                 preview_mode = 'full'
             elif references_filter_rules(py_snippet) or references_random_sample(py_snippet):
                 preview_mode = 'full'
+
+        ds = data.get('data_source') or env_ctx.get('DATA_SOURCE') or 'detail'
+        sql_had_ext = 'ext' in df.columns
+        if ds == 'predict_result':
+            from studio.forge.predict_result_filters import hydrate_predict_result_df
+
+            df = hydrate_predict_result_df(df)
+            sql_rows = len(df)
 
         if preview_mode == 'full':
             try:
@@ -512,11 +462,14 @@ def preview_filter():
                         merge_data['flow'] = strategy.get('flow')
                     if not merge_data.get('filter_rules_code') and strategy.get('filter_rules_code'):
                         merge_data['filter_rules_code'] = strategy.get('filter_rules_code')
-                python_code = _resolve_query_python(merge_data, templates)
+                from studio.query.query_runner import _resolve_query_python_for_request
+
+                python_code = _resolve_query_python_for_request(merge_data, templates, _resolve_query_python)
             except ValueError as e:
                 return jsonify({'success': False, 'error': str(e)}), 400
             if python_code:
                 try:
+                    filter_python_ran = True
                     df, console_output, execution_time = execute_python_filter(
                         df,
                         python_code,
@@ -525,6 +478,11 @@ def preview_filter():
                         strategy=strategy,
                     )
                     filter_rows = len(df)
+                    if ds == 'predict_result':
+                        from studio.forge.predict_result_filters import finalize_predict_result_df
+
+                        df = finalize_predict_result_df(df)
+                        filter_rows = len(df)
                 except Exception as e:
                     return jsonify({
                         'success': False,
@@ -532,11 +490,22 @@ def preview_filter():
                         'traceback': traceback.format_exc(),
                     }), 500
         else:
-            rules_code = _resolve_filter_rules_code(data, templates)
+            from studio.query.query_runner import resolve_filter_rules_for_request
+
+            merge_rules = dict(data)
+            if strategy:
+                if not merge_rules.get('flow') and strategy.get('flow'):
+                    merge_rules['flow'] = strategy.get('flow')
+            rules_code = resolve_filter_rules_for_request(merge_rules, templates, _resolve_filter_rules_code)
             if rules_code:
                 try:
+                    filter_python_ran = True
                     start = time.time()
                     df = execute_filter_rules_only(df, rules_code, env_context=env_ctx, strategy=strategy)
+                    if ds == 'predict_result':
+                        from studio.forge.predict_result_filters import finalize_predict_result_df
+
+                        df = finalize_predict_result_df(df)
                     execution_time = time.time() - start
                     filter_rows = len(df)
                 except Exception as e:
@@ -562,7 +531,7 @@ def preview_filter():
         if 'product_no' in df.columns:
             unique_products = int(df['product_no'].nunique())
 
-        return jsonify({
+        preview_resp = {
             'success': True,
             'sql_rows': sql_rows,
             'filter_rows': filter_rows,
@@ -573,7 +542,19 @@ def preview_filter():
             'preview_mode': preview_mode,
             'post_sample_skipped': post_sample_skipped,
             'console_output': console_output or '',
-        })
+        }
+        if ds == 'predict_result':
+            from studio.forge.predict_result_filters import predict_filter_warnings
+
+            fw = predict_filter_warnings(
+                df,
+                data_source=ds,
+                sql_had_ext=sql_had_ext,
+                python_ran=filter_python_ran,
+            )
+            if fw:
+                preview_resp['filter_warnings'] = fw
+        return jsonify(preview_resp)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -648,6 +629,21 @@ def export_coco(task_id):
         with open(coco_path, 'r', encoding='utf-8') as f:
             coco_data = json.load(f)
 
+        query_meta = {}
+        meta_path = os.path.join(task_dir, 'query_meta.json')
+        if os.path.isfile(meta_path):
+            try:
+                with open(meta_path, 'r', encoding='utf-8') as f:
+                    query_meta = json.load(f)
+            except Exception:
+                query_meta = {}
+        if query_meta.get('data_source') == 'predict_result':
+            from studio.export.pred_coco_layout import ensure_predict_annotations_for_export
+            from server.core import get_effective_id2name
+            coco_data = ensure_predict_annotations_for_export(
+                coco_data, task_dir, id2name=get_effective_id2name(),
+            )
+
         if selected_list:
             selected_set = set(selected_list)
             filtered_images = [img for img in coco_data['images'] if img.get('id') in selected_set]
@@ -663,7 +659,9 @@ def export_coco(task_id):
                 'categories': coco_data.get('categories', []),
             }
 
-        image_files = normalize_coco_images_for_task(task_dir, coco_data, selected_list)
+        image_files = normalize_coco_images_for_task(
+            task_dir, coco_data, selected_list, for_export=True,
+        )
 
         zip_filename = f'coco_export_{task_id}.zip'
         zip_path = os.path.join(current_app.config['UPLOAD_FOLDER'], zip_filename)
@@ -723,147 +721,49 @@ def export_csv(task_id):
         return jsonify({'error': str(e)}), 500
 
 
-def _load_task_query_meta(task_dir):
-    meta_path = os.path.join(task_dir, 'query_meta.json')
-    if os.path.exists(meta_path):
-        try:
-            with open(meta_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
-
-def _load_coco_for_archive(task_dir, selected_indices=None):
-    """加载并可选过滤 COCO 数据，返回 (coco_dict, image_names)"""
-    csv_path = os.path.join(task_dir, 'result.csv')
-    coco_path = os.path.join(task_dir, '_annotations.coco.json')
-    if not os.path.exists(coco_path):
-        return None, []
-
-    with open(coco_path, 'r', encoding='utf-8') as f:
-        coco_data = json.load(f)
-
-    if not selected_indices:
-        image_names = []
-        if os.path.exists(csv_path):
-            df = pd.read_csv(csv_path, encoding='utf-8')
-            for idx, row in df.iterrows():
-                img_path = row.get('img_path', '')
-                if pd.notna(img_path) and img_path:
-                    image_names.append(os.path.basename(str(img_path)))
-        return coco_data, image_names
-
-    selected_indices = set(int(i) for i in selected_indices)
-    filtered_images = [img for img in coco_data.get('images', []) if img.get('id') in selected_indices]
-    selected_image_ids = {img['id'] for img in filtered_images}
-    filtered_annotations = [
-        ann for ann in coco_data.get('annotations', [])
-        if ann.get('image_id') in selected_image_ids
-    ]
-    filtered_coco = {
-        'images': filtered_images,
-        'annotations': filtered_annotations,
-        'categories': coco_data.get('categories', [])
-    }
-    if 'info' in coco_data:
-        filtered_coco['info'] = coco_data['info']
-
-    image_names = []
-    if os.path.exists(csv_path):
-        df = pd.read_csv(csv_path, encoding='utf-8')
-        for idx in sorted(selected_indices):
-            if idx < len(df):
-                img_path = df.iloc[idx].get('img_path', '')
-                if pd.notna(img_path) and img_path:
-                    image_names.append(os.path.basename(str(img_path)))
-    return filtered_coco, image_names
-
-
-def _enrich_coco_archive_info(coco_data, query_meta, archived_at, include_images):
-    """在 COCO info 中写入查询 SQL、Python 代码等归档元数据"""
-    base = build_coco_info(query_meta)
-    info = {**base, **(coco_data.get('info') or {})}
-    info.update({
-        'description': info.get('description') or f'{PRODUCT_NAME} archive',
-        'archived_at': archived_at,
-        'include_images': include_images,
-    })
-    coco_data['info'] = {k: v for k, v in info.items() if v is not None and v != ''}
-    return coco_data
+@api_bp.route('/api/archive/jobs/<job_id>', methods=['GET'])
+def get_archive_job_route(job_id):
+    """轮询归档后台任务进度。"""
+    try:
+        from studio.export import archive_jobs
+        job = archive_jobs.get_archive_job(job_id)
+        if not job:
+            return jsonify({'success': False, 'error': '归档任务不存在'}), 404
+        return jsonify({'success': True, 'job': job})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @api_bp.route('/api/archive/<task_id>', methods=['POST'])
 def archive_results(task_id):
-    """将 COCO 标注归档到指定目录，可选复制图片"""
+    """提交 COCO 归档后台任务（立即返回 job_id，前端轮询进度）。"""
     try:
+        from studio.export import archive_jobs
         data = request.get_json() or {}
-        archive_dir = (data.get('archive_dir') or '').strip()
-        subfolder = (data.get('subfolder') or '').strip()
-        selected_indices = data.get('selected_indices')
-        include_images = bool(data.get('include_images', False))
-
-        if not archive_dir:
-            archive_dir = load_config().get('archive_base_path', '').strip()
-        if not archive_dir:
-            return jsonify({'success': False, 'error': '请指定归档目录或在设置中配置 archive_base_path'}), 400
-
-        archive_dir = os.path.abspath(os.path.expanduser(archive_dir))
-        if not os.path.isdir(archive_dir):
-            try:
-                os.makedirs(archive_dir, exist_ok=True)
-            except Exception as e:
-                return jsonify({'success': False, 'error': f'无法创建归档目录: {e}'}), 400
-
-        task_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], task_id)
-        if not os.path.isdir(task_dir):
-            return jsonify({'success': False, 'error': '任务不存在'}), 404
-
-        if not subfolder:
-            subfolder = f'archive_{task_id[:8]}_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
-
-        subfolder = re.sub(r'[^\w\-\u4e00-\u9fff]+', '_', subfolder).strip('_') or f'archive_{task_id[:8]}'
-        dest_dir = os.path.join(archive_dir, subfolder)
-        if os.path.exists(dest_dir):
-            return jsonify({'success': False, 'error': f'目标目录已存在: {dest_dir}'}), 400
-        os.makedirs(dest_dir, exist_ok=True)
-
-        indices = selected_indices if selected_indices else None
-        coco_data, image_names = _load_coco_for_archive(task_dir, indices)
-        if not coco_data:
-            return jsonify({'success': False, 'error': 'COCO 标注文件不存在'}), 404
-
-        query_meta = _load_task_query_meta(task_dir)
-        for key in ('query_sql', 'python_code', 'start_time', 'end_time', 'strategy_id', 'strategy_name', 'sample_size'):
-            if data.get(key) is not None and data.get(key) != '':
-                query_meta[key] = data.get(key)
-        if data.get('query_sql_executed'):
-            query_meta['query_sql_executed'] = data['query_sql_executed']
-
-        archived_at = datetime.now().isoformat()
-        coco_data = _enrich_coco_archive_info(coco_data, query_meta, archived_at, include_images)
-
-        coco_dest = os.path.join(dest_dir, '_annotations.coco.json')
-        with open(coco_dest, 'w', encoding='utf-8') as f:
-            json.dump(coco_data, f, ensure_ascii=False, indent=2)
-        file_count = 1
-        image_count = 0
-
-        if include_images:
-            image_files = normalize_coco_images_for_task(task_dir, coco_data, indices)
-            for src, arc in image_files:
-                shutil.copy2(src, os.path.join(dest_dir, arc))
-                image_count += 1
-            file_count += image_count
-
+        job = archive_jobs.submit_archive_job(task_id, data)
         return jsonify({
             'success': True,
-            'path': dest_dir,
-            'file_count': file_count,
-            'image_count': image_count,
-            'include_images': include_images,
-            'message': f'已归档 COCO 标注' + (f'及 {image_count} 张图片' if include_images else '')
+            'archive_job_id': job['id'],
+            'job': job,
         })
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@api_bp.route('/api/query/task/<task_id>', methods=['GET'])
+def get_query_task(task_id):
+    """恢复已保存的查询任务结果（返回查询页 / 历史跳转用）。"""
+    try:
+        from server.core import load_query_task_results
+        upload_folder = current_app.config['UPLOAD_FOLDER']
+        loaded = load_query_task_results(task_id, upload_folder)
+        if not loaded:
+            return jsonify({'success': False, 'error': '任务不存在或缺少 result.csv'}), 404
+        return jsonify({'success': True, **loaded})
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1124,7 +1024,7 @@ def save_strategy():
         sid = data.get('id', '').strip()
         if not sid:
             return jsonify({'success': False, 'error': 'id 不能为空'}), 400
-        data['updated_at'] = datetime.now().isoformat()
+        data['updated_at'] = format_iso_now()
         if 'created_at' not in data:
             data['created_at'] = data['updated_at']
         data = prepare_strategy(data)

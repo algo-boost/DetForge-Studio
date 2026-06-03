@@ -12,7 +12,6 @@ import sys
 from contextlib import contextmanager
 from contextlib import redirect_stdout, redirect_stderr
 from datetime import datetime
-import shutil
 import json
 import uuid
 import zipfile
@@ -64,6 +63,8 @@ DEFAULT_CONFIG = {
     'predict_script': '',
     'coco_visualizer_root': '',
     'viz_open_mode': 'prompt',  # off | prompt | auto
+    'viz_open_new_window': False,  # 打开样本图库时默认新窗口，避免离开查询结果页
+    'timezone': 'Asia/Shanghai',  # IANA 时区；界面时间与日志默认按此显示
     'device_max_concurrency': 1,
     # Magic-Fox 数据集同步（认证均在设置页配置，写入 config.json）
     'dataset_sync_root': 'datasets',
@@ -763,7 +764,9 @@ def build_query_task(df, query_meta=None):
             json.dump(query_meta, f, ensure_ascii=False, indent=2)
 
     csv_path = os.path.join(task_dir, 'result.csv')
-    df.to_csv(csv_path, index=False, encoding='utf-8')
+    out_df = df.copy()
+    out_df['_viz_id'] = out_df.index.astype(int)
+    out_df.to_csv(csv_path, index=False, encoding='utf-8')
 
     coco_path = os.path.join(task_dir, '_annotations.coco.json')
     coco_data = None
@@ -779,43 +782,53 @@ def build_query_task(df, query_meta=None):
     except Exception as e:
         print(f"⚠️ COCO 转换警告: {e}")
 
-    local_img_by_idx = {}
-    try:
-        for idx, row in df.iterrows():
-            img_path = row.get('img_path', '')
-            if pd.isna(img_path) or not img_path or not os.path.exists(img_path):
-                if img_path and not pd.isna(img_path):
-                    print(f"⚠️ 图片文件不存在: {img_path}")
-                continue
-            base = os.path.basename(str(img_path))
-            dest_img_path = os.path.join(task_dir, f'{int(idx)}_{base}')
-            shutil.copy2(img_path, dest_img_path)
-            local_img_by_idx[int(idx)] = dest_img_path
-    except Exception as e:
-        print(f"⚠️ 复制图片警告: {e}")
+    # 查询/预测任务目录仅存 CSV、COCO、元数据；图片始终用 result.csv 中的原路径（不复制到 exports）
+    paths_by_id = {}
+    for idx, row in df.iterrows():
+        raw = row.get('img_path', '')
+        if raw is None or (hasattr(raw, '__float__') and pd.isna(raw)):
+            continue
+        p = str(raw).strip()
+        if not p:
+            continue
+        if not os.path.isfile(p):
+            print(f'⚠️ 图片文件不存在: {p}')
+            continue
+        paths_by_id[int(idx)] = os.path.abspath(p)
 
-    if os.path.isfile(coco_path):
-        paths_by_id = dict(local_img_by_idx)
-        for idx, row in df.iterrows():
-            iid = int(idx)
-            if iid in paths_by_id:
-                continue
-            raw = row.get('img_path', '')
-            if raw is None or (hasattr(raw, '__float__') and pd.isna(raw)):
-                continue
-            p = str(raw).strip()
-            if p and os.path.isfile(p):
-                paths_by_id[iid] = os.path.abspath(p)
-        if paths_by_id:
-            try:
-                if sync_coco_image_file_names(coco_path, paths_by_id, image_dir=task_dir):
-                    with open(coco_path, 'r', encoding='utf-8') as f:
-                        coco_data = json.load(f)
-            except Exception as e:
-                print(f"⚠️ COCO 图片路径同步警告: {e}")
+    if os.path.isfile(coco_path) and paths_by_id:
+        try:
+            if sync_coco_image_file_names(coco_path, paths_by_id, image_dir=task_dir):
+                with open(coco_path, 'r', encoding='utf-8') as f:
+                    coco_data = json.load(f)
+        except Exception as e:
+            print(f'⚠️ COCO 图片路径同步警告: {e}')
+
+    if (query_meta or {}).get('data_source') == 'predict_result':
+        try:
+            from studio.export.pred_coco_layout import (
+                load_pred_annotations_by_image_id,
+                prepare_predict_task_for_viz,
+            )
+            prepare_predict_task_for_viz(task_dir)
+            pred_ann_by_image = load_pred_annotations_by_image_id(task_dir)
+        except Exception as e:
+            print(f'⚠️ 预测 COCO 准备警告: {e}')
 
     if (query_meta or {}).get('data_source') == 'predict_result' and 'id' not in df.columns:
         print('⚠️ 预测结果查询缺少 id 列，带框预览可能不可用，建议在 SQL 中包含 id')
+
+    result_data = dataframe_to_result_entries(
+        df, query_meta, None, coco_data, pred_ann_by_image,
+    )
+    return result_data, task_id
+
+
+def dataframe_to_result_entries(df, query_meta=None, local_img_by_idx=None, coco_data=None, pred_ann_by_image=None):
+    """将查询结果 DataFrame 转为前端结果列表（新建与恢复任务共用）。"""
+    local_img_by_idx = local_img_by_idx or {}
+    pred_ann_by_image = pred_ann_by_image or {}
+    query_meta = query_meta or {}
 
     result_data = []
     image_meta_by_id = {}
@@ -828,23 +841,27 @@ def build_query_task(df, query_meta=None):
         if pd.isna(img_path):
             img_path = ''
         img_path = str(img_path).strip() if img_path else ''
-        local_path = local_img_by_idx.get(int(idx))
-        if local_path and os.path.isfile(local_path):
-            img_path = local_path
         img_name = os.path.basename(img_path) if img_path else ''
 
         annotations = []
         if pred_ann_by_image:
             annotations = pred_ann_by_image.get(int(idx), [])
-        elif coco_data:
+        if not annotations and coco_data:
             image_id = int(idx)
+            cat_names = {
+                int(c['id']): c.get('name', '')
+                for c in (coco_data.get('categories') or [])
+                if 'id' in c
+            }
             for ann in coco_data.get('annotations', []):
                 if ann.get('image_id') == image_id:
                     annotations.append({
                         'bbox': ann.get('bbox', []),
-                        'category': ann.get('category', ''),
+                        'category': ann.get('category') or cat_names.get(
+                            int(ann.get('category_id', 0)), '',
+                        ),
                         'category_id': ann.get('category_id', 0),
-                        'score': ann.get('score', 0)
+                        'score': ann.get('score', 0),
                     })
 
         norm = normalize_result_row_fields(row)
@@ -864,12 +881,11 @@ def build_query_task(df, query_meta=None):
             'product_type': norm['product_type'] or str(meta.get('product_type') or '').strip(),
             'position': norm['position'] or str(meta.get('position') or '').strip(),
         }
-        # 预测结果表：保留 DB 主键供带框预览
         raw_id = row.get('id')
         if raw_id is not None and not pd.isna(raw_id):
-            if (query_meta or {}).get('data_source') == 'predict_result' or row.get('job_id') is not None:
+            if query_meta.get('data_source') == 'predict_result' or row.get('job_id') is not None:
                 entry['predict_result_id'] = int(raw_id)
-        if (query_meta or {}).get('data_source') == 'predict_result':
+        if query_meta.get('data_source') == 'predict_result':
             if row.get('box_count') is not None and not pd.isna(row.get('box_count')):
                 entry['box_count'] = int(row.get('box_count'))
             if row.get('max_score') is not None and not pd.isna(row.get('max_score')):
@@ -878,13 +894,61 @@ def build_query_task(df, query_meta=None):
             entry['defect_type'] = norm['defect_type']
         if entry['product_no']:
             entry['SN'] = entry['product_no']
-        # 去掉空字符串 optional 字段
         entry = {k: v for k, v in entry.items() if v != '' or k in (
             'id', 'img_name', 'img_path', 'c_time', 'check_status',
             'detection_result_status', 'manual_check_status', 'annotations',
         )}
         result_data.append(entry)
 
-    return result_data, task_id
+    return result_data
+
+
+def load_query_task_results(task_id, upload_folder):
+    """从已保存的查询任务目录恢复结果列表（供前端返回查询页使用）。"""
+    task_dir = os.path.join(upload_folder, task_id)
+    csv_path = os.path.join(task_dir, 'result.csv')
+    if not os.path.isfile(csv_path):
+        return None
+
+    df = pd.read_csv(csv_path, encoding='utf-8')
+    meta_path = os.path.join(task_dir, 'query_meta.json')
+    query_meta = {}
+    if os.path.isfile(meta_path):
+        try:
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                query_meta = json.load(f)
+        except Exception:
+            query_meta = {}
+
+    coco_data = None
+    coco_path = os.path.join(task_dir, '_annotations.coco.json')
+    if os.path.isfile(coco_path):
+        try:
+            with open(coco_path, 'r', encoding='utf-8') as f:
+                coco_data = json.load(f)
+        except Exception as e:
+            print(f"⚠️ 读取 COCO 警告: {e}")
+
+    pred_ann_by_image = {}
+    if query_meta.get('data_source') == 'predict_result':
+        try:
+            from studio.export.pred_coco_layout import load_pred_annotations_by_image_id
+            pred_ann_by_image = load_pred_annotations_by_image_id(task_dir)
+        except Exception as e:
+            print(f"⚠️ 预测标注加载警告: {e}")
+
+    data = dataframe_to_result_entries(
+        df, query_meta, None, coco_data, pred_ann_by_image,
+    )
+    strategy_name = query_meta.get('strategy_name') or ''
+    summary = f"{strategy_name} · {len(data)} 条".strip(' ·') if strategy_name else f"{len(data)} 条"
+    return {
+        'task_id': task_id,
+        'data': data,
+        'count': len(data),
+        'summary': summary,
+        'data_source': query_meta.get('data_source') or 'detail',
+        'query_meta': query_meta,
+    }
 
 

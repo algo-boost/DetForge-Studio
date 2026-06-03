@@ -8,9 +8,9 @@ export const STRATEGY_EDITOR_TABS = [
 ];
 
 export const FILTER_MODE_LABEL = {
-  split: '规则 + 代码',
   rules: '仅规则',
   code: '仅代码',
+  split: '仅规则',
 };
 
 export function isBuiltinStrategy() {

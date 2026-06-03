@@ -1,6 +1,10 @@
 import { Link, NavLink as RouterNavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { setAppNavigate } from '../lib/appNavigate';
+import { setAppTimezone } from '../lib/timezone';
+import { api } from '../api/client';
+import QueryJobsTray from './QueryJobsTray';
+import ErrorAlertModal from './ErrorAlertModal';
 
 const SIDEBAR_COLLAPSED_KEY = 'defectloop.sidebar.collapsed';
 
@@ -107,6 +111,12 @@ export function Layout() {
   }, [pathname]);
 
   useEffect(() => {
+    api.getConfig().then((r) => {
+      if (r.success && r.config?.timezone) setAppTimezone(r.config.timezone);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     setAppNavigate(navigate);
     const warmViz = () => {
       fetch('/viz/', { credentials: 'same-origin' }).catch(() => {});
@@ -192,6 +202,16 @@ export function Layout() {
             </svg>
           </button>
         )}
+        <ErrorAlertModal />
+        <QueryJobsTray
+          onOpenResult={(job) => {
+            if (job?.task_id) {
+              navigate(`/?task=${encodeURIComponent(job.task_id)}&view=results`);
+            } else {
+              navigate('/');
+            }
+          }}
+        />
         <Outlet />
       </div>
     </div>

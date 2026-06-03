@@ -94,7 +94,7 @@ cd frontend && npm run dev
 |------|------|------|
 | 设置 | `/config` | 数据库、路径、Magic-Fox、预测环境、策略、手册 |
 
-侧栏 **设置** 内分区：数据库、检测项目、类别映射、图片路径、样本图库、预测环境、Magic-Fox、安全、查询模板、系统状态、**查询策略**、**使用手册**。
+侧栏 **设置** 内分区：数据库、检测项目、类别映射、图片路径、样本图库、预测环境、Magic-Fox、安全、查询模板、系统状态（含 **显示时区**，默认北京时间）、**查询策略**、**使用手册**。
 
 首次配置：复制 `config.json.example` → `config.json`，或在设置页填写后保存。
 
@@ -228,7 +228,10 @@ localStorage.setItem('pc_api_token', '你的令牌')
 
 - 侧栏 **样本图库** → `/viewer`，内嵌 `/viz`  
 - 查询结果栏 **打开样本图库** → 加载 `exports/<task_id>/`  
-- 预测任务结果：GT 为 `_annotations.coco.json`，预测为 `_annotations.<模型>.pred.coco.json`  
+- 预测任务结果：预测框默认写入主文件 `_annotations.coco.json`（单 GT 层即可看图）；旧版 pred 侧车已不再生成
+- **路径约定**：查询/预测结果**不复制**产线原图到 `exports/<task_id>/`，预览与列表直接使用 `result.csv` 中的原路径；任务目录仅存 CSV、COCO、元数据  
+- **打开样本图库**：标注写入 `exports/<task_id>/.coco/`（不写回产线 GT）；图片**直接读原路径**（COCO 中 `file_name` 为绝对路径，不复制到 `.viz/`）；需保证本机能访问 `result.csv` 中的 `img_path`  
+- **导出 ZIP / 归档**：此时才从原路径**复制**图片到包内同一目录，且 COCO 的 `file_name` **仅为文件名**（不用绝对路径）  
 - 设置 → 样本图库：`coco_visualizer_root`、`viz_open_mode`（prompt / auto / off）  
 
 ### 5.2 在线预测（`/online-predict`）
@@ -312,11 +315,12 @@ Worker 随 Flask 启动；独立运行：`python worker.py`。
 
 查看过往执行、从 snapshot 恢复、存为策略。
 
-### 查询策略（设置 → 查询策略）
+### 查询策略（`/strategies` 或 设置 → 查询策略）
 
 - 策略 JSON 管理、块模板  
+- **基本信息** 中配置 **数据源 `data_source`**（检测明细表 / 预测结果表）；可选 **默认预测批次 ID**，加载策略后查询页自动切换，无需操作员再选  
 - 导出 / 导入  
-- 内置策略如 `daily_trawl`、`fp_eval_set`  
+- 内置策略示例：`daily_trawl`（明细表）、`fp_eval_set`（预测结果表）  
 
 ---
 
@@ -326,9 +330,9 @@ Worker 随 Flask 启动；独立运行：`python worker.py`。
 
 | 格式 | 说明 |
 |------|------|
-| COCO ZIP | 标注 + 图片副本 |
-| CSV | 表格字段 |
-| 归档 | 复制到 `archive_base_path` |
+| COCO ZIP | 标注 + 从原路径复制的图片（同目录、`file_name` 仅文件名） |
+| CSV | 表格字段（`img_path` 仍为查询时的原路径，便于追溯） |
+| 归档 | 后台任务 + 进度条；可选复制图片到 `archive_base_path` 子目录；COCO 同样仅相对文件名 |
 
 预测结果二次利用：数据源选「预测结果表」→ 筛选 → 导出评测集。
 

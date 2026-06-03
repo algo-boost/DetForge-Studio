@@ -1,10 +1,11 @@
 """预设环境变量：时段默认值、schema 补全与执行前填充。"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from studio.query.strategy_env_schema import TIME_ENV_FIELDS
+from studio.timezone_util import format_datetime, now_local
 
 _TIME_VAR_KEYS = frozenset({'START_TIME', 'END_TIME'})
 
@@ -13,13 +14,13 @@ def _pad(n: int) -> str:
     return str(n).zfill(2)
 
 
-def format_sql_datetime(dt: datetime) -> str:
-    return dt.strftime('%Y-%m-%d %H:%M:%S')
+def format_sql_datetime(dt) -> str:
+    return format_datetime(dt, '%Y-%m-%d %H:%M:%S')
 
 
 def time_range_for_preset(preset: str = 'today') -> tuple[str, str]:
-    """快捷时段 → (START_TIME, END_TIME) SQL 格式字符串。"""
-    now = datetime.now().replace(second=0, microsecond=0)
+    """快捷时段 → (START_TIME, END_TIME) SQL 格式字符串（配置时区）。"""
+    now = now_local().replace(second=0, microsecond=0)
     end = now
     start = now
 

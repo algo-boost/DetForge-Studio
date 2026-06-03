@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, toast, openSampleGalleryWhenReady } from '../api/client';
+import { buildQueryResultsReturnPath } from '../lib/viewerNav';
 import { PAGE_SIZE, PREVIEW_LIMIT, LARGE_RESULT_THRESHOLD } from '../lib/constants';
 import {
   DEFAULT_RESULT_FILTER,
@@ -16,9 +17,12 @@ import { InspectionResultsLayout } from './InspectionResultsLayout';
 import { FilterCombo, parseStatusInput, statusInputValue } from './FilterCombo';
 import { ResultImage } from './ResultImage';
 import { Modal } from './Modal';
+import { formatDisplayTime } from '../lib/timezone';
 
 const LS_AUTO_FULLSCREEN = 'pc-results-auto-fullscreen';
 const LS_GRID_VIEW = 'pc-results-grid-view';
+const ARCHIVE_POLL_MS = 600;
+const ARCHIVE_TERMINAL = new Set(['done', 'failed']);
 
 function readBool(key, fallback) {
   try {
@@ -35,7 +39,7 @@ function writeBool(key, val) {
 
 export function ResultsPanel({
   visible, rawData, taskId, executionDetail, onArchive, dataSource = 'detail',
-  strategyId = '', strategyName = '',
+  strategyId = '', strategyName = '', viewerOpenNewWindow = false,
 }) {
   const navigate = useNavigate();
   const [filtered, setFiltered] = useState([]);
@@ -45,6 +49,15 @@ export function ResultsPanel({
   const [showAll, setShowAll] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
+
+  useEffect(() => {
+    if (!visible || !rawData.length) return;
+    try {
+      if (new URLSearchParams(window.location.search).get('view') === 'results') {
+        setCollapsed(false);
+      }
+    } catch { /* ignore */ }
+  }, [visible, rawData.length]);
   const [gridView, setGridView] = useState(() => readBool(LS_GRID_VIEW, true));
   const [activeIndex, setActiveIndex] = useState(0);
   const [viewerIdx, setViewerIdx] = useState(null);
@@ -54,6 +67,8 @@ export function ResultsPanel({
   const [archiveDir, setArchiveDir] = useState('');
   const [archiveSub, setArchiveSub] = useState('');
   const [includeImages, setIncludeImages] = useState(true);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveJob, setArchiveJob] = useState(null);
 
   const { sectionRef, height } = useResultsResize(visible, collapsed, fullscreen);
 
@@ -192,8 +207,12 @@ export function ResultsPanel({
         task_id: taskId,
         selected_indices: indices,
         dataset_name: executionDetail?.summary || `query-${taskId}`,
-      }), '查询结果');
-      toast('样本图库已在新窗口打开', 'success');
+      }), '查询结果', {
+        newWindow: viewerOpenNewWindow,
+        taskId,
+        returnTo: buildQueryResultsReturnPath(taskId),
+      });
+      toast(viewerOpenNewWindow ? '样本图库已在新窗口打开' : '样本图库已打开，可点击「返回查询结果」回到筛选结果', 'success');
     } catch (e) {
       toast(e.message, 'error');
     } finally {
@@ -202,16 +221,41 @@ export function ResultsPanel({
   };
 
   const doArchive = async () => {
-    if (!taskId || !archiveDir.trim()) return;
+    if (!taskId || !archiveDir.trim() || archiveBusy) return;
     const indices = selected.size ? [...selected] : undefined;
-    await api.archive(taskId, {
-      archive_dir: archiveDir.trim(),
-      subfolder: archiveSub.trim(),
-      selected_indices: indices,
-      include_images: includeImages,
-    });
-    setArchiveOpen(false);
-    onArchive?.();
+    setArchiveBusy(true);
+    setArchiveJob({ status: 'pending', progress: 0, phase_label: '提交任务', message: '正在提交…' });
+    try {
+      const r = await api.archive(taskId, {
+        archive_dir: archiveDir.trim(),
+        subfolder: archiveSub.trim(),
+        selected_indices: indices,
+        include_images: includeImages,
+      });
+      const jobId = r.archive_job_id || r.job?.id;
+      if (!jobId) throw new Error('未返回归档任务 ID');
+      setArchiveJob(r.job || { id: jobId, status: 'pending', progress: 0 });
+      let finalJob = r.job;
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, ARCHIVE_POLL_MS));
+        const st = await api.getArchiveJob(jobId);
+        finalJob = st.job;
+        if (!finalJob) throw new Error('归档任务不存在');
+        setArchiveJob(finalJob);
+        if (ARCHIVE_TERMINAL.has(finalJob.status)) break;
+      }
+      if (finalJob.status === 'failed') {
+        throw new Error(finalJob.error || finalJob.message || '归档失败');
+      }
+      toast(finalJob.message || `已归档到 ${finalJob.path || archiveDir}`, 'success');
+      setArchiveOpen(false);
+      onArchive?.();
+    } catch (e) {
+      toast(e.message || '归档失败', 'error');
+    } finally {
+      setArchiveBusy(false);
+      setArchiveJob(null);
+    }
   };
 
   if (!visible) return null;
@@ -221,6 +265,7 @@ export function ResultsPanel({
   return (
     <>
       <div
+        id="query-results-panel"
         ref={sectionRef}
         className={`results-section${fullscreen ? ' fullscreen' : ''}${collapsed ? ' collapsed' : ''}${!gridView ? ' detail-view' : ''}`}
         style={{ display: 'flex', ...(collapsed || fullscreen ? {} : { '--results-h': `${height}px`, height: `${height}px` }) }}
@@ -398,7 +443,7 @@ export function ResultsPanel({
                             getProductType(item) && `型号 ${getProductType(item)}`,
                             getProductNo(item) && `SN ${getProductNo(item)}`,
                             item.product_id && `ID ${item.product_id}`,
-                            item.c_time,
+                            formatDisplayTime(item.c_time),
                           ].filter(Boolean).join(' · ')}
                         </div>
                       </div>
@@ -458,17 +503,40 @@ export function ResultsPanel({
         <pre className="console-pre" style={{ padding: 16, maxHeight: 400, overflow: 'auto' }}>{executionDetail?.detail || summaryText}</pre>
       </Modal>
 
-      <Modal open={archiveOpen} title="归档 COCO 到目录" onClose={() => setArchiveOpen(false)}>
+      <Modal open={archiveOpen} title="归档 COCO 到目录" onClose={() => !archiveBusy && setArchiveOpen(false)}>
         <div className="form-modal-body">
           <label className="form-label">归档目录</label>
-          <input className="form-input" value={archiveDir} onChange={(e) => setArchiveDir(e.target.value)} placeholder="/path/to/archive" />
+          <input className="form-input" value={archiveDir} onChange={(e) => setArchiveDir(e.target.value)} placeholder="/path/to/archive" disabled={archiveBusy} />
           <label className="form-label">子文件夹（可选）</label>
-          <input className="form-input" value={archiveSub} onChange={(e) => setArchiveSub(e.target.value)} />
-          <label className="rb-toggle"><input type="checkbox" checked={includeImages} onChange={(e) => setIncludeImages(e.target.checked)} /> 复制图片</label>
+          <input className="form-input" value={archiveSub} onChange={(e) => setArchiveSub(e.target.value)} disabled={archiveBusy} />
+          <label className="rb-toggle">
+            <input type="checkbox" checked={includeImages} onChange={(e) => setIncludeImages(e.target.checked)} disabled={archiveBusy} />
+            {' '}
+            复制图片
+          </label>
           {selected.size > 0 && <p className="form-hint">将归档选中的 {selected.size} 条</p>}
+          {archiveBusy && archiveJob && (
+            <div className="forge-progress" style={{ marginTop: 12, flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
+              <div className="forge-progress-track" style={{ width: '100%' }}>
+                <div
+                  className="forge-progress-fill"
+                  style={{ width: `${Math.min(100, archiveJob.progress ?? 0)}%` }}
+                />
+              </div>
+              <span className="forge-progress-text">
+                {archiveJob.phase_label || archiveJob.phase || '处理中'}
+                {archiveJob.total > 0 ? ` · ${archiveJob.done ?? 0}/${archiveJob.total}` : ''}
+                {' · '}
+                {archiveJob.progress ?? 0}%
+                {archiveJob.message ? ` · ${archiveJob.message}` : ''}
+              </span>
+            </div>
+          )}
           <div className="form-actions">
-            <button type="button" className="btn btn-ghost" onClick={() => setArchiveOpen(false)}>取消</button>
-            <button type="button" className="btn btn-primary" onClick={doArchive}>归档</button>
+            <button type="button" className="btn btn-ghost" onClick={() => setArchiveOpen(false)} disabled={archiveBusy}>取消</button>
+            <button type="button" className="btn btn-primary" onClick={doArchive} disabled={archiveBusy}>
+              {archiveBusy ? '归档中…' : '归档'}
+            </button>
           </div>
         </div>
       </Modal>
