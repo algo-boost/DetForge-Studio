@@ -138,6 +138,23 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
     finally { setBusy(false); }
   };
 
+  const syncArchiveRoot = async () => {
+    if (!summary?.archive_root_resolved) {
+      toast('请先在「设置」中配置归档根目录', 'error');
+      return;
+    }
+    if (!window.confirm('将当前筛选范围内的全部已定案记录同步到归档根目录？')) return;
+    setBusy(true);
+    try {
+      const r = await api.forgeManualQcArchiveSync(listFilters);
+      if (r.success) {
+        setExportRes(r);
+        toast(`已同步 ${r.copied} 张图到归档目录（COCO ${r.coco_count || 0} 份）`);
+      }
+    } catch (e) { toast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+
   const handoff = async () => {
     setBusy(true);
     try {
@@ -178,6 +195,7 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
   const todayId = summary?.daily_batch_id || todayBatchId();
   const inboxRoot = summary?.handoff_inbox_root || '';
   const exportRoot = summary?.export_default_root || 'exports/manual_qc_export/';
+  const archiveRoot = summary?.archive_root_resolved || summary?.archive_root || '';
 
   return (
     <div className="mqc-library">
@@ -350,9 +368,21 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
 
           <div className="mqc-path-cards">
             <div className="mqc-path-card">
-              <div className="mqc-path-card-label">图片导出（默认）</div>
+              <div className="mqc-path-card-label">归档根目录（持续同步）</div>
+              {archiveRoot ? (
+                <code className="forge-path">{archiveRoot}/&lt;成像类别&gt;/&lt;SN&gt;/</code>
+              ) : (
+                <span className="muted">未配置 — 请在「设置 → 归档根目录」填写</span>
+              )}
+              <p className="muted">
+                含图片与 _annotations.coco.json（根/类别/SN 三级）；
+                {summary?.archive_auto_sync ? ' 确认归档时自动写入' : ' 可手动「同步到归档目录」'}
+              </p>
+            </div>
+            <div className="mqc-path-card">
+              <div className="mqc-path-card-label">一次性导出（默认）</div>
               <code className="forge-path">{exportRoot}/&lt;时间戳&gt;/</code>
-              <p className="muted">含 manifest.csv，按成像类别分子目录</p>
+              <p className="muted">含 manifest.csv；目录：成像类别 / SN / 图片 + COCO</p>
             </div>
             <div className="mqc-path-card">
               <div className="mqc-path-card-label">训练交接包（COCO + images）</div>
@@ -375,7 +405,16 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
           </div>
 
           <div className="mqc-action-bar">
-            <button type="button" className="btn btn-sm btn-primary" onClick={exportDir} disabled={busy} data-testid="mqc-library-export-dir">导出图片到目录</button>
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              onClick={syncArchiveRoot}
+              disabled={busy || !archiveRoot}
+              title={archiveRoot ? '写入配置的归档根目录' : '请先配置归档根目录'}
+            >
+              同步到归档目录
+            </button>
+            <button type="button" className="btn btn-sm btn-primary" onClick={exportDir} disabled={busy} data-testid="mqc-library-export-dir">导出到指定目录</button>
             <button type="button" className="btn btn-sm btn-ghost" onClick={exportZip} disabled={busy}>下载 ZIP</button>
             <button type="button" className="btn btn-sm btn-primary" onClick={handoff} disabled={busy || !(summary?.pending)} data-testid="mqc-library-handoff">
               生成交接包（待交接 {summary?.pending ?? 0}）
@@ -385,7 +424,10 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
 
           {exportRes && (
             <div className="forge-banner-ok">
-              图片导出完成：{exportRes.copied} 张 / {exportRes.records} 条 → <code className="forge-path">{exportRes.out_dir}</code>
+              导出完成：{exportRes.copied} 张 / {exportRes.records} 条
+              {(exportRes.coco_count > 0) && ` · COCO ${exportRes.coco_count} 份`}
+              {' → '}
+              <code className="forge-path">{exportRes.out_dir}</code>
             </div>
           )}
           {handoffRes && (

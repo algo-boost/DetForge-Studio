@@ -33,11 +33,14 @@ DISPOSITION_LABELS = {
     DISP_REJECTED: '已剔除',
 }
 
-# 人工质检成像类别 → disposition
+# 人工质检成像类别 → disposition（兼容旧配置项）
 QC_CATEGORY_TO_DISPOSITION = {
+    '未拍到': DISP_QC_NO_SHOT,
     '拍不到': DISP_QC_NO_SHOT,
     '成像不清': DISP_QC_BLUR,
     '成像不清晰': DISP_QC_BLUR,
+    '检出': DISP_TP_DETECTED,
+    '漏检': DISP_FN_MISSED,
     '成像清晰': DISP_QC_MATCHED,
     '拍到了': DISP_QC_MATCHED,
 }

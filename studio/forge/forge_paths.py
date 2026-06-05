@@ -97,6 +97,10 @@ def allowed_export_roots():
     for r in (cfg.get('manual_qc_export_roots') or []):
         if str(r).strip():
             roots.append(str(r).strip())
+    mqc_arch = str(cfg.get('manual_qc_archive_root') or '').strip()
+    if mqc_arch:
+        p = mqc_arch if os.path.isabs(mqc_arch) else os.path.join(BASE_DIR, mqc_arch)
+        roots.append(os.path.abspath(os.path.expanduser(p)))
     arch = str(cfg.get('archive_base_path') or '').strip()
     if arch:
         p = arch if os.path.isabs(arch) else os.path.join(BASE_DIR, arch)

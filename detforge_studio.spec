@@ -35,6 +35,8 @@ hiddenimports = [
     'pymysql',
     'sqlalchemy',
     'PIL',
+    'flask_cors',
+    'markdown',
     'server',
     'server.factory',
     'server.core',
@@ -42,7 +44,10 @@ hiddenimports = [
     'server.routes.api',
     'server.routes.forge',
     'server.routes.spa',
+    'server.viz_mount',
+    'server.unify_mount',
     'studio',
+    'studio.paths',
     'studio.flow.flow_compiler',
     'studio.flow.flow_schema',
     'studio.flow.flow_registry',
@@ -50,7 +55,10 @@ hiddenimports = [
     'studio.query.pipeline_rules',
     'studio.forge.forge_db',
     'studio.forge.forge_predict',
+    'studio.forge.predict_runtime',
     'studio.brand',
+    'worker',
+]
 
 a = Analysis(
     [str(project_dir / 'app.py')],

@@ -152,8 +152,13 @@ def schema_statements(db=None):
           disposition VARCHAR(32) DEFAULT NULL,
           training_status VARCHAR(32) DEFAULT 'pending' COMMENT 'pending|handoff_ready|closed',
           handoff_dir TEXT DEFAULT NULL,
+          workflow_status VARCHAR(32) DEFAULT 'archived' COMMENT 'intake|confirmed|archived|void',
+          source VARCHAR(32) DEFAULT NULL COMMENT 'ui|api|script',
+          external_ref VARCHAR(128) DEFAULT NULL,
+          intake_at DATETIME DEFAULT NULL,
           archived_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           KEY idx_sn (product_no),
+          KEY idx_workflow (workflow_status),
           KEY idx_batch (batch_id),
           KEY idx_category (qc_category),
           KEY idx_archived (archived_at),
@@ -313,6 +318,10 @@ _EXTRA_COLUMNS = [
     ('manual_qc', 'disposition', "ADD COLUMN disposition VARCHAR(32) DEFAULT NULL"),
     ('manual_qc', 'training_status', "ADD COLUMN training_status VARCHAR(32) DEFAULT 'pending'"),
     ('manual_qc', 'handoff_dir', "ADD COLUMN handoff_dir TEXT DEFAULT NULL"),
+    ('manual_qc', 'workflow_status', "ADD COLUMN workflow_status VARCHAR(32) DEFAULT 'archived'"),
+    ('manual_qc', 'source', "ADD COLUMN source VARCHAR(32) DEFAULT NULL"),
+    ('manual_qc', 'external_ref', "ADD COLUMN external_ref VARCHAR(128) DEFAULT NULL"),
+    ('manual_qc', 'intake_at', "ADD COLUMN intake_at DATETIME DEFAULT NULL"),
     ('curation_batch', 'intent_type', "ADD COLUMN intent_type VARCHAR(32) DEFAULT 'daily_ng'"),
     ('curation_item', 'disposition', "ADD COLUMN disposition VARCHAR(32) DEFAULT NULL"),
     ('curation_item', 'need_platform_label', "ADD COLUMN need_platform_label TINYINT DEFAULT 0"),
@@ -329,6 +338,7 @@ _EXTRA_COLUMNS = [
 _EXTRA_INDEXES = [
     ('manual_qc', 'uk_sn_customer_img', 'ADD UNIQUE KEY uk_sn_customer_img (product_no, customer_img_path(255))'),
     ('manual_qc', 'idx_training', 'ADD KEY idx_training (training_status)'),
+    ('manual_qc', 'idx_workflow', 'ADD KEY idx_workflow (workflow_status)'),
     ('curation_item', 'idx_disposition', 'ADD KEY idx_disposition (batch_id, disposition)'),
     ('dataset_item', 'idx_item_sn', 'ADD KEY idx_item_sn (product_no)'),
     ('dataset_item', 'idx_item_type', 'ADD KEY idx_item_type (product_type)'),
@@ -850,8 +860,9 @@ def insert_manual_qc(row):
         INSERT INTO {_t('manual_qc')}
             (batch_id, product_no, customer_img_path, matched_detail_id, matched_img_path,
              matched_object_key, defect_info, defect_type, qc_category,
-             product_type, position, match_status, note, disposition, training_status)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+             product_type, position, match_status, note, disposition, training_status,
+             workflow_status, source, external_ref, intake_at, archived_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
     """
     args = (
         (row.get('batch_id') or None), str(row.get('product_no') or '').strip(),
@@ -862,6 +873,9 @@ def insert_manual_qc(row):
         (row.get('position') or None), str(row.get('match_status') or 'matched'),
         (row.get('note') or None), (row.get('disposition') or None),
         str(row.get('training_status') or 'pending'),
+        str(row.get('workflow_status') or 'archived'),
+        (row.get('source') or None), (row.get('external_ref') or None),
+        row.get('intake_at'), row.get('archived_at'),
     )
     return _client().execute_returning_id(sql, args)
 
@@ -872,7 +886,10 @@ def insert_manual_qc_batch(rows):
 
 _MANUAL_QC_EDITABLE = ('defect_type', 'qc_category', 'note', 'product_no',
                        'customer_img_path', 'match_status', 'disposition',
-                       'training_status', 'handoff_dir')
+                       'training_status', 'handoff_dir', 'workflow_status',
+                       'matched_detail_id', 'matched_img_path', 'matched_object_key',
+                       'defect_info', 'product_type', 'position', 'batch_id',
+                       'source', 'external_ref', 'archived_at', 'intake_at')
 
 
 def get_manual_qc(qc_id):
@@ -883,8 +900,15 @@ def get_manual_qc(qc_id):
 
 
 def update_manual_qc(qc_id, fields):
-    """仅允许更新人工标注字段。返回受影响行数。"""
-    sets = {k: v for k, v in (fields or {}).items() if k in _MANUAL_QC_EDITABLE}
+    """更新 manual_qc 允许字段。返回受影响行数。"""
+    sets = {}
+    for k, v in (fields or {}).items():
+        if k not in _MANUAL_QC_EDITABLE:
+            continue
+        if k == 'defect_info':
+            sets[k] = _json_dump(v)
+        else:
+            sets[k] = v
     if not sets:
         return 0
     cols = ', '.join(f"{k}=%s" for k in sets)
@@ -896,14 +920,25 @@ def delete_manual_qc(qc_id):
     return _client().execute(f"DELETE FROM {_t('manual_qc')} WHERE id=%s", (int(qc_id),))
 
 
-def find_manual_qc_duplicate(product_no, customer_img_path):
-    """按 SN + 客户图路径查已存在的归档（去重提示）。"""
+def find_manual_qc_duplicate(product_no, customer_img_path, *, workflow_status=None):
+    """按 SN + 客户图路径查已存在记录（默认仅已定案 archived）。"""
     if not customer_img_path:
         return None
+    where = ["product_no=%s", "customer_img_path=%s"]
+    args = [str(product_no or '').strip(), customer_img_path]
+    if workflow_status:
+        if isinstance(workflow_status, (list, tuple)):
+            where.append(f"workflow_status IN ({','.join(['%s'] * len(workflow_status))})")
+            args.extend(workflow_status)
+        else:
+            where.append("workflow_status=%s")
+            args.append(workflow_status)
+    else:
+        where.append("workflow_status='archived'")
     return _client().fetchone(
-        f"SELECT id, qc_category, defect_type, archived_at FROM {_t('manual_qc')} "
-        f"WHERE product_no=%s AND customer_img_path=%s ORDER BY id DESC LIMIT 1",
-        (str(product_no or '').strip(), customer_img_path),
+        f"SELECT id, qc_category, defect_type, archived_at, workflow_status FROM {_t('manual_qc')} "
+        f"WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT 1",
+        tuple(args),
     )
 
 
@@ -917,9 +952,17 @@ def referenced_customer_imgs():
 
 def list_manual_qc(batch_id=None, product_no=None, limit=200, offset=0,
                    start=None, end=None, categories=None, defect_types=None,
-                   match_status=None, training_status=None):
-    """支持按批次/SN/时段(archived_at)/成像类别/缺陷类型/匹配状态/训练状态过滤。"""
+                   match_status=None, training_status=None, workflow_status=None):
+    """支持按批次/SN/时段(archived_at)/类别/工作流状态过滤。"""
     where, args = [], []
+    if workflow_status:
+        sts = [s for s in (workflow_status if isinstance(workflow_status, (list, tuple)) else [workflow_status]) if s]
+        if len(sts) == 1:
+            where.append("workflow_status=%s")
+            args.append(sts[0])
+        elif sts:
+            where.append(f"workflow_status IN ({','.join(['%s'] * len(sts))})")
+            args.extend(sts)
     if batch_id:
         where.append("batch_id=%s")
         args.append(batch_id)
@@ -965,9 +1008,10 @@ def list_manual_qc(batch_id=None, product_no=None, limit=200, offset=0,
 
 
 def manual_qc_training_summary():
-    """按 training_status 汇总 manual_qc 数量。"""
+    """按 training_status 汇总已定案 manual_qc 数量。"""
     rows = _client().fetchall(
-        f"SELECT training_status, COUNT(*) AS c FROM {_t('manual_qc')} GROUP BY training_status"
+        f"SELECT training_status, COUNT(*) AS c FROM {_t('manual_qc')} "
+        f"WHERE workflow_status='archived' GROUP BY training_status"
     )
     summary = {'pending': 0, 'handoff_ready': 0, 'closed': 0, 'total': 0}
     for r in rows:
@@ -994,6 +1038,7 @@ def list_manual_qc_batch_groups(limit=60):
               MIN(archived_at) AS first_at,
               MAX(archived_at) AS last_at
             FROM {_t('manual_qc')}
+            WHERE workflow_status='archived'
             GROUP BY batch_key
             ORDER BY last_at DESC
             LIMIT %s""",
@@ -1023,10 +1068,33 @@ def update_manual_qc_training_batch(qc_ids, training_status, handoff_dir=None):
     return _client().execute(sql, tuple(args))
 
 
+def manual_qc_workflow_counts():
+    """按 workflow_status 统计案卷数量。"""
+    rows = _client().fetchall(
+        f"SELECT workflow_status, COUNT(*) AS c FROM {_t('manual_qc')} GROUP BY workflow_status"
+    )
+    out = {'intake': 0, 'confirmed': 0, 'archived': 0, 'void': 0, 'total': 0}
+    for r in rows:
+        st = str(r.get('workflow_status') or 'archived')
+        n = int(r.get('c') or 0)
+        if st in out:
+            out[st] = n
+        out['total'] += n
+    return out
+
+
 def count_manual_qc(batch_id=None, product_no=None, start=None, end=None,
                     categories=None, defect_types=None, match_status=None,
-                    training_status=None):
+                    training_status=None, workflow_status=None):
     where, args = [], []
+    if workflow_status:
+        sts = [s for s in (workflow_status if isinstance(workflow_status, (list, tuple)) else [workflow_status]) if s]
+        if len(sts) == 1:
+            where.append("workflow_status=%s")
+            args.append(sts[0])
+        elif sts:
+            where.append(f"workflow_status IN ({','.join(['%s'] * len(sts))})")
+            args.extend(sts)
     if batch_id:
         where.append("batch_id=%s"); args.append(batch_id)
     if product_no:

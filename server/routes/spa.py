@@ -2,10 +2,11 @@
 import os
 from flask import Blueprint, abort, make_response, send_from_directory
 
+from studio.paths import resource_path
+
 spa_bp = Blueprint('spa', __name__)
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-FRONTEND_DIST = os.path.join(BASE_DIR, 'frontend', 'dist')
+FRONTEND_DIST = resource_path('frontend', 'dist')
 
 
 def _dist_ready():

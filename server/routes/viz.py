@@ -11,8 +11,13 @@ _viz_mounted = False
 
 def ensure_viz_mounted(app):
     global _viz_mounted
-    if not _viz_mounted:
+    if _viz_mounted:
+        return
+    try:
         _viz_mounted = register_viz_mount(app)
+    except Exception as exc:  # noqa: BLE001
+        print(f'⚠️ COCOVisualizer 挂载失败: {exc}')
+        _viz_mounted = False
 
 
 @viz_bp.route('/api/viz/status', methods=['GET'])

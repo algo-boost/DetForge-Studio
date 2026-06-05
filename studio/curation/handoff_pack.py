@@ -92,8 +92,11 @@ def _ext_predictions_to_coco_anns(ext, image_id, cat_map, ann_start=1):
     return anns, aid
 
 
-def build_coco_from_manual_qc_records(records, *, use_platform=True):
-    """从 manual_qc 记录构建 COCO（默认平台缺陷图 + 框）。"""
+def build_coco_from_manual_qc_records(records, *, use_platform=True, file_name_fn=None):
+    """从 manual_qc 记录构建 COCO（默认平台缺陷图 + 框）。
+
+    file_name_fn: 可选 (record, index) -> COCO images[].file_name（用于导出目录相对路径）。
+    """
     images = []
     annotations = []
     cat_map = {}
@@ -102,7 +105,12 @@ def build_coco_from_manual_qc_records(records, *, use_platform=True):
         path = r.get('matched_img_path') if use_platform else r.get('customer_img_path')
         if not path:
             continue
-        fname = os.path.basename(str(path))
+        if file_name_fn:
+            fname = file_name_fn(r, idx)
+        else:
+            fname = os.path.basename(str(path))
+        if not fname:
+            continue
         disp = disposition_from_qc_record(r)
         images.append({
             'id': idx,

@@ -1,6 +1,12 @@
 import { MQC_TABS } from './manualQcUtils';
 
 const TAB_ICONS = {
+  intake: (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 6h12v10H4z" stroke="currentColor" strokeWidth="1.5"/><path d="M8 10h4M8 13h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+  ),
+  review: (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="3" y="5" width="6" height="10" rx="1" stroke="currentColor" strokeWidth="1.5"/><rect x="11" y="5" width="6" height="10" rx="1" stroke="currentColor" strokeWidth="1.5"/><path d="M5 8h2M13 9h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+  ),
   archive: (
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 6h12M4 10h8M4 14h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><rect x="3" y="4" width="14" height="12" rx="2" stroke="currentColor" strokeWidth="1.5"/></svg>
   ),

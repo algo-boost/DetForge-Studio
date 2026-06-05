@@ -27,7 +27,8 @@ from studio.forge import forge_predict
 from studio.forge import forge_manual_qc
 from studio.sync import forge_sync
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+from studio.paths import APP_ROOT as BASE_DIR
+
 PID_FILE = os.path.join(BASE_DIR, 'exports', 'worker.pid')
 
 logger = logging.getLogger('detforge.worker')

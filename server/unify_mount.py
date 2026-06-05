@@ -5,7 +5,7 @@ import importlib.util
 import os
 import sys
 
-from studio.paths import PROJECT_ROOT
+from studio.paths import default_detunify_studio_root, resolve_config_path
 
 UNIFY_MOUNT_PREFIX = '/unify'
 
@@ -19,11 +19,12 @@ def resolve_detunify_studio_root(config=None):
         from server.core import load_config
         config = load_config()
     root = str(config.get('detunify_studio_root') or '').strip()
-    if not root:
-        sibling = os.path.normpath(os.path.join(PROJECT_ROOT, '..', 'DetUnify-Studio'))
-        if os.path.isdir(sibling):
-            root = sibling
-    return os.path.normpath(root) if root and os.path.isdir(root) else ''
+    if root:
+        resolved = resolve_config_path(root, must_exist=True)
+        if resolved:
+            return resolved
+    fallback = default_detunify_studio_root()
+    return fallback if fallback and os.path.isdir(fallback) else ''
 
 
 def is_unify_available(config=None):

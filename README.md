@@ -109,4 +109,15 @@ cd frontend; npm run build; cd ..
 .\packaging\build.ps1
 ```
 
-预测仍走外部 Python：设置页 `detunify_studio_root` + `predict_python_executable`。
+产物：`dist/DefectLoop-Studio/`（含 `DefectLoop-Studio.exe`）与 `dist/DefectLoop-Studio-win-<version>.zip`。
+
+发行包内已捆绑：
+
+| 目录 | 用途 |
+|------|------|
+| `tools/COCOVisualizer` | 样本图库（`/viz` 同进程挂载） |
+| `tools/DetUnify-Studio` | 在线预测 UI（`/unify`）与批量预测脚本 |
+
+**批量预测**仍通过外部 Python 子进程执行（含 torch/mmdet），在 `config.json` 设置 `predict_python_executable`（如 Magic-Fox 环境的 `python.exe`）。默认脚本路径：`tools/DetUnify-Studio/scripts/predict_job_worker.py`。
+
+首次解压后编辑同目录 `config.json`（或由 `config.json.example` 复制），填写数据库与预测 Python 路径后运行 `Start-DefectLoop.bat`，访问 `http://127.0.0.1:5050`。

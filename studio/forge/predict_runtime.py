@@ -23,18 +23,19 @@ import os
 import subprocess
 import tempfile
 
-from studio.paths import PROJECT_ROOT
+from studio.paths import (
+    APP_ROOT,
+    default_detunify_studio_root,
+    resolve_config_path,
+)
 
 DEFAULT_WORKER_REL = os.path.join('scripts', 'predict_job_worker.py')
 DEFAULT_PREDICT_SRC_REL = os.path.join('src', 'predict')
 
 
 def default_detunify_root():
-    """未配置时尝试 sibling DetUnify-Studio。"""
-    sibling = os.path.normpath(os.path.join(PROJECT_ROOT, '..', 'DetUnify-Studio'))
-    if os.path.isdir(sibling):
-        return sibling
-    return ''
+    """未配置时：发行包 tools/ → monorepo sibling。"""
+    return default_detunify_studio_root()
 
 
 def _default_predict_python_exe():
@@ -53,9 +54,21 @@ def resolve_predict_settings(config=None):
     from server.core import load_config
 
     cfg = config or load_config()
-    root = str(cfg.get('detunify_studio_root') or '').strip() or default_detunify_root()
+    config_root = str(cfg.get('detunify_studio_root') or '').strip()
+    if config_root:
+        root = resolve_config_path(config_root, must_exist=True) or ''
+    else:
+        root = default_detunify_root()
     python_exe = str(cfg.get('predict_python_executable') or '').strip()
-    script = str(cfg.get('predict_script') or '').strip()
+    if python_exe:
+        resolved_py = resolve_config_path(python_exe, must_exist=True)
+        if resolved_py:
+            python_exe = resolved_py
+    script_cfg = str(cfg.get('predict_script') or '').strip()
+    if script_cfg:
+        script = resolve_config_path(script_cfg, must_exist=True) or ''
+    else:
+        script = ''
     if root and not script:
         script = os.path.join(root, DEFAULT_WORKER_REL)
     predict_src = os.path.join(root, DEFAULT_PREDICT_SRC_REL) if root else ''

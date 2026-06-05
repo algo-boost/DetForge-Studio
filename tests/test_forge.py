@@ -70,6 +70,7 @@ class SchemaTests(unittest.TestCase):
     def test_extra_columns_migration_defined(self):
         cols = {(t, c) for t, c, _ in forge_db._EXTRA_COLUMNS}
         self.assertIn(('manual_qc', 'qc_category'), cols)
+        self.assertIn(('manual_qc', 'workflow_status'), cols)
         self.assertIn(('job_item', 'next_retry_at'), cols)
 
 
@@ -133,6 +134,64 @@ class ManualQcLogicTests(unittest.TestCase):
             forge_manual_qc.archive_one('SN1', no_match=True, qc_category='拍不到', defect_type='未知')
 
 
+class ManualQcWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self._orig = {
+            'dup': forge_db.find_manual_qc_duplicate,
+            'ins': forge_db.insert_manual_qc,
+            'upd': forge_db.update_manual_qc,
+            'get': forge_db.get_manual_qc,
+            'cats': forge_manual_qc.get_categories,
+            'fetch': forge_manual_qc._fetch_detail_record,
+        }
+        self.store = {}
+
+        def _insert(row):
+            rid = len(self.store) + 1
+            rec = dict(row)
+            rec['id'] = rid
+            self.store[rid] = rec
+            return rid
+
+        def _get(qc_id):
+            return dict(self.store.get(int(qc_id)) or {})
+
+        def _update(qc_id, fields):
+            rec = self.store.get(int(qc_id))
+            if not rec:
+                return 0
+            rec.update(fields)
+            return 1
+
+        forge_db.find_manual_qc_duplicate = lambda *a, **k: None
+        forge_db.insert_manual_qc = _insert
+        forge_db.get_manual_qc = _get
+        forge_db.update_manual_qc = _update
+        forge_manual_qc._fetch_detail_record = lambda did: {
+            'id': did, 'img_path': '/p.jpg', 'origin_object_key': 'k', 'ext': {}, 'product_type': 'T',
+        }
+
+    def tearDown(self):
+        forge_db.find_manual_qc_duplicate = self._orig['dup']
+        forge_db.insert_manual_qc = self._orig['ins']
+        forge_db.update_manual_qc = self._orig['upd']
+        forge_db.get_manual_qc = self._orig['get']
+        forge_manual_qc._fetch_detail_record = self._orig['fetch']
+        forge_manual_qc.get_categories = self._orig['cats']
+
+    def test_intake_and_confirm(self):
+        res = forge_manual_qc.intake_one('SN1', customer_img_path='/c.jpg')
+        self.assertEqual(res['workflow_status'], 'intake')
+        qid = res['id']
+        forge_manual_qc.save_review(
+            qid, matched_detail_id=99, qc_category='成像清晰', defect_type='脏污',
+        )
+        self.assertEqual(self.store[qid]['workflow_status'], 'confirmed')
+        out = forge_manual_qc.confirm_one(qid)
+        self.assertEqual(out['workflow_status'], 'archived')
+        self.assertIsNotNone(self.store[qid].get('archived_at'))
+
+
 class ManualQcExportTests(unittest.TestCase):
     def setUp(self):
         self.tmp_src = tempfile.mkdtemp()
@@ -156,8 +215,27 @@ class ManualQcExportTests(unittest.TestCase):
     def test_export_copies_and_manifest(self):
         res = forge_manual_qc.export_records(out_dir=self.out_dir, include='customer')
         self.assertEqual(res['copied'], 1)
-        self.assertTrue(os.path.exists(os.path.join(self.out_dir, '拍不到', 'SN9__1__customer.png')))
+        self.assertTrue(os.path.exists(os.path.join(self.out_dir, '拍不到', 'SN9', '1__customer.png')))
         self.assertTrue(os.path.exists(res['manifest']))
+        self.assertEqual(res.get('coco_count', 0), 0)
+
+    def test_export_writes_coco_for_platform(self):
+        plat = os.path.join(self.tmp_src, 'plat.png')
+        shutil.copy(self.cust, plat)
+        forge_db.list_manual_qc = lambda **k: [{
+            'id': 2, 'product_no': 'SN9', 'qc_category': '检出', 'defect_type': '杂质',
+            'product_type': 'T', 'match_status': 'matched', 'archived_at': '2026-01-01 00:00:00',
+            'note': '', 'customer_img_path': self.cust, 'matched_img_path': plat,
+            'defect_info': {'ext': {'original_predictions': [{
+                'name': '杂质', 'points': [{'x': 1, 'y': 2, 'w': 10, 'h': 20}],
+                'confidence': 0.9,
+            }]}},
+        }]
+        res = forge_manual_qc.export_records(out_dir=self.out_dir, include='both')
+        self.assertGreaterEqual(res['copied'], 1)
+        self.assertGreaterEqual(res.get('coco_count', 0), 1)
+        sn_coco = os.path.join(self.out_dir, '检出', 'SN9', '_annotations.coco.json')
+        self.assertTrue(os.path.exists(sn_coco))
 
     def test_export_rejects_outside_dir(self):
         with self.assertRaises(ValueError):

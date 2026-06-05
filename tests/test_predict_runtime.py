@@ -7,9 +7,9 @@ from studio.forge import predict_runtime
 
 class PredictRuntimeTests(unittest.TestCase):
     def test_default_detunify_sibling(self):
+        from studio.paths import APP_ROOT
         root = predict_runtime.default_detunify_root()
-        # 在 monorepo 中通常存在 sibling DetUnify-Studio
-        if os.path.isdir(os.path.join(predict_runtime.PROJECT_ROOT, '..', 'DetUnify-Studio')):
+        if os.path.isdir(os.path.join(APP_ROOT, '..', 'DetUnify-Studio')):
             self.assertTrue(root.endswith('DetUnify-Studio'))
 
     def test_resolve_without_script_uses_inprocess(self):
@@ -58,26 +58,28 @@ class PredictRuntimeTests(unittest.TestCase):
         data = predict_runtime.parse_subprocess_stdout('{"success": true, "results": []}')
         self.assertTrue(data['success'])
 
-    @patch('studio.forge.predict_runtime.subprocess.run')
-    def test_run_batch_predict_parses_stdout(self, mock_run):
+    @patch('studio.forge.predict_runtime.subprocess.Popen')
+    def test_run_batch_predict_parses_stdout(self, mock_popen):
         from unittest.mock import Mock
-        mock_run.return_value = Mock(
-            returncode=0,
-            stdout='{"success": true, "results": [{"path": "/a.jpg", "ok": true, "predictions": []}]}',
-            stderr='',
-        )
-        cfg = {
-            'detunify_studio_root': '/x',
-            'predict_python_executable': '/usr/bin/python',
-            'predict_script': __file__,
-        }
-        with patch.object(predict_runtime, 'resolve_predict_settings') as rs:
-            rs.return_value = {
-                'use_subprocess': True,
+        proc = Mock()
+        proc.stdout = iter([])
+        proc.stderr = iter([])
+        proc.wait.return_value = 0
+        mock_popen.return_value = proc
+        with patch.object(predict_runtime, 'parse_subprocess_stdout') as parse:
+            parse.return_value = {'success': True, 'results': [{'path': '/a.jpg', 'ok': True, 'predictions': []}]}
+            cfg = {
+                'detunify_studio_root': '/x',
                 'predict_python_executable': '/usr/bin/python',
                 'predict_script': __file__,
-                'detunify_studio_root': '/x',
             }
-            out = predict_runtime.run_batch_predict({'images': []}, config=cfg)
+            with patch.object(predict_runtime, 'resolve_predict_settings') as rs:
+                rs.return_value = {
+                    'use_subprocess': True,
+                    'predict_python_executable': '/usr/bin/python',
+                    'predict_script': __file__,
+                    'detunify_studio_root': '/x',
+                }
+                out = predict_runtime.run_batch_predict({'images': []}, config=cfg)
         self.assertEqual(len(out), 1)
         self.assertTrue(out[0]['ok'])

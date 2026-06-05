@@ -4,16 +4,23 @@ import { isPredictResultRow } from '../lib/resultImage';
 import { ResultImage } from './ResultImage';
 import { formatDisplayTime } from '../lib/timezone';
 
-function isNg(item) {
+export function isResultNg(item) {
   return String(item?.check_status) === '1';
 }
 
-function statusLabel(val) {
+export function resultStatusLabel(val) {
   if (val === '1' || val === 1) return 'NG';
   if (val === '0' || val === 0) return 'OK';
   return val != null && val !== '' ? String(val) : '—';
 }
 
+function isNg(item) {
+  return isResultNg(item);
+}
+
+function statusLabel(val) {
+  return resultStatusLabel(val);
+}
 function defectStats(item) {
   const map = new Map();
   (item?.annotations || []).forEach((a) => {
@@ -24,7 +31,7 @@ function defectStats(item) {
 }
 
 
-function DetailImageStage({ item, dataSource = 'detail' }) {
+export function DetailImageStage({ item, dataSource = 'detail' }) {
   const [dims, setDims] = useState({ w: 0, h: 0 });
   const ng = isNg(item);
   const anns = item?.annotations || [];
@@ -89,7 +96,7 @@ function DetailImageStage({ item, dataSource = 'detail' }) {
   );
 }
 
-function ThumbnailStrip({
+export function ThumbnailStrip({
   items, globalOffset, activeIndex, onSelect, dataSource = 'detail',
 }) {
   const stripRef = useRef(null);

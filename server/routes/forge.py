@@ -389,7 +389,133 @@ def manual_qc_lookup():
         sn = request.args.get('sn', '')
         limit = request.args.get('limit', default=50, type=int)
         records = forge_manual_qc.find_platform_records_by_sn(sn, limit=limit)
+        records = forge_manual_qc.enrich_platform_records(records)
         return jsonify({'success': True, 'sn': sn, 'count': len(records), 'records': records})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/viz-open', methods=['POST'])
+def manual_qc_viz_open():
+    """为 SN 平台候选图打开样本图库会话。"""
+    try:
+        data = request.json or {}
+        sn = data.get('product_no') or data.get('sn')
+        limit = min(int(data.get('limit', 100)), 200)
+        result = forge_manual_qc.open_viz_session_for_sn(sn, limit=limit)
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return _err(e, 400)
+    except FileNotFoundError as e:
+        return _err(e, 404)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/queue', methods=['GET'])
+def manual_qc_queue():
+    """待核对/待确认队列。"""
+    try:
+        status = request.args.get('status') or 'intake'
+        if status == 'pending':
+            status = ['intake', 'confirmed']
+        elif ',' in status:
+            status = [s.strip() for s in status.split(',') if s.strip()]
+        limit = min(int(request.args.get('limit', 200)), 500)
+        offset = int(request.args.get('offset', 0))
+        batch_id = request.args.get('batch_id') or None
+        data = forge_db.list_manual_qc(
+            limit=limit, offset=offset, batch_id=batch_id, workflow_status=status,
+        )
+        total = forge_db.count_manual_qc(batch_id=batch_id, workflow_status=status)
+        return jsonify({'success': True, 'data': data, 'total': total, 'offset': offset, 'limit': limit})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/intake', methods=['POST'])
+def manual_qc_intake():
+    """登记入队（单条或批量）。"""
+    try:
+        data = request.json or {}
+        if data.get('entries'):
+            result = forge_manual_qc.intake_batch(
+                data['entries'], batch_id=data.get('batch_id'), source=data.get('source'),
+            )
+            return jsonify({'success': True, **result})
+        entry = data.get('entry') or data
+        res = forge_manual_qc.intake_one(
+            product_no=entry.get('product_no'),
+            customer_img_path=entry.get('customer_img_path'),
+            batch_id=entry.get('batch_id'),
+            note=entry.get('note'),
+            defect_type=entry.get('defect_type'),
+            source=entry.get('source') or data.get('source'),
+            external_ref=entry.get('external_ref'),
+            force=bool(entry.get('force')),
+        )
+        return jsonify({'success': True, 'result': res})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/review/<int:qc_id>', methods=['POST', 'PATCH'])
+def manual_qc_review(qc_id):
+    """核对暂存 → confirmed。"""
+    try:
+        data = request.json or {}
+        rec = forge_manual_qc.save_review(
+            qc_id,
+            matched_detail_id=data.get('matched_detail_id'),
+            no_match=bool(data.get('no_match')),
+            qc_category=data.get('qc_category'),
+            defect_type=data.get('defect_type'),
+            note=data.get('note'),
+            mark_confirmed=bool(data.get('mark_confirmed', True)),
+        )
+        return jsonify({'success': True, 'data': rec})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/confirm', methods=['POST'])
+def manual_qc_confirm():
+    """确认归档（单条或批量，可含 review 字段一步完成）。"""
+    try:
+        data = request.json or {}
+        if data.get('id') and not data.get('entries') and not data.get('ids'):
+            res = forge_manual_qc.confirm_one(
+                data['id'],
+                matched_detail_id=data.get('matched_detail_id'),
+                no_match=bool(data.get('no_match')),
+                qc_category=data.get('qc_category'),
+                defect_type=data.get('defect_type'),
+                note=data.get('note'),
+                force=bool(data.get('force')),
+            )
+            return jsonify({'success': True, 'result': res})
+        result = forge_manual_qc.confirm_batch(
+            ids=data.get('ids'),
+            entries=data.get('entries'),
+            force=bool(data.get('force')),
+        )
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/void', methods=['POST'])
+def manual_qc_void():
+    try:
+        data = request.json or {}
+        result = forge_manual_qc.void_records(data.get('ids') or [], reason=data.get('reason'))
+        return jsonify({'success': True, **result})
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
@@ -432,6 +558,49 @@ def manual_qc_save_categories():
             defect_strict=data.get('defect_strict'),
         )
         return jsonify({'success': True, **result})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/archive-settings', methods=['GET'])
+def manual_qc_archive_settings_get():
+    try:
+        return jsonify({'success': True, **forge_manual_qc.get_archive_settings()})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/archive-settings', methods=['POST'])
+def manual_qc_archive_settings_save():
+    try:
+        data = request.json or {}
+        result = forge_manual_qc.save_archive_settings(
+            archive_root=data.get('archive_root'),
+            auto_sync=data.get('auto_sync'),
+            include=data.get('include'),
+        )
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/archive-sync', methods=['POST'])
+def manual_qc_archive_sync():
+    """将已定案记录同步到配置的归档根目录（成像类别/SN/图片+COCO）。"""
+    try:
+        data = request.json or {}
+        result = forge_manual_qc.sync_all_to_archive_root(
+            start=data.get('start') or None,
+            end=data.get('end') or None,
+            categories=data.get('categories') or None,
+            defect_types=data.get('defect_types') or None,
+            batch_id=data.get('batch_id') or None,
+        )
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return _err(e, 400)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
@@ -524,6 +693,7 @@ def manual_qc_list():
             defect_types=defects,
             match_status=request.args.get('match_status') or None,
             training_status=request.args.get('training_status') or None,
+            workflow_status=request.args.get('workflow_status') or 'archived',
         )
         limit = request.args.get('limit', default=200, type=int)
         offset = request.args.get('offset', default=0, type=int)

@@ -3,6 +3,7 @@ import os
 from flask import Flask, request, jsonify
 
 from server.routes import register_routes
+from studio.paths import APP_ROOT
 
 # 单次请求体上限（默认 256MB，覆盖批量图片上传）
 MAX_CONTENT_LENGTH = int(os.environ.get('PC_MAX_CONTENT_MB', '256')) * 1024 * 1024
@@ -32,7 +33,7 @@ def _install_optional_auth(app):
 
 
 def create_app():
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_dir = APP_ROOT
     # 静态资源由 spa 蓝图从 frontend/dist 提供（含 dist/assets/），
     # 勿设 static_url_path='/assets'，否则会与 Vite 产物路径冲突导致 JS 404、白屏。
     app = Flask(__name__)

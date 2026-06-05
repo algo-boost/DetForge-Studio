@@ -7,7 +7,7 @@ import sys
 
 from flask import send_from_directory, abort
 
-from studio.paths import PROJECT_ROOT
+from studio.paths import default_coco_visualizer_root, resolve_config_path
 
 VIZ_MOUNT_PREFIX = '/viz'
 
@@ -21,11 +21,12 @@ def resolve_coco_visualizer_root(config=None):
         from server.core import load_config
         config = load_config()
     root = str(config.get('coco_visualizer_root') or '').strip()
-    if not root:
-        sibling = os.path.normpath(os.path.join(PROJECT_ROOT, '..', 'COCOVisualizer'))
-        if os.path.isdir(sibling):
-            root = sibling
-    return os.path.normpath(root) if root and os.path.isdir(root) else ''
+    if root:
+        resolved = resolve_config_path(root, must_exist=True)
+        if resolved:
+            return resolved
+    fallback = default_coco_visualizer_root()
+    return fallback if fallback and os.path.isdir(fallback) else ''
 
 
 def is_viz_available(config=None):

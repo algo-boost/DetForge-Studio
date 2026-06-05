@@ -38,8 +38,7 @@ from studio.query.platform_paths import resolve_platform_paths, sync_img_base_pa
 from studio.query.deployed_models import fetch_deployed_models, fetch_training_models
 from studio.query.pipeline_rules import fetch_pipelines, fetch_pipeline_filter_rules, fetch_pipeline_nodes
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_FILE = os.path.join(BASE_DIR, 'config.json')
+from studio.paths import APP_ROOT as BASE_DIR, CONFIG_FILE, resource_path
 
 # 默认配置
 DEFAULT_CONFIG = {

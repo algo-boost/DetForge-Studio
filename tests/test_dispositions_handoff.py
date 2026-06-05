@@ -25,6 +25,18 @@ class DispositionParseTests(unittest.TestCase):
     def test_qc_category_mapping(self):
         rec = {'qc_category': '拍不到', 'match_status': 'not_found'}
         self.assertEqual(dispositions.disposition_from_qc_record(rec), 'qc_no_shot')
+        self.assertEqual(
+            dispositions.disposition_from_qc_record({'qc_category': '未拍到', 'matched_detail_id': 1}),
+            'qc_no_shot',
+        )
+        self.assertEqual(
+            dispositions.disposition_from_qc_record({'qc_category': '检出', 'matched_detail_id': 1}),
+            'tp_detected',
+        )
+        self.assertEqual(
+            dispositions.disposition_from_qc_record({'qc_category': '漏检', 'matched_detail_id': 1}),
+            'fn_missed',
+        )
 
     def test_infer_intent_replay(self):
         self.assertEqual(

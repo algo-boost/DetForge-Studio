@@ -5,6 +5,7 @@ import './styles/app.css';
 import './styles/flow-studio.css';
 import './styles/config.css';
 import './styles/inspection-results.css';
+import './styles/mqc-viewer.css';
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

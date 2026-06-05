@@ -4,9 +4,9 @@ from __future__ import annotations
 import json
 import os
 
-from studio.paths import PROJECT_ROOT as BASE_DIR
+from studio.paths import APP_ROOT as BASE_DIR, resource_path
 
-STRATEGIES_DIR = os.path.join(BASE_DIR, 'strategies')
+STRATEGIES_DIR = resource_path('strategies')
 TEMPLATES_DIR = os.path.join(STRATEGIES_DIR, 'templates')
 # 块模板库目录（非「预设策略」）
 TEMPLATE_LIBRARY_DIRS = ('_presets', '_library', '_builtin')
