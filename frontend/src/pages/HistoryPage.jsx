@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { toast } from '../api/client';
 import { Modal } from '../components/Modal';
 import SceneHubNav from '../components/SceneHubNav';
+import { buildQueryResultsPath } from '../lib/queryResultsNav';
 import { clearHistory, loadHistory } from '../lib/history';
 import { formatDisplayTime } from '../lib/timezone';
 import {
@@ -114,7 +115,7 @@ export default function HistoryPage() {
       toast('该记录无任务快照，请使用「恢复」后重新查询', 'error');
       return;
     }
-    navigate(`/?task=${encodeURIComponent(item.task_id)}&view=results`);
+    navigate(buildQueryResultsPath(item.task_id));
   };
 
   const saveAsStrategy = (item) => {

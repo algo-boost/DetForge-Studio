@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, openSampleGallery, toast } from '../../api/client';
+import { showErrorModal } from '../../lib/feedbackModal';
 import { formatSampleGalleryError } from '../../lib/sampleGallery';
 import StatusPill from './jobs/StatusPill';
 
 export { STATUS_LABEL } from './jobs/jobUtils';
 
 export function ProgressBar({ job }) {
-  const total = job.total || 0;
-  const done = job.done || 0;
-  const failed = job.failed || 0;
-  const pct = total ? Math.round(((done + failed) / total) * 100) : 0;
+  const total = Number(job.total) || 0;
+  const done = Number(job.done) || 0;
+  const failed = Number(job.failed) || 0;
+  const finished = done + failed;
+  const pct = total ? Math.round((finished / total) * 100) : 0;
   const hasFailed = failed > 0;
+  const isActive = job.status === 'running' || job.status === 'pending';
   return (
     <div className="pjobs-progress">
       <div className="pjobs-progress-track">
@@ -21,7 +24,7 @@ export function ProgressBar({ job }) {
         {failed > 0 && (
           <div className="pjobs-progress-fill pjobs-progress-fail" style={{ width: `${total ? (failed / total) * 100 : 0}%` }} />
         )}
-        {!done && !failed && pct === 0 && job.status === 'running' && (
+        {!done && !failed && pct === 0 && isActive && (
           <div className="pjobs-progress-fill pjobs-progress-active" style={{ width: '8%' }} />
         )}
       </div>
@@ -195,7 +198,7 @@ export function JobDetail({ job }) {
 
   const openGallery = async () => {
     if (!isDone || !resultCount) {
-      toast('作业尚未完成或无符合筛选的结果', 'error');
+      showErrorModal('作业尚未完成或无符合筛选的结果', { title: '无法打开图库' });
       return;
     }
     setOpeningViz(true);
@@ -206,7 +209,7 @@ export function JobDetail({ job }) {
       });
       openSampleGallery(record);
     } catch (e) {
-      toast(formatSampleGalleryError(e, `作业 #${job.id}`), 'error');
+      showErrorModal(formatSampleGalleryError(e, `作业 #${job.id}`), { title: '打开图库失败' });
     } finally {
       setOpeningViz(false);
     }

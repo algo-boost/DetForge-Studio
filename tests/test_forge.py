@@ -192,6 +192,98 @@ class ManualQcWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(self.store[qid].get('archived_at'))
 
 
+class ManualQcReviseTests(unittest.TestCase):
+    def setUp(self):
+        self.store = {}
+        self.history = []
+        self._orig = {
+            'get': forge_db.get_manual_qc,
+            'upd': forge_db.update_manual_qc,
+            'ins_hist': forge_db.insert_manual_qc_history,
+            'list_hist': forge_db.list_manual_qc_history,
+            'cats': forge_manual_qc.get_categories,
+            'fetch': forge_manual_qc._fetch_detail_record,
+            'archive': forge_manual_qc.get_archive_settings,
+            'sync': forge_manual_qc.sync_record_to_archive_root,
+        }
+        self.store[1] = {
+            'id': 1,
+            'workflow_status': 'archived',
+            'product_no': 'SN1',
+            'qc_category': '检出',
+            'defect_type': '划伤',
+            'note': 'old',
+            'matched_detail_id': 10,
+            'matched_img_path': '/p.jpg',
+            'match_status': 'matched',
+            'disposition': 'fp',
+            'product_type': 'T',
+        }
+
+        def _get(qc_id):
+            rec = self.store.get(int(qc_id))
+            return dict(rec) if rec else None
+
+        def _update(qc_id, fields):
+            rec = self.store.get(int(qc_id))
+            if not rec:
+                return 0
+            rec.update(fields)
+            return 1
+
+        def _insert_hist(qc_id, **kw):
+            hid = len(self.history) + 1
+            row = {'id': hid, 'qc_id': int(qc_id), **kw}
+            self.history.append(row)
+            return hid
+
+        def _list_hist(qc_id, limit=100):
+            return [dict(h) for h in self.history if h['qc_id'] == int(qc_id)][:limit]
+
+        forge_db.get_manual_qc = _get
+        forge_db.update_manual_qc = _update
+        forge_db.insert_manual_qc_history = _insert_hist
+        forge_db.list_manual_qc_history = _list_hist
+        forge_manual_qc.get_categories = lambda: {'defect_strict': False, 'defect_types': []}
+        forge_manual_qc._fetch_detail_record = lambda did: {
+            'id': did, 'img_path': f'/p{did}.jpg', 'origin_object_key': 'k', 'ext': {}, 'product_type': 'T',
+        }
+        forge_manual_qc.get_archive_settings = lambda: {}
+        forge_manual_qc.sync_record_to_archive_root = lambda **k: None
+
+    def tearDown(self):
+        forge_db.get_manual_qc = self._orig['get']
+        forge_db.update_manual_qc = self._orig['upd']
+        forge_db.insert_manual_qc_history = self._orig['ins_hist']
+        forge_db.list_manual_qc_history = self._orig['list_hist']
+        forge_manual_qc.get_categories = self._orig['cats']
+        forge_manual_qc._fetch_detail_record = self._orig['fetch']
+        forge_manual_qc.get_archive_settings = self._orig['archive']
+        forge_manual_qc.sync_record_to_archive_root = self._orig['sync']
+
+    def test_revise_writes_history(self):
+        out = forge_manual_qc.update_archived_record(
+            1, qc_category='漏检', defect_type='脏污', note='new note',
+        )
+        self.assertEqual(out['record']['qc_category'], '漏检')
+        self.assertEqual(out['record']['defect_type'], '脏污')
+        self.assertEqual(len(self.history), 1)
+        self.assertIn('qc_category', self.history[0]['changed_fields'])
+        rows = forge_manual_qc.list_record_history(1)
+        self.assertEqual(len(rows), 1)
+
+    def test_revise_rejects_non_archived(self):
+        self.store[2] = {'id': 2, 'workflow_status': 'confirmed', 'qc_category': '检出',
+                         'matched_detail_id': 1}
+        with self.assertRaises(ValueError):
+            forge_manual_qc.update_archived_record(2, qc_category='漏检')
+
+    def test_revise_no_change_skips_history(self):
+        out = forge_manual_qc.update_archived_record(1, qc_category='检出', defect_type='划伤', note='old')
+        self.assertEqual(len(self.history), 0)
+        self.assertIsNone(out['history_id'])
+
+
 class ManualQcExportTests(unittest.TestCase):
     def setUp(self):
         self.tmp_src = tempfile.mkdtemp()
@@ -215,7 +307,7 @@ class ManualQcExportTests(unittest.TestCase):
     def test_export_copies_and_manifest(self):
         res = forge_manual_qc.export_records(out_dir=self.out_dir, include='customer')
         self.assertEqual(res['copied'], 1)
-        self.assertTrue(os.path.exists(os.path.join(self.out_dir, '拍不到', 'SN9', '1__customer.png')))
+        self.assertTrue(os.path.exists(os.path.join(self.out_dir, '2026', '01', '01', '拍不到', 'SN9', '1__customer.png')))
         self.assertTrue(os.path.exists(res['manifest']))
         self.assertEqual(res.get('coco_count', 0), 0)
 
@@ -234,8 +326,10 @@ class ManualQcExportTests(unittest.TestCase):
         res = forge_manual_qc.export_records(out_dir=self.out_dir, include='both')
         self.assertGreaterEqual(res['copied'], 1)
         self.assertGreaterEqual(res.get('coco_count', 0), 1)
-        sn_coco = os.path.join(self.out_dir, '检出', 'SN9', '_annotations.coco.json')
+        sn_coco = os.path.join(self.out_dir, '2026', '01', '01', '检出', 'SN9', '_annotations.coco.json')
         self.assertTrue(os.path.exists(sn_coco))
+        self.assertFalse(os.path.exists(os.path.join(self.out_dir, '_annotations.coco.json')))
+        self.assertFalse(os.path.exists(os.path.join(self.out_dir, '2026', '01', '01', '检出', '_annotations.coco.json')))
 
     def test_export_rejects_outside_dir(self):
         with self.assertRaises(ValueError):

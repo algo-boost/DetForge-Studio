@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, toast } from '../../api/client';
+import { showErrorModal, showResultModal } from '../../lib/feedbackModal';
 import {
   registryMatchesApproaches,
   resolveLocalApproachId,
@@ -301,11 +302,14 @@ export default function PlatformPredictPanel({
       const res = await api.forgeEnqueuePredictBatch(body);
       if (res.success) {
         const ids = (res.jobs || []).map((j) => `#${j.job_id}`).join('、');
-        toast(`已创建 ${res.model_count} 个预测任务（${res.total_images} 张/任务）${ids ? `：${ids}` : ''}`);
+        showResultModal(
+          `已创建 ${res.model_count} 个预测任务（${res.total_images} 张/任务）${ids ? `\n${ids}` : ''}`,
+          { title: '预测任务已提交' },
+        );
         onCreated?.(res);
       }
     } catch (e) {
-      toast(e.message, 'error');
+      showErrorModal(e.message, { title: '创建预测任务失败' });
     } finally {
       setBusy(false);
     }

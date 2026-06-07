@@ -941,7 +941,7 @@ def load_query_task_results(task_id, upload_folder):
     )
     strategy_name = query_meta.get('strategy_name') or ''
     summary = f"{strategy_name} · {len(data)} 条".strip(' ·') if strategy_name else f"{len(data)} 条"
-    return {
+    out = {
         'task_id': task_id,
         'data': data,
         'count': len(data),
@@ -949,5 +949,9 @@ def load_query_task_results(task_id, upload_folder):
         'data_source': query_meta.get('data_source') or 'detail',
         'query_meta': query_meta,
     }
+    for key in ('console_output', 'execution_time', 'input_rows', 'output_rows'):
+        if key in query_meta:
+            out[key] = query_meta[key]
+    return out
 
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, toast } from '../../../api/client';
+import { showErrorModal, showResultModal } from '../../../lib/feedbackModal';
 import { MATCH_LABEL, MATCH_PILL_CLASS, TRAINING_LABEL, todayBatchId } from './manualQcUtils';
 
 const PAGE = 100;
@@ -37,7 +38,7 @@ function buildListQs(filters, off = 0) {
   return q.toString();
 }
 
-export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
+export default function ArchiveLibrary({ categories, reloadKey, onCompare, onOpenEdit }) {
   const [summary, setSummary] = useState(null);
   const [batches, setBatches] = useState([]);
   const [selectedBatch, setSelectedBatch] = useState(null);
@@ -51,10 +52,6 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
   const [include, setInclude] = useState('both');
   const [outDir, setOutDir] = useState('');
   const [busy, setBusy] = useState(false);
-  const [exportRes, setExportRes] = useState(null);
-  const [handoffRes, setHandoffRes] = useState(null);
-  const [editId, setEditId] = useState(null);
-  const [draft, setDraft] = useState({});
 
   const listFilters = useMemo(() => {
     const base = batchFilterParams(selectedBatch);
@@ -78,8 +75,6 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
 
   const query = useCallback(async (off = 0) => {
     setBusy(true);
-    setExportRes(null);
-    setHandoffRes(null);
     try {
       const r = await api.forgeManualQcList(`?${buildListQs(listFilters, off)}`);
       if (r.success) {
@@ -122,10 +117,12 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
     try {
       const r = await api.forgeManualQcExport(exportParams());
       if (r.success) {
-        setExportRes(r);
-        toast(`已导出 ${r.copied} 张图`);
+        showResultModal(
+          `已导出 ${r.copied} 张图 / ${r.records} 条${r.coco_count ? ` · COCO ${r.coco_count} 份` : ''}`,
+          { title: '导出完成', detail: r.out_dir ? `目录：${r.out_dir}` : '' },
+        );
       }
-    } catch (e) { toast(e.message, 'error'); }
+    } catch (e) { showErrorModal(e.message, { title: '导出失败' }); }
     finally { setBusy(false); }
   };
 
@@ -133,14 +130,14 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
     setBusy(true);
     try {
       await api.forgeManualQcExportZip(exportParams());
-      toast('ZIP 已开始下载');
-    } catch (e) { toast(e.message, 'error'); }
+      showResultModal('ZIP 文件已开始下载', { title: '导出完成' });
+    } catch (e) { showErrorModal(e.message, { title: '导出失败' }); }
     finally { setBusy(false); }
   };
 
   const syncArchiveRoot = async () => {
     if (!summary?.archive_root_resolved) {
-      toast('请先在「设置」中配置归档根目录', 'error');
+      showErrorModal('请先在「设置」中配置归档根目录', { title: '无法同步' });
       return;
     }
     if (!window.confirm('将当前筛选范围内的全部已定案记录同步到归档根目录？')) return;
@@ -148,10 +145,12 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
     try {
       const r = await api.forgeManualQcArchiveSync(listFilters);
       if (r.success) {
-        setExportRes(r);
-        toast(`已同步 ${r.copied} 张图到归档目录（COCO ${r.coco_count || 0} 份）`);
+        showResultModal(
+          `已同步 ${r.copied} 张图到归档目录${r.coco_count ? `（COCO ${r.coco_count} 份）` : ''}`,
+          { title: '同步完成', detail: r.out_dir ? `目录：${r.out_dir}` : '' },
+        );
       }
-    } catch (e) { toast(e.message, 'error'); }
+    } catch (e) { showErrorModal(e.message, { title: '同步失败' }); }
     finally { setBusy(false); }
   };
 
@@ -163,39 +162,44 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
         training_status: 'pending',
       });
       if (r.success) {
-        setHandoffRes(r);
-        toast(`交接包已生成（${r.record_count} 条）`);
+        const dir = r.handoff_dir || r.out_dir || '';
+        const lines = [
+          `样本 ${r.record_count} 条`,
+          r.images_copied != null ? `复制图片 ${r.images_copied} 张` : '',
+          `运行码 ${r.run_code}`,
+          dir ? `目录（服务器路径）：\n${dir}` : '',
+          r.coco_path ? `COCO：${r.coco_path}` : '',
+          '内含 images/、_annotations.coco.json、manifest.csv、README.md',
+        ].filter(Boolean).join('\n\n');
+        showResultModal(lines, { title: '训练交接包已生成' });
         loadMeta();
         query(offset);
       }
-    } catch (e) { toast(e.message, 'error'); }
+    } catch (e) { showErrorModal(e.message, { title: '生成交接包失败' }); }
     finally { setBusy(false); }
   };
 
-  const startEdit = (r) => {
-    setEditId(r.id);
-    setDraft({ qc_category: r.qc_category || '', defect_type: r.defect_type || '', note: r.note || '' });
+  const openRecord = (r) => {
+    if (onOpenEdit) onOpenEdit(r.id);
   };
 
-  const save = async (id) => {
-    try {
-      const r = await api.forgeManualQcUpdate(id, draft);
-      if (r.success) { toast('已更新'); setEditId(null); query(offset); loadMeta(); }
-    } catch (e) { toast(e.message, 'error'); }
-  };
-
-  const del = async (id) => {
+  const del = async (id, e) => {
+    e?.stopPropagation();
     if (!window.confirm(`确认删除归档 #${id}？`)) return;
     try {
       const r = await api.forgeManualQcDelete(id);
       if (r.success) { toast('已删除'); query(offset); loadMeta(); }
-    } catch (e) { toast(e.message, 'error'); }
+    } catch (e) { showErrorModal(e.message, { title: '删除失败' }); }
   };
 
   const todayId = summary?.daily_batch_id || todayBatchId();
   const inboxRoot = summary?.handoff_inbox_root || '';
   const exportRoot = summary?.export_default_root || 'exports/manual_qc_export/';
   const archiveRoot = summary?.archive_root_resolved || summary?.archive_root || '';
+  const globalPending = summary?.pending ?? 0;
+  const handoffDisabledReason = globalPending <= 0
+    ? '无「待交接」且已匹配平台图的已定案记录'
+    : '';
 
   return (
     <div className="mqc-library">
@@ -288,7 +292,7 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
             <div className="platform-surface-card-head mqc-surface-head">
               <div>
                 <h4>归档记录</h4>
-                <p className="mqc-surface-desc">共 {total} 条 · 当前 {offset + 1}–{offset + rows.length}</p>
+                <p className="mqc-surface-desc">点击行进入与核对台相同的修订界面 · 共 {total} 条</p>
               </div>
             </div>
             <div className="mqc-table-wrap">
@@ -301,49 +305,34 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
                 </thead>
                 <tbody>
                   {rows.map((r) => (
-                    <tr key={r.id}>
+                    <tr
+                      key={r.id}
+                      className="mqc-library-row-clickable"
+                      onClick={() => openRecord(r)}
+                      title="点击进入修订（对照看图 + 变更历史）"
+                    >
                       <td>{r.id}</td>
                       <td><code className="forge-path">{r.batch_id || String(r.archived_at || '').slice(0, 10)}</code></td>
                       <td>{r.product_no}</td>
-                      {editId === r.id ? (
-                        <>
-                          <td>
-                            <select value={draft.qc_category} onChange={(e) => setDraft({ ...draft, qc_category: e.target.value })}>
-                              <option value="">—</option>
-                              {categories.imaging_categories.map((c) => <option key={c} value={c}>{c}</option>)}
-                            </select>
-                          </td>
-                          <td><input list="forge-defect-types" value={draft.defect_type} onChange={(e) => setDraft({ ...draft, defect_type: e.target.value })} /></td>
-                          <td><MatchPill status={r.match_status} /></td>
-                          <td><TrainingPill status={r.training_status} /></td>
-                          <td colSpan={2} className="forge-actions">
-                            <button type="button" className="btn btn-sm btn-primary" onClick={() => save(r.id)}>保存</button>
-                            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setEditId(null)}>取消</button>
-                          </td>
-                        </>
-                      ) : (
-                        <>
-                          <td>{r.qc_category || '—'}</td>
-                          <td>{r.defect_type || '—'}</td>
-                          <td><MatchPill status={r.match_status} /></td>
-                          <td>
-                            <TrainingPill status={r.training_status} />
-                            {r.handoff_dir && <div className="mqc-handoff-path muted" title={r.handoff_dir}>↗ 已打包</div>}
-                          </td>
-                          <td className="forge-path">{String(r.archived_at || '').slice(0, 16)}</td>
-                          <td className="forge-actions">
-                            {(r.customer_img_path || r.matched_img_path) && (
-                              <button type="button" className="btn btn-sm btn-ghost" onClick={() => onCompare({
-                                customer: r.customer_img_path ? api.imageUrl('c', r.customer_img_path) : null,
-                                platform: r.matched_img_path ? api.imageUrl('m', r.matched_img_path) : null,
-                              })}
-                              >对比</button>
-                            )}
-                            <button type="button" className="btn btn-sm btn-ghost" onClick={() => startEdit(r)}>编辑</button>
-                            <button type="button" className="btn btn-sm btn-ghost" onClick={() => del(r.id)}>删除</button>
-                          </td>
-                        </>
-                      )}
+                      <td>{r.qc_category || '—'}</td>
+                      <td>{r.defect_type || '—'}</td>
+                      <td><MatchPill status={r.match_status} /></td>
+                      <td>
+                        <TrainingPill status={r.training_status} />
+                        {r.handoff_dir && <div className="mqc-handoff-path muted" title={r.handoff_dir}>↗ 已打包</div>}
+                      </td>
+                      <td className="forge-path">{String(r.archived_at || '').slice(0, 16)}</td>
+                      <td className="forge-actions" onClick={(e) => e.stopPropagation()}>
+                        <button type="button" className="btn btn-sm btn-primary" onClick={() => openRecord(r)}>打开</button>
+                        {(r.customer_img_path || r.matched_img_path) && (
+                          <button type="button" className="btn btn-sm btn-ghost" onClick={() => onCompare({
+                            customer: r.customer_img_path ? api.imageUrl('c', r.customer_img_path) : null,
+                            platform: r.matched_img_path ? api.imageUrl('m', r.matched_img_path) : null,
+                          })}
+                          >快览</button>
+                        )}
+                        <button type="button" className="btn btn-sm btn-ghost" onClick={(e) => del(r.id, e)}>删除</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -370,24 +359,27 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
             <div className="mqc-path-card">
               <div className="mqc-path-card-label">归档根目录（持续同步）</div>
               {archiveRoot ? (
-                <code className="forge-path">{archiveRoot}/&lt;成像类别&gt;/&lt;SN&gt;/</code>
+                <code className="forge-path">{archiveRoot}/&lt;年&gt;/&lt;月&gt;/&lt;日&gt;/&lt;成像类别&gt;/&lt;SN&gt;/</code>
               ) : (
                 <span className="muted">未配置 — 请在「设置 → 归档根目录」填写</span>
               )}
               <p className="muted">
-                含图片与 _annotations.coco.json（根/类别/SN 三级）；
+                含图片与 SN 目录级 _annotations.coco.json；
                 {summary?.archive_auto_sync ? ' 确认归档时自动写入' : ' 可手动「同步到归档目录」'}
               </p>
             </div>
             <div className="mqc-path-card">
               <div className="mqc-path-card-label">一次性导出（默认）</div>
-              <code className="forge-path">{exportRoot}/&lt;时间戳&gt;/</code>
-              <p className="muted">含 manifest.csv；目录：成像类别 / SN / 图片 + COCO</p>
+              <code className="forge-path">{exportRoot}/&lt;时间戳&gt;/&lt;年&gt;/&lt;月&gt;/&lt;日&gt;/…</code>
+              <p className="muted">含 manifest.csv；SN 目录下图片 + COCO</p>
             </div>
             <div className="mqc-path-card">
               <div className="mqc-path-card-label">训练交接包（COCO + images）</div>
               <code className="forge-path">{inboxRoot || '…/datasets/training_inbox/'}/qc_&lt;时间&gt;_xxx/</code>
-              <p className="muted">仅含已匹配平台图的 pending 记录；生成后状态变为「已交接」</p>
+              <p className="muted">
+                写入服务器目录（非浏览器下载）；仅含已匹配平台图且状态为「待交接」的记录；
+                生成后状态变为「已交接」
+              </p>
             </div>
           </div>
 
@@ -416,27 +408,18 @@ export default function ArchiveLibrary({ categories, reloadKey, onCompare }) {
             </button>
             <button type="button" className="btn btn-sm btn-primary" onClick={exportDir} disabled={busy} data-testid="mqc-library-export-dir">导出到指定目录</button>
             <button type="button" className="btn btn-sm btn-ghost" onClick={exportZip} disabled={busy}>下载 ZIP</button>
-            <button type="button" className="btn btn-sm btn-primary" onClick={handoff} disabled={busy || !(summary?.pending)} data-testid="mqc-library-handoff">
-              生成交接包（待交接 {summary?.pending ?? 0}）
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              onClick={handoff}
+              disabled={busy || globalPending <= 0}
+              title={handoffDisabledReason || '对当前筛选范围内的待交接记录打包'}
+              data-testid="mqc-library-handoff"
+            >
+              生成交接包（待交接 {globalPending}）
             </button>
             <Link to="/curation" className="btn btn-sm btn-ghost">筛选归档总览 →</Link>
           </div>
-
-          {exportRes && (
-            <div className="forge-banner-ok">
-              导出完成：{exportRes.copied} 张 / {exportRes.records} 条
-              {(exportRes.coco_count > 0) && ` · COCO ${exportRes.coco_count} 份`}
-              {' → '}
-              <code className="forge-path">{exportRes.out_dir}</code>
-            </div>
-          )}
-          {handoffRes && (
-            <div className="forge-banner-ok">
-              训练交接包：{handoffRes.record_count} 条 · 运行码 <code>{handoffRes.run_code}</code>
-              <br />
-              目录：<code className="forge-path">{handoffRes.handoff_dir || handoffRes.out_dir}</code>
-            </div>
-          )}
         </section>
       </div>
     </div>

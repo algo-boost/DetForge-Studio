@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, toast } from '../api/client';
 import JobsList from '../components/forge/JobsList';
 import SceneHubNav from '../components/SceneHubNav';
 import { STATUS_LABEL } from '../components/forge/JobWidgets';
+import { useForgeJobsPolling } from '../hooks/useForgeJobsPolling';
 
 const JOBS_PAGE = 50;
 
@@ -25,41 +26,15 @@ function SurfaceCard({ title, desc, actions, children }) {
 }
 
 export default function JobsPage() {
-  const [jobs, setJobs] = useState([]);
   const [schema, setSchema] = useState({ ready: true, database: 'detforge' });
   const [detailId, setDetailId] = useState(null);
-  const [jobOffset, setJobOffset] = useState(0);
-  const [jobTotal, setJobTotal] = useState(0);
-  const timer = useRef(null);
-  const jobsRef = useRef([]);
-
-  const load = async (off = jobOffset) => {
-    try {
-      const j = await api.forgeJobs(`?job_type=predict&limit=${JOBS_PAGE}&offset=${off}`);
-      if (j.success) {
-        setJobs(j.data || []);
-        jobsRef.current = j.data || [];
-        setJobTotal(j.total || 0);
-        setJobOffset(off);
-      }
-    } catch (e) { /* 静默轮询失败 */ }
-  };
-
-  const scheduleNext = () => {
-    const active = jobsRef.current.some((j) => j.status === 'running' || j.status === 'pending');
-    timer.current = setTimeout(async () => { await load(jobOffset); scheduleNext(); }, active ? 3000 : 12000);
-  };
+  const { jobs, jobTotal, jobOffset, load } = useForgeJobsPolling('predict', JOBS_PAGE);
 
   const checkSchema = async () => {
     try { const s = await api.forgeSchemaStatus(); if (s.success) setSchema(s); } catch (e) { /* ignore */ }
   };
 
-  useEffect(() => {
-    checkSchema();
-    load().then(scheduleNext);
-    return () => clearTimeout(timer.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => { checkSchema(); }, []);
 
   const initSchema = async () => {
     try { const r = await api.forgeSchemaInit(); if (r.success) { toast('已初始化写库'); checkSchema(); } }

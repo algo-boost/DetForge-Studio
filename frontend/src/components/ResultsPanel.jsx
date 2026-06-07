@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, toast, openSampleGalleryWhenReady } from '../api/client';
+import { showErrorModal, showResultModal } from '../lib/feedbackModal';
 import { buildQueryResultsReturnPath } from '../lib/viewerNav';
 import { PAGE_SIZE, PREVIEW_LIMIT, LARGE_RESULT_THRESHOLD } from '../lib/constants';
 import {
@@ -40,6 +41,7 @@ function writeBool(key, val) {
 export function ResultsPanel({
   visible, rawData, taskId, executionDetail, onArchive, dataSource = 'detail',
   strategyId = '', strategyName = '', viewerOpenNewWindow = false,
+  pageLayout = false,
 }) {
   const navigate = useNavigate();
   const [filtered, setFiltered] = useState([]);
@@ -47,18 +49,23 @@ export function ResultsPanel({
   const [selected, setSelected] = useState(new Set());
   const [page, setPage] = useState(1);
   const [showAll, setShowAll] = useState(false);
-  const [fullscreen, setFullscreen] = useState(false);
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(!pageLayout);
+  const [fullscreen, setFullscreen] = useState(pageLayout ? false : readBool(LS_AUTO_FULLSCREEN, true));
+  const [gridView, setGridView] = useState(() => readBool(LS_GRID_VIEW, true));
 
   useEffect(() => {
     if (!visible || !rawData.length) return;
+    if (pageLayout) {
+      setCollapsed(false);
+      setShowAll(true);
+      return;
+    }
     try {
       if (new URLSearchParams(window.location.search).get('view') === 'results') {
         setCollapsed(false);
       }
     } catch { /* ignore */ }
-  }, [visible, rawData.length]);
-  const [gridView, setGridView] = useState(() => readBool(LS_GRID_VIEW, true));
+  }, [visible, rawData.length, pageLayout]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [viewerIdx, setViewerIdx] = useState(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -81,13 +88,13 @@ export function ResultsPanel({
     if (rawData.length > 0) {
       setShowAll(true);
       setCollapsed(false);
-      setFullscreen(readBool(LS_AUTO_FULLSCREEN, true));
+      setFullscreen(pageLayout ? false : readBool(LS_AUTO_FULLSCREEN, true));
     } else {
       setShowAll(false);
       setCollapsed(true);
       setFullscreen(false);
     }
-  }, [rawData]);
+  }, [rawData, pageLayout]);
 
   useEffect(() => {
     setFiltered(isFilterActive(filter)
@@ -247,11 +254,11 @@ export function ResultsPanel({
       if (finalJob.status === 'failed') {
         throw new Error(finalJob.error || finalJob.message || '归档失败');
       }
-      toast(finalJob.message || `已归档到 ${finalJob.path || archiveDir}`, 'success');
+      showResultModal(finalJob.message || `已归档到 ${finalJob.path || archiveDir}`, { title: '归档完成' });
       setArchiveOpen(false);
       onArchive?.();
     } catch (e) {
-      toast(e.message || '归档失败', 'error');
+      showErrorModal(e.message || '归档失败', { title: '归档失败' });
     } finally {
       setArchiveBusy(false);
       setArchiveJob(null);
@@ -267,7 +274,7 @@ export function ResultsPanel({
       <div
         id="query-results-panel"
         ref={sectionRef}
-        className={`results-section${fullscreen ? ' fullscreen' : ''}${collapsed ? ' collapsed' : ''}${!gridView ? ' detail-view' : ''}`}
+        className={`results-section${pageLayout ? ' page-layout' : ''}${fullscreen ? ' fullscreen' : ''}${collapsed ? ' collapsed' : ''}${!gridView ? ' detail-view' : ''}`}
         style={{ display: 'flex', ...(collapsed || fullscreen ? {} : { '--results-h': `${height}px`, height: `${height}px` }) }}
       >
         {!collapsed && !fullscreen && (

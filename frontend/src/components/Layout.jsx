@@ -1,10 +1,11 @@
 import { Link, NavLink as RouterNavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { setAppNavigate } from '../lib/appNavigate';
+import { buildQueryResultsPath } from '../lib/queryResultsNav';
 import { setAppTimezone } from '../lib/timezone';
 import { api } from '../api/client';
 import QueryJobsTray from './QueryJobsTray';
-import ErrorAlertModal from './ErrorAlertModal';
+import FeedbackModal from './FeedbackModal';
 
 const SIDEBAR_COLLAPSED_KEY = 'defectloop.sidebar.collapsed';
 
@@ -164,6 +165,7 @@ export function Layout() {
         <nav className="sb-nav">
           <div className="sb-section-label">数据查询</div>
           <NavItem to="/" end icon="query">查询</NavItem>
+          <NavItem to={buildQueryResultsPath()} icon="query">查询结果</NavItem>
           <NavItem to="/history" icon="history">查询历史</NavItem>
           <NavItem to="/strategies" icon="strategy">查询策略</NavItem>
 
@@ -202,13 +204,13 @@ export function Layout() {
             </svg>
           </button>
         )}
-        <ErrorAlertModal />
+        <FeedbackModal />
         <QueryJobsTray
           onOpenResult={(job) => {
             if (job?.task_id) {
-              navigate(`/?task=${encodeURIComponent(job.task_id)}&view=results`);
+              navigate(buildQueryResultsPath(job.task_id));
             } else {
-              navigate('/');
+              navigate('/query-results');
             }
           }}
         />

@@ -42,6 +42,7 @@ function QuickFilterChip({ active, onClick, children }) {
 }
 
 export default function ManualQcCompareWorkbench({
+  mode = 'review',
   activeCase,
   customerUrl,
   rawCount,
@@ -60,6 +61,7 @@ export default function ManualQcCompareWorkbench({
   lookupBusy,
   onRefresh,
   onVoid,
+  onBack,
   immersive,
   onToggleImmersive,
   categories,
@@ -76,7 +78,9 @@ export default function ManualQcCompareWorkbench({
   busy,
   onOpenViz,
   vizOpening,
+  sidebarExtra,
 }) {
+  const isArchive = mode === 'archive';
   const [viewMode, setViewMode] = useState(readViewMode);
   const [filtersOpen, setFiltersOpen] = useState(!immersive);
 
@@ -122,8 +126,14 @@ export default function ManualQcCompareWorkbench({
     <div className={`mqc-compare-workbench${immersive ? ' is-immersive' : ''}${viewMode === 'grid' ? ' is-grid-mode' : ''}`}>
       <div className="mqc-compare-toolbar">
         <div className="mqc-compare-toolbar-left">
+          {onBack && (
+            <button type="button" className="btn btn-sm btn-ghost mqc-back-btn" onClick={onBack}>
+              ← 返回列表
+            </button>
+          )}
           <span className="mqc-compare-sn">SN <strong>{activeCase.product_no}</strong></span>
           <span className="muted">案卷 #{activeCase.id}</span>
+          {isArchive && <span className="mqc-pill mqc-pill-info">归档修订</span>}
           {lookupBusy && <span className="muted">查图中…</span>}
           <span className="mqc-compare-count">
             {filteredItems.length}
@@ -164,7 +174,9 @@ export default function ManualQcCompareWorkbench({
           <button type="button" className="btn btn-sm btn-ghost" onClick={onToggleImmersive}>
             {immersive ? '退出沉浸' : '沉浸模式'}
           </button>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => onVoid(activeCase.id)}>作废</button>
+          {!isArchive && onVoid && (
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => onVoid(activeCase.id)}>作废</button>
+          )}
         </div>
       </div>
 
@@ -340,7 +352,7 @@ export default function ManualQcCompareWorkbench({
           )}
 
           <section className="detail-panel mqc-verdict-panel">
-            <h3 className="detail-panel-title">核对定案</h3>
+            <h3 className="detail-panel-title">{isArchive ? '修订定案' : '核对定案'}</h3>
             <div className="forge-form-grid mqc-verdict-form-compact">
               <label>缺陷类型
                 {categories.defect_strict ? (
@@ -361,10 +373,12 @@ export default function ManualQcCompareWorkbench({
               <label className="forge-span2">备注
                 <input value={note} onChange={(e) => onNoteChange(e.target.value)} placeholder="可选" />
               </label>
-              <label className="forge-inline forge-span2 mqc-checkbox-row">
-                <input type="checkbox" checked={forceArchive} onChange={(e) => onForceArchiveChange(e.target.checked)} />
-                强制归档
-              </label>
+              {!isArchive && onForceArchiveChange && (
+                <label className="forge-inline forge-span2 mqc-checkbox-row">
+                  <input type="checkbox" checked={forceArchive} onChange={(e) => onForceArchiveChange(e.target.checked)} />
+                  强制归档
+                </label>
+              )}
             </div>
             <div className="mqc-verdict-footer mqc-verdict-footer-stack">
               <div className="mqc-verdict-status">
@@ -372,15 +386,20 @@ export default function ManualQcCompareWorkbench({
                   ? <span className="mqc-status-text">匹配 <strong>#{activeItem.id}</strong></span>
                   : <span className="mqc-status-text muted">未选匹配</span>}
               </div>
-              <span className="mqc-kbd-hint">← → 切换 · G 宫格 · Ctrl+Enter 归档</span>
+              <span className="mqc-kbd-hint">
+                {isArchive ? '← → 切换 · G 宫格 · Ctrl+Enter 保存 · Esc 返回' : '← → 切换 · G 宫格 · Ctrl+Enter 归档'}
+              </span>
               <div className="mqc-verdict-actions">
-                <button type="button" className="btn btn-sm btn-ghost" onClick={onSaveReview} disabled={busy}>暂存</button>
+                {!isArchive && (
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={onSaveReview} disabled={busy}>暂存</button>
+                )}
                 <button type="button" className="btn btn-sm btn-primary" onClick={onConfirm} disabled={busy}>
-                  {busy ? '处理中…' : '确认归档'}
+                  {busy ? '处理中…' : (isArchive ? '保存修订' : '确认归档')}
                 </button>
               </div>
             </div>
           </section>
+          {sidebarExtra}
         </aside>
       </div>
     </div>

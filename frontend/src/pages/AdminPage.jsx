@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import SceneHubNav from '../components/SceneHubNav';
-import { api, toast } from '../api/client';
+import { api } from '../api/client';
+import { showErrorModal, showResultModal } from '../lib/feedbackModal';
 import { RulesBuilder } from '../components/RulesBuilder';
 import { SqlEditor, PythonEditor } from '../components/Editors';
 import { useRulesStudio } from '../hooks/useRulesStudio';
@@ -163,9 +164,9 @@ export default function AdminPage({ embedded = false }) {
       if (!res.success) throw new Error(res.error);
       const fresh = await api.getStrategy(payload.id);
       if (fresh.success) openStrategy(fresh.data);
-      toast('已保存');
+      showResultModal(`策略「${payload.name || payload.id}」已保存`, { title: '保存成功' });
       reload();
-    } catch (e) { toast(e.message, 'error'); }
+    } catch (e) { showErrorModal(e.message, { title: '保存失败' }); }
   };
 
   const duplicate = async () => {
@@ -179,10 +180,14 @@ export default function AdminPage({ embedded = false }) {
       _preset: false,
       save_as_copy: true,
     };
-    await api.saveStrategy({ ...copy, flow: studio.flow, filter_rules_code: await studio.compile() });
-    reload();
-    openStrategy(copy);
-    toast('已复制');
+    try {
+      await api.saveStrategy({ ...copy, flow: studio.flow, filter_rules_code: await studio.compile() });
+      reload();
+      openStrategy(copy);
+      showResultModal(`已复制为「${copy.name}」`, { title: '复制成功' });
+    } catch (e) {
+      showErrorModal(e.message, { title: '复制失败' });
+    }
   };
 
   const exportJson = async () => {
@@ -207,8 +212,8 @@ export default function AdminPage({ embedded = false }) {
       if (!res.success) throw new Error(res.error);
       reload();
       openStrategy(data);
-      toast('已导入');
-    } catch (e) { toast(e.message, 'error'); }
+      showResultModal(`策略「${data.name || data.id}」已导入`, { title: '导入成功' });
+    } catch (e) { showErrorModal(e.message, { title: '导入失败' }); }
   };
 
   const filterMode = draft?.filter_mode === 'flow' ? 'rules' : uiFilterMode(draft?.filter_mode || 'rules');
@@ -309,14 +314,17 @@ export default function AdminPage({ embedded = false }) {
                 <div className="strategy-editor-toolbar-actions">
                   <button type="button" className="btn btn-sm btn-primary" onClick={async () => {
                     const res = await api.saveTemplate(draft);
-                    if (res.success) { toast('模板已保存'); reload(); }
+                    if (res.success) {
+                      showResultModal(`模板「${draft.name || draft.id}」已保存`, { title: '保存成功' });
+                      reload();
+                    }
                   }}>保存</button>
                   {!String(draft.id).startsWith('_') && (
                     <button type="button" className="btn btn-sm btn-ghost strategy-action-danger" onClick={async () => {
                       await api.deleteTemplate(draft.id);
                       setDraft(null);
                       reload();
-                      toast('已删除');
+                      showResultModal('模板已删除', { title: '删除成功' });
                     }}>删除</button>
                   )}
                 </div>
@@ -502,9 +510,9 @@ export default function AdminPage({ embedded = false }) {
                 setDraft(null);
                 setEditing(null);
                 reload();
-                toast('已删除');
+                showResultModal(`策略「${draft?.name || draft?.id}」已删除`, { title: '删除成功' });
               } catch (e) {
-                toast(e.message || '删除失败', 'error');
+                showErrorModal(e.message || '删除失败', { title: '删除失败' });
               }
             }}>删除</button>
           </div>

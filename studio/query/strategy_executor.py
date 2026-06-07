@@ -186,6 +186,12 @@ def execute_filter_strategy(
             except (TypeError, ValueError):
                 pass
 
+    if python_code and python_code.strip():
+        query_meta['console_output'] = console_output or ''
+        query_meta['execution_time'] = execution_time
+        query_meta['input_rows'] = input_rows
+        query_meta['output_rows'] = rows_before_sample
+
     if not build_task:
         return {
             'count': len(df),

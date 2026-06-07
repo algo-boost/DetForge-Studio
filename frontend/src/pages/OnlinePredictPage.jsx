@@ -174,7 +174,7 @@ export default function OnlinePredictPage() {
   };
 
   const handleCreated = (res) => {
-    toast('预测任务已创建，可在「预测任务」页查看进度', 'info');
+    onCreated?.(res);
     navigate('/jobs');
   };
 

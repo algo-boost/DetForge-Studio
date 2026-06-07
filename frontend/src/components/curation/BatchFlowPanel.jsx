@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { buildQueryResultsPath } from '../../lib/queryResultsNav';
 import { api } from '../../api/client';
 import {
   DISPOSITION_LABEL,
@@ -82,7 +83,7 @@ export default function BatchFlowPanel({
           {predictJobId && (
             <Link to={`/?predict_job=${predictJobId}`} className="btn btn-ghost">预测作业</Link>
           )}
-          <Link to={`/?task=${batch.source_task_id}`} className="btn btn-ghost">来源查询</Link>
+          <Link to={buildQueryResultsPath(batch.source_task_id)} className="btn btn-ghost">来源结果</Link>
           <button
             type="button"
             className="btn btn-ghost btn-danger-text"

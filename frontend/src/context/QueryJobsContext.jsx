@@ -2,7 +2,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react';
 import { api, toast } from '../api/client';
-import { showErrorModal } from '../lib/errorModal';
+import { showErrorModal } from '../lib/feedbackModal';
 
 const QueryJobsContext = createContext(null);
 const POLL_MS = 1500;
@@ -61,11 +61,7 @@ export function QueryJobsProvider({ children }) {
           window.dispatchEvent(new CustomEvent('pc-query-job-finished', {
             detail: { job, meta },
           }));
-          if (job.status === 'done') {
-            const label = job.label || '查询';
-            const n = job.count ?? 0;
-            toast(`「${label}」完成 · ${n} 条`, 'success');
-          } else {
+          if (job.status !== 'done') {
             showErrorModal(
               job.error || '查询失败',
               { title: `「${job.label || '查询'}」失败` },

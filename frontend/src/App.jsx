@@ -5,6 +5,7 @@ import { ToastHost } from './components/ToastHost';
 import { QueryJobsProvider } from './context/QueryJobsContext';
 
 const QueryPage = lazy(() => import('./pages/QueryPage'));
+const QueryResultsPage = lazy(() => import('./pages/QueryResultsPage'));
 const ConfigRoute = lazy(() => import('./components/ConfigRoute'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 const DocsPage = lazy(() => import('./pages/DocsPage'));
@@ -56,6 +57,7 @@ export default function App() {
             <Routes>
               <Route element={<Layout />}>
               <Route index element={<QueryPage />} />
+              <Route path="query-results" element={<QueryResultsPage />} />
               <Route path="config" element={<ConfigRoute />} />
               <Route path="strategies" element={<AdminPage />} />
               <Route path="admin" element={<Navigate to="/strategies" replace />} />

@@ -139,6 +139,11 @@ def list_jobs():
         offset = request.args.get('offset', default=0, type=int)
         kw = dict(status=status, job_type=job_type)
         data = forge_db.list_jobs(limit=limit, offset=offset, **kw)
+        for row in data:
+            if row.get('status') == 'running':
+                prog = forge_db.recompute_job_progress(row['id'])
+                row['done'] = prog['done']
+                row['failed'] = prog['failed']
         total = forge_db.count_jobs(**kw)
         return jsonify({'success': True, 'data': data, 'total': total, 'offset': offset, 'limit': limit})
     except Exception as e:  # noqa: BLE001
@@ -167,6 +172,10 @@ def get_job(job_id):
         job = forge_db.get_job(job_id)
         if not job:
             return jsonify({'success': False, 'error': '作业不存在'}), 404
+        if job.get('status') == 'running':
+            prog = forge_db.recompute_job_progress(job_id)
+            job['done'] = prog['done']
+            job['failed'] = prog['failed']
         return jsonify({'success': True, 'data': job})
     except Exception as e:  # noqa: BLE001
         return _err(e)
@@ -704,11 +713,72 @@ def manual_qc_list():
         return _err(e)
 
 
+@forge_bp.route('/api/forge/manual-qc/<int:qc_id>', methods=['GET'])
+def manual_qc_get(qc_id):
+    try:
+        row = forge_db.get_manual_qc(qc_id)
+        if not row:
+            return jsonify({'success': False, 'error': '记录不存在'}), 404
+        return jsonify({'success': True, 'data': row})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/<int:qc_id>/history', methods=['GET'])
+def manual_qc_history(qc_id):
+    try:
+        limit = min(int(request.args.get('limit', 50)), 200)
+        rows = forge_manual_qc.list_record_history(qc_id, limit=limit)
+        return jsonify({'success': True, 'data': rows})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/manual-qc/<int:qc_id>/revise', methods=['POST'])
+def manual_qc_revise(qc_id):
+    """归档库修订：与核对台相同字段，写入变更历史。"""
+    try:
+        data = request.json or {}
+        result = forge_manual_qc.update_archived_record(
+            qc_id,
+            matched_detail_id=data.get('matched_detail_id'),
+            no_match=bool(data.get('no_match')),
+            qc_category=data.get('qc_category'),
+            defect_type=data.get('defect_type'),
+            note=data.get('note'),
+            operator=data.get('operator'),
+            comment=data.get('comment'),
+        )
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 @forge_bp.route('/api/forge/manual-qc/<int:qc_id>', methods=['PATCH', 'PUT'])
 def manual_qc_update(qc_id):
     try:
-        n = forge_db.update_manual_qc(qc_id, request.json or {})
+        data = request.json or {}
+        rec = forge_db.get_manual_qc(qc_id)
+        if rec and rec.get('workflow_status') == 'archived' and any(
+            k in data for k in ('matched_detail_id', 'no_match', 'qc_category', 'defect_type', 'note')
+        ):
+            result = forge_manual_qc.update_archived_record(
+                qc_id,
+                matched_detail_id=data.get('matched_detail_id'),
+                no_match=bool(data.get('no_match')),
+                qc_category=data.get('qc_category'),
+                defect_type=data.get('defect_type'),
+                note=data.get('note'),
+                operator=data.get('operator'),
+                comment=data.get('comment'),
+            )
+            return jsonify({'success': True, 'updated': 1, **result})
+        n = forge_db.update_manual_qc(qc_id, data)
         return jsonify({'success': True, 'updated': n, 'data': forge_db.get_manual_qc(qc_id)})
+    except ValueError as e:
+        return _err(e, 400)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
@@ -1328,6 +1398,8 @@ def manual_qc_handoff():
             start=body.get('start'),
             end=body.get('end'),
             categories=body.get('categories'),
+            defect_types=body.get('defect_types'),
+            product_no=body.get('product_no'),
             batch_id=body.get('batch_id'),
             training_status=body.get('training_status', 'pending'),
             note=body.get('note'),

@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, formatSqlTime, toast, openSampleGalleryWhenReady } from '../api/client';
 import { useQueryJobs } from '../context/QueryJobsContext';
 import { SqlEditor, PythonEditor } from '../components/Editors';
 import { PythonCodeWorkspace } from '../components/PythonCodeWorkspace';
 import { RulesBuilder } from '../components/RulesBuilder';
-import { ResultsPanel } from '../components/ResultsPanel';
 import { StrategyPicker } from '../components/StrategyPicker';
 import SceneHubNav from '../components/SceneHubNav';
-import { ConsolePanel, PYTHON_HELP } from '../components/ConsolePanel';
+import { PYTHON_HELP, ConsolePanel } from '../components/ConsolePanel';
 import { formatConsoleSummary } from '../lib/consoleOutput';
 import { Modal } from '../components/Modal';
 import { useRulesStudio } from '../hooks/useRulesStudio';
@@ -34,7 +33,8 @@ import { TIME_ENV_FIELDS } from '../lib/strategyEnvSchema';
 import { inferDataSourceFromStrategy, parseDefaultPredictJobId } from '../lib/strategyDataSource';
 import { shouldUseFullProcessPreview } from '../lib/previewMode';
 import { buildQueryResultsReturnPath } from '../lib/viewerNav';
-import { showErrorModal } from '../lib/errorModal';
+import { buildQueryResultsPath, saveLastQueryTaskId } from '../lib/queryResultsNav';
+import { showErrorModal, showInfoModal, showResultModal } from '../lib/feedbackModal';
 import {
   QUERY_UI_MODE_COMPACT,
   QUERY_UI_MODE_FULL,
@@ -95,6 +95,7 @@ function envTimeReady(env) {
 }
 
 export default function QueryPage() {
+  const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const restored = useRef(false);
@@ -114,16 +115,12 @@ export default function QueryPage() {
   const [compactHide, setCompactHide] = useState(() => defaultCompactHideMap());
   const originalFlowRef = useRef(null);
   const savedFilterRulesCodeRef = useRef('');
-  const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const { submitQueryJob, runningCount } = useQueryJobs();
   const [previewStats, setPreviewStats] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewStale, setPreviewStale] = useState(true);
   const [imgPathHint, setImgPathHint] = useState('');
-  const [rawResults, setRawResults] = useState([]);
-  const [taskId, setTaskId] = useState('');
-  const [executionDetail, setExecutionDetail] = useState(null);
   const [console, setConsole] = useState(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState('');
@@ -148,34 +145,6 @@ export default function QueryPage() {
     setQueryUiMode(mode);
     saveQueryUiModePreference(mode);
   }, []);
-  const scrollToResults = useCallback(() => {
-    requestAnimationFrame(() => {
-      document.getElementById('query-results-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  }, []);
-  const loadTaskResults = useCallback(async (tid, summaryHint = '', { silent = false } = {}) => {
-    if (!tid) return;
-    setLoading(true);
-    try {
-      const res = await api.queryTask(tid);
-      if (!res.success) throw new Error(res.error || '加载失败');
-      const data = res.data || [];
-      setRawResults(data);
-      setTaskId(tid);
-      if (res.data_source) setDataSource(res.data_source);
-      setExecutionDetail({
-        summary: res.summary || summaryHint || `${data.length} 条`,
-        detail: '',
-      });
-      setPreviewStale(false);
-      if (!silent) toast(`已恢复查询结果 · ${data.length} 条`, 'success');
-    } catch (e) {
-      toast(e.message, 'error');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   const studio = useRulesStudio(markStale);
   const editorWs = useEditorWorkspace();
 
@@ -227,7 +196,7 @@ export default function QueryPage() {
     if (!pythonNeedsFilterRules(pythonCode)) return true;
     const rulesCode = await resolveFilterRulesCode();
     if (rulesCode.trim()) return true;
-    toast('代码调用了 apply_filter_rules()，但未找到规则。请在「规则」页添加筛选条件，或加载含规则的策略。', 'error');
+    showErrorModal('代码调用了 apply_filter_rules()，但未找到规则。请在「规则」页添加筛选条件，或加载含规则的策略。', { title: '无法执行' });
     return false;
   }, [pythonCode, resolveFilterRulesCode]);
 
@@ -317,6 +286,12 @@ export default function QueryPage() {
   const urlViewResults = searchParams.get('view') === 'results';
 
   useEffect(() => {
+    if (urlViewResults && urlTaskId) {
+      navigate(buildQueryResultsPath(urlTaskId), { replace: true });
+    }
+  }, [urlViewResults, urlTaskId, navigate]);
+
+  useEffect(() => {
     api.getConfig().then((r) => {
       const on = !!r.config?.viz_open_new_window;
       setViewerOpenNewWindow(on);
@@ -327,16 +302,6 @@ export default function QueryPage() {
   useEffect(() => {
     viewerOpenNewWindowRef.current = viewerOpenNewWindow;
   }, [viewerOpenNewWindow]);
-
-  useEffect(() => {
-    if (!urlTaskId) return;
-    let cancelled = false;
-    (async () => {
-      await loadTaskResults(urlTaskId);
-      if (!cancelled && urlViewResults) scrollToResults();
-    })();
-    return () => { cancelled = true; };
-  }, [urlTaskId, urlViewResults, loadTaskResults, scrollToResults]);
 
   useEffect(() => {
     if (restored.current || !location.state?.restore) return;
@@ -356,10 +321,9 @@ export default function QueryPage() {
         ...(item.random_seed != null ? { RANDOM_SEED: String(item.random_seed) } : {}),
       }, { save: false });
     }
-    if (item.task_id) loadTaskResults(item.task_id, item.summary || '');
     if (location.state.autoExecute) setTimeout(() => onExecuteRef.current?.(), 300);
     toast(`已恢复：${item.strategy}`);
-  }, [location.state, loadTaskResults]);
+  }, [location.state]);
 
   useEffect(() => {
     const onOpenSave = (e) => {
@@ -545,29 +509,21 @@ export default function QueryPage() {
     const stratName = meta?.stratName || job.label || '自由查询';
     const summary = `${stratName} · ${count} 条`;
 
-    if (job.task_id && count > 0) {
-      await loadTaskResults(job.task_id, summary, { silent: true });
-    } else {
-      setRawResults([]);
-      setTaskId('');
-      setExecutionDetail({
-        summary: job.message || (count === 0 ? '无结果' : summary),
-        detail: '',
-      });
-    }
-
-    if (job.console_output || job.execution_time != null) {
-      const line = formatConsoleSummary({
-        executionTime: job.execution_time,
-        inputRows: job.input_rows,
-        outputRows: job.output_rows,
-      });
-      setConsole({
-        text: ['✓ 筛选完成', line].filter(Boolean).join('\n\n'),
-        type: 'success',
-        consoleOutput: job.console_output || '',
-      });
-    }
+    const consoleContent = job.console_output || job.execution_time != null
+      ? {
+          text: ['✓ 筛选完成', formatConsoleSummary({
+            executionTime: job.execution_time,
+            inputRows: job.input_rows,
+            outputRows: job.output_rows,
+          })].filter(Boolean).join('\n\n'),
+          type: 'success',
+          consoleOutput: job.console_output || '',
+        }
+      : {
+          text: job.message || summary,
+          type: 'success',
+          consoleOutput: '',
+        };
 
     saveHistoryEntry(buildHistoryEntry({
       strategy: stratName,
@@ -586,6 +542,8 @@ export default function QueryPage() {
     }));
 
     if (job.task_id && count > 0) {
+      saveLastQueryTaskId(job.task_id);
+      navigate(buildQueryResultsPath(job.task_id), { state: { console: consoleContent } });
       try {
         const cfgRes = await api.getConfig();
         const cfg = cfgRes.config || {};
@@ -604,9 +562,18 @@ export default function QueryPage() {
           }
         }
       } catch { /* optional */ }
+      return;
     }
+
+    navigate('/query-results', {
+      state: {
+        console: consoleContent,
+        summary: job.message || (count === 0 ? '无结果' : summary),
+        empty: true,
+      },
+    });
   }, [
-    loadTaskResults, loadedPresetId, queryEnv, sampleSize, randomSeed, filterMode,
+    navigate, loadedPresetId, queryEnv, sampleSize, randomSeed, filterMode,
   ]);
 
   const onPreview = async () => {
@@ -614,11 +581,11 @@ export default function QueryPage() {
     try {
       if (dataSource === 'predict_result') batch = await ensurePredictBatchReady();
     } catch (e) {
-      toast(e.message, 'error');
+      showErrorModal(e.message, { title: '预览失败' });
       return;
     }
     if (sqlNeedsTimeRange(sql, dataSource, batch?.jobId ?? predictJobId) && !envTimeReady(queryEnv)) {
-      toast('请在策略参数中填写开始/结束时间', 'error');
+      showErrorModal('请在策略参数中填写开始/结束时间', { title: '无法预览' });
       return;
     }
     if (!(await ensureFilterRulesReady())) return;
@@ -638,7 +605,6 @@ export default function QueryPage() {
       const text = parts.join(' · ');
       setPreviewStats(text);
       setPreviewStale(false);
-      setExecutionDetail({ summary: `预览 · ${text}`, detail: JSON.stringify(res, null, 2) });
       if (res.console_output || res.execution_time != null) {
         const summary = formatConsoleSummary({
           executionTime: res.execution_time,
@@ -651,9 +617,10 @@ export default function QueryPage() {
           type: 'success',
           consoleOutput: res.console_output || '',
         });
+      } else {
+        setConsole({ text: `✓ 预览完成 · ${text}`, type: 'success', consoleOutput: '' });
       }
-      toast(text);
-    } catch (e) { toast(e.message, 'error'); }
+    } catch (e) { showErrorModal(e.message, { title: '预览失败' }); }
     finally { setPreviewLoading(false); }
   };
 
@@ -663,11 +630,11 @@ export default function QueryPage() {
     try {
       if (dataSource === 'predict_result') batch = await ensurePredictBatchReady();
     } catch (e) {
-      toast(e.message, 'error');
+      showErrorModal(e.message, { title: '无法执行查询' });
       return;
     }
     if (sqlNeedsTimeRange(sql, dataSource, batch?.jobId ?? predictJobId) && !envTimeReady(queryEnv)) {
-      toast('请在策略参数中填写开始/结束时间', 'error');
+      showErrorModal('请在策略参数中填写开始/结束时间', { title: '无法执行查询' });
       return;
     }
     if (!(await ensureFilterRulesReady())) return;
@@ -707,7 +674,7 @@ export default function QueryPage() {
           throw e;
         }
       }
-      toast('查询已提交后台执行，可切换页面；右下角「查询任务」查看进度', 'info');
+      showInfoModal('查询已提交后台执行；完成后将自动打开「查询结果」页。可继续调整条件或切换页面。', { title: '已提交' });
     } catch (e) {
       showErrorModal(e.message, { title: '提交查询失败' });
     } finally {
@@ -863,7 +830,10 @@ export default function QueryPage() {
   });
 
   const confirmSave = async () => {
-    if (!saveName.trim()) { toast('请输入策略名称', 'error'); return; }
+    if (!saveName.trim()) {
+      showErrorModal('请输入策略名称', { title: '无法保存' });
+      return;
+    }
     try {
       const payload = await buildStrategyPayload(saveName.trim());
       const res = await api.saveStrategy(payload);
@@ -874,8 +844,10 @@ export default function QueryPage() {
       localStorage.setItem('pc_last_preset', payload.id);
       await reloadStrategies();
       if (loadedPresetId === payload.id) await loadStrategy(payload.id);
-      toast('策略已保存');
-    } catch (e) { toast(e.message, 'error'); }
+      showResultModal(`策略「${saveName.trim()}」已保存`, { title: '保存成功' });
+    } catch (e) {
+      showErrorModal(e.message, { title: '保存失败' });
+    }
   };
 
   const exportStrategy = async () => {
@@ -902,7 +874,6 @@ export default function QueryPage() {
   };
 
   const runPythonTest = async () => {
-    setConsole({ text: '运行中…', type: 'run' });
     try {
       const parts = [];
       if (filterMode !== 'code') parts.push(await resolveFilterRulesCode());
@@ -914,7 +885,7 @@ export default function QueryPage() {
       if (sampleForRun) parts.push(sampleForRun);
       parts.push(pythonCode);
       const code = parts.filter(Boolean).join('\n\n');
-      const res = await api.runPython({ python_code: code, task_id: taskId || undefined });
+      const res = await api.runPython({ python_code: code });
       if (!res.success) throw new Error(res.error);
       const summary = formatConsoleSummary({
         executionTime: res.execution_time,
@@ -1003,6 +974,28 @@ export default function QueryPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
+  useEffect(() => {
+    if (dataSource !== 'predict_result') return undefined;
+    let cancelled = false;
+    let timer;
+    const poll = async () => {
+      try {
+        const recent = await fetchRecentPredictJobs(api);
+        if (cancelled) return;
+        setPredictJobs(recent);
+        const active = recent.some((j) => j.status === 'running' || j.status === 'pending');
+        timer = setTimeout(poll, active ? 1500 : 8000);
+      } catch {
+        if (!cancelled) timer = setTimeout(poll, 8000);
+      }
+    };
+    timer = setTimeout(poll, 1500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [dataSource]);
+
   const complexFlow = hasComplexFlow(originalFlowRef.current);
 
   const selectedPredictJob = useMemo(
@@ -1012,9 +1005,8 @@ export default function QueryPage() {
 
   const queryModeHint = (() => {
     if (dataSource === 'predict_result' && predictJobId) {
-      const j = selectedPredictJob;
-      const progress = j ? `${j.done ?? '?'}/${j.total ?? '?'}` : '';
-      return `预测结果 · 批次 #${predictJobId}${progress ? ` · ${progress} 张` : ''}`;
+      const name = selectedPredictJob?.name || selectedPredictJob?.params?.model_name;
+      return `预测结果 · 批次 #${predictJobId}${name ? ` · ${name}` : ''}`;
     }
     const modeLabel = { rules: '规则筛选', code: 'Python 筛选' }[filterMode] || '规则筛选';
     const prefix = loadedPresetId
@@ -1102,17 +1094,12 @@ export default function QueryPage() {
           <button
             type="button"
             className={`btn btn-sm btn-primary${previewStale && studio.rules.length ? ' needs-preview' : ''}`}
-            disabled={submitting || previewLoading || loading}
+            disabled={submitting || previewLoading}
             onClick={onExecute}
             data-testid="query-execute"
           >
             {submitting ? '提交中…' : runningCount > 0 ? `执行查询（${runningCount}）` : '执行查询'}
           </button>
-          {previewLoading && (
-            <div className="preview-progress preview-progress-topbar" aria-hidden>
-              <div className="preview-progress-bar" />
-            </div>
-          )}
           <div className="query-ui-mode-switch" role="group" aria-label="查询页视图">
             {QUERY_UI_MODE_OPTIONS.map((opt) => (
               <button
@@ -1345,23 +1332,12 @@ export default function QueryPage() {
           )}
           </div>
         </div>
-        <ConsolePanel
-          visible={!!console && console.type !== 'error'}
-          content={console}
-          onClear={() => setConsole(null)}
-        />
       </div>
 
-      <ResultsPanel
-        visible={rawResults.length > 0}
-        rawData={rawResults}
-        taskId={taskId}
-        executionDetail={executionDetail}
-        onArchive={() => toast('归档完成')}
-        dataSource={dataSource}
-        strategyId={loadedPresetId}
-        strategyName={loadedPresetId ? (strategies.find((s) => s.id === loadedPresetId)?.name || loadedPresetId) : ''}
-        viewerOpenNewWindow={viewerOpenNewWindow}
+      <ConsolePanel
+        visible={!!console}
+        content={console}
+        onClear={() => setConsole(null)}
       />
 
       <Modal open={saveOpen} title="保存为策略" onClose={() => setSaveOpen(false)}>

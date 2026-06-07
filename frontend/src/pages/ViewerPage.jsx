@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { buildQueryResultsPath } from '../lib/queryResultsNav';
 import '../styles/viewer.css';
 
 function resolveIframeSrc(srcParam, session) {
@@ -36,7 +37,7 @@ export default function ViewerPage() {
   const canOpenExternal = iframeSrc && iframeSrc !== '/viz/';
   const taskId = params.get('task');
   const returnTo = params.get('return')
-    || (taskId ? `/?task=${encodeURIComponent(taskId)}&view=results` : '/');
+    || (taskId ? buildQueryResultsPath(taskId) : '/');
 
   return (
     <div className="viewer-page viewer-page-immersive">

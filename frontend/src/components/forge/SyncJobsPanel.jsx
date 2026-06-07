@@ -1,40 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { api, toast } from '../../api/client';
 import { STATUS_LABEL } from './JobWidgets';
 import JobsList from './JobsList';
+import { useForgeJobsPolling } from '../../hooks/useForgeJobsPolling';
 
 const PAGE_SIZE = 50;
 
 export default function SyncJobsPanel({ refreshKey = 0, embedded = false }) {
-  const [jobs, setJobs] = useState([]);
-  const [jobTotal, setJobTotal] = useState(0);
-  const [jobOffset, setJobOffset] = useState(0);
   const [detailId, setDetailId] = useState(null);
-  const timer = useRef(null);
-  const jobsRef = useRef([]);
-
-  const load = async (off = jobOffset) => {
-    try {
-      const j = await api.forgeJobs(`?job_type=dataset_sync&limit=${PAGE_SIZE}&offset=${off}`);
-      if (j.success) {
-        setJobs(j.data || []);
-        jobsRef.current = j.data || [];
-        setJobTotal(j.total || 0);
-        setJobOffset(off);
-      }
-    } catch { /* 静默轮询失败 */ }
-  };
-
-  const scheduleNext = () => {
-    const active = jobsRef.current.some((j) => j.status === 'running' || j.status === 'pending');
-    timer.current = setTimeout(async () => { await load(jobOffset); scheduleNext(); }, active ? 3000 : 12000);
-  };
-
-  useEffect(() => {
-    load(0).then(scheduleNext);
-    return () => clearTimeout(timer.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshKey]);
+  const { jobs, jobTotal, jobOffset, load } = useForgeJobsPolling('dataset_sync', PAGE_SIZE, refreshKey);
 
   const control = async (id, action) => {
     try {

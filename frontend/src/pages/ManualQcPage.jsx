@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, toast } from '../api/client';
 import SceneHubNav from '../components/SceneHubNav';
 import ManualQcTabBar from '../components/forge/manual-qc/ManualQcTabBar';
+import ArchiveEditPanel from '../components/forge/manual-qc/ArchiveEditPanel';
 import ArchiveLibrary from '../components/forge/manual-qc/ArchiveLibrary';
 import IntakePanel from '../components/forge/manual-qc/IntakePanel';
 import ReviewPanel from '../components/forge/manual-qc/ReviewPanel';
@@ -54,7 +55,7 @@ function ArchiveRootConfig({ summary, onSaved }) {
   return (
     <SurfaceCard
       title="归档根目录"
-      desc="配置后可将已定案记录自动同步到该目录（成像类别/SN/图片 + _annotations.coco.json）；亦可作为统一归档库"
+      desc="配置后可将已定案记录自动同步到该目录（年/月/日/成像类别/SN/图片 + SN 级 COCO）；亦可作为统一归档库"
     >
       <div className="forge-form-grid">
         <label className="forge-span2">
@@ -161,6 +162,7 @@ export default function ManualQcPage() {
   const [activeTab, setActiveTab] = useState('intake');
   const [reviewFocusId, setReviewFocusId] = useState(null);
   const [reviewImmersive, setReviewImmersive] = useState(false);
+  const [libraryEditId, setLibraryEditId] = useState(null);
   const didAutoReviewTab = useRef(false);
 
   const loadCategories = async () => {
@@ -204,10 +206,20 @@ export default function ManualQcPage() {
     library: summary?.pending || 0,
   };
 
+  const onTabChange = (tab) => {
+    setActiveTab(tab);
+    if (tab !== 'library') setLibraryEditId(null);
+  };
+
+  const immersiveActive = reviewImmersive && (
+    (activeTab === 'review') || (activeTab === 'library' && libraryEditId)
+  );
+
   return (
-    <div className={`panel active mqc-page${activeTab === 'review' && reviewImmersive ? ' mqc-page-immersive' : ''}`}>
+    <div className={`panel active mqc-page${immersiveActive ? ' mqc-page-immersive' : ''}`}>
       <SceneHubNav variant="qc" />
-      <header className="mqc-header">
+      <div className="mqc-chrome-sticky">
+        <header className="mqc-header">
         <div>
           <div className="topbar-title">人工质检</div>
           <p className="mqc-header-desc">
@@ -228,9 +240,10 @@ export default function ManualQcPage() {
             <span className="mqc-stat-label">已定案</span>
           </div>
         </div>
-      </header>
+        </header>
 
-      <ManualQcTabBar activeTab={activeTab} onTabChange={setActiveTab} counts={tabCounts} />
+        <ManualQcTabBar activeTab={activeTab} onTabChange={onTabChange} counts={tabCounts} />
+      </div>
 
       <div className="mqc-workspace">
         {activeTab === 'intake' && (
@@ -253,7 +266,22 @@ export default function ManualQcPage() {
           </SurfaceCard>
         )}
         {activeTab === 'library' && (
-          <ArchiveLibrary categories={categories} reloadKey={reloadKey} onCompare={setLightbox} />
+          libraryEditId ? (
+            <ArchiveEditPanel
+              recordId={libraryEditId}
+              categories={categories}
+              onBack={() => setLibraryEditId(null)}
+              onSaved={() => { loadSummary(); setReloadKey((k) => k + 1); }}
+              onImmersiveChange={setReviewImmersive}
+            />
+          ) : (
+            <ArchiveLibrary
+              categories={categories}
+              reloadKey={reloadKey}
+              onCompare={setLightbox}
+              onOpenEdit={setLibraryEditId}
+            />
+          )
         )}
         {activeTab === 'settings' && (
           <>

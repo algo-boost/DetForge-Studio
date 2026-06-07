@@ -454,6 +454,87 @@ def confirm_batch(ids=None, entries=None, force=False):
     }
 
 
+_HISTORY_TRACK_FIELDS = (
+    'qc_category', 'defect_type', 'note', 'matched_detail_id',
+    'matched_img_path', 'match_status', 'disposition', 'product_type',
+)
+
+
+def _history_snapshot(rec):
+    if not rec:
+        return {}
+    return {k: rec.get(k) for k in _HISTORY_TRACK_FIELDS}
+
+
+def _diff_snapshots(before, after):
+    changed = {}
+    for k in _HISTORY_TRACK_FIELDS:
+        bv, av = before.get(k), after.get(k)
+        if bv != av:
+            changed[k] = {'from': bv, 'to': av}
+    return changed
+
+
+def update_archived_record(qc_id, *, matched_detail_id=None, no_match=False,
+                           qc_category=None, defect_type=None, note=None,
+                           operator=None, comment=None):
+    """修订已定案记录（与核对台相同字段），写入变更历史。"""
+    rec = forge_db.get_manual_qc(qc_id)
+    if not rec:
+        raise ValueError(f'记录不存在: {qc_id}')
+    if rec.get('workflow_status') != WORKFLOW_ARCHIVED:
+        raise ValueError('仅已定案记录可在此修订')
+    cat = qc_category if qc_category is not None else rec.get('qc_category')
+    if not cat:
+        raise ValueError('请选择成像情况')
+    dt = defect_type if defect_type is not None else rec.get('defect_type')
+    _validate_defect_type(dt)
+    nm = bool(no_match)
+    mid = matched_detail_id if matched_detail_id is not None else rec.get('matched_detail_id')
+    if not nm and not mid:
+        raise ValueError('请选择匹配平台图或标记无匹配')
+
+    before = _history_snapshot(rec)
+    fields = {
+        'qc_category': cat,
+        'defect_type': dt or None,
+        'note': note if note is not None else rec.get('note'),
+    }
+    match_row = _apply_match_fields(
+        dict(rec), matched_detail_id=mid, no_match=nm,
+    )
+    for k in ('matched_detail_id', 'matched_img_path', 'matched_object_key',
+              'defect_info', 'match_status', 'product_type'):
+        fields[k] = match_row.get(k)
+    fields['disposition'] = disposition_from_qc_record({**rec, **fields})
+    forge_db.update_manual_qc(qc_id, fields)
+    updated = forge_db.get_manual_qc(qc_id)
+    after = _history_snapshot(updated)
+    changed = _diff_snapshots(before, after)
+    history_id = None
+    if changed:
+        history_id = forge_db.insert_manual_qc_history(
+            qc_id,
+            change_type='revise',
+            operator=operator,
+            comment=comment,
+            snapshot_before=before,
+            snapshot_after=after,
+            changed_fields=changed,
+        )
+    try:
+        settings = get_archive_settings()
+        if settings.get('archive_root_resolved'):
+            sync_record_to_archive_root(rec=updated, force=True)
+    except Exception:
+        pass
+    return {'record': updated, 'history_id': history_id, 'changed_fields': changed}
+
+
+def list_record_history(qc_id, limit=100):
+    return forge_db.list_manual_qc_history(qc_id, limit=limit)
+
+
 def void_records(ids, reason=None):
     """作废案卷（intake/confirmed）。"""
     n = 0
@@ -688,6 +769,20 @@ def _safe_name(text, fallback='未分类'):
     return s or fallback
 
 
+def _archive_date_prefix(archived_at):
+    """从 archived_at 解析 YYYY/MM/DD；缺省用当天。"""
+    if archived_at:
+        s = str(archived_at).strip()
+        if len(s) >= 10:
+            ymd = s[:10].replace('/', '-')
+            parts = ymd.split('-')
+            if len(parts) == 3 and all(parts):
+                return f"{parts[0]}/{parts[1]}/{parts[2]}"
+    from datetime import datetime
+    now = datetime.now()
+    return f"{now.year}/{now.month:02d}/{now.day:02d}"
+
+
 def resolve_archive_root():
     from server.core import load_config
     cfg = load_config()
@@ -749,45 +844,22 @@ def _platform_records_for_coco(rows):
 
 
 def _write_export_coco_layers(out_dir, rows):
-    """在导出根、成像类别、SN 目录写入 _annotations.coco.json（与图片同级或聚合相对路径）。"""
+    """仅在 SN 目录（与图片同级）写入 _annotations.coco.json。"""
     platform_rows = _platform_records_for_coco(rows)
     if not platform_rows:
         return []
 
-    coco_paths = []
-    root_coco = build_coco_from_manual_qc_records(
-        platform_rows,
-        file_name_fn=lambda r, _i: (r.get('_export_platform_rel') or r.get('exported_platform') or '').replace('\\', '/'),
-    )
-    if root_coco.get('images'):
-        p = os.path.join(out_dir, '_annotations.coco.json')
-        _write_coco_json(p, root_coco)
-        coco_paths.append(p)
-
-    by_cat = {}
-    by_sn = {}
+    by_sn_dir = {}
     for r in platform_rows:
         rel = (r.get('_export_platform_rel') or r.get('exported_platform') or '').replace('\\', '/')
-        parts = rel.split('/')
-        if len(parts) >= 2:
-            cat, sn = parts[0], parts[1]
-            by_cat.setdefault(cat, []).append(r)
-            if len(parts) >= 3:
-                by_sn.setdefault((cat, sn), []).append(r)
+        parts = [p for p in rel.split('/') if p]
+        if len(parts) < 2:
+            continue
+        sn_key = tuple(parts[:-1])
+        by_sn_dir.setdefault(sn_key, []).append(r)
 
-    for cat, items in by_cat.items():
-        coco = build_coco_from_manual_qc_records(
-            items,
-            file_name_fn=lambda r, _i: '/'.join(
-                (r.get('_export_platform_rel') or r.get('exported_platform') or '').replace('\\', '/').split('/')[1:],
-            ),
-        )
-        if coco.get('images'):
-            p = os.path.join(out_dir, cat, '_annotations.coco.json')
-            _write_coco_json(p, coco)
-            coco_paths.append(p)
-
-    for (cat, sn), items in by_sn.items():
+    coco_paths = []
+    for sn_key, items in by_sn_dir.items():
         coco = build_coco_from_manual_qc_records(
             items,
             file_name_fn=lambda r, _i: os.path.basename(
@@ -795,7 +867,7 @@ def _write_export_coco_layers(out_dir, rows):
             ),
         )
         if coco.get('images'):
-            p = os.path.join(out_dir, cat, sn, '_annotations.coco.json')
+            p = os.path.join(out_dir, *sn_key, '_annotations.coco.json')
             _write_coco_json(p, coco)
             coco_paths.append(p)
 
@@ -803,7 +875,7 @@ def _write_export_coco_layers(out_dir, rows):
 
 
 def materialize_records_to_dir(rows, out_dir, include='both'):
-    """将记录写入 <out_dir>/<成像类别>/<SN>/ 并生成各级 COCO。"""
+    """将记录写入 <out_dir>/<年>/<月>/<日>/<成像类别>/<SN>/ 并在 SN 目录写 COCO。"""
     from studio.forge import forge_paths
     out_dir = os.path.abspath(out_dir)
     if not forge_paths.safe_export_dir(out_dir):
@@ -814,9 +886,10 @@ def materialize_records_to_dir(rows, out_dir, include='both'):
     manifest = []
     enriched = []
     for r in rows:
+        date_prefix = _archive_date_prefix(r.get('archived_at'))
         cat_name = _safe_name(r.get('qc_category'))
         sn = _safe_name(r.get('product_no'), fallback='SN')
-        sn_dir = os.path.join(out_dir, cat_name, sn)
+        sn_dir = os.path.join(out_dir, date_prefix, cat_name, sn)
         rid = r.get('id')
         record = {
             'id': rid, 'product_no': r.get('product_no'),
@@ -841,7 +914,7 @@ def materialize_records_to_dir(rows, out_dir, include='both'):
             try:
                 shutil.copy2(src, os.path.join(sn_dir, dst_name))
                 copied += 1
-                rel = os.path.join(cat_name, sn, dst_name).replace('\\', '/')
+                rel = os.path.join(date_prefix, cat_name, sn, dst_name).replace('\\', '/')
                 record[f'exported_{kind}'] = rel
                 if kind == 'platform':
                     row_copy['_export_platform_rel'] = rel
@@ -870,7 +943,7 @@ def materialize_records_to_dir(rows, out_dir, include='both'):
     }
 
 
-def sync_record_to_archive_root(rec=None, qc_id=None):
+def sync_record_to_archive_root(rec=None, qc_id=None, force=False):
     """单条已定案记录同步到配置的归档根目录。"""
     settings = get_archive_settings()
     root = settings.get('archive_root_resolved') or ''
@@ -881,7 +954,7 @@ def sync_record_to_archive_root(rec=None, qc_id=None):
     if not rec or rec.get('workflow_status') != WORKFLOW_ARCHIVED:
         return None
     include = settings.get('include') or 'both'
-    if not settings.get('auto_sync'):
+    if not force and not settings.get('auto_sync'):
         return None
     return materialize_records_to_dir([rec], root, include=include)
 
@@ -905,8 +978,8 @@ def export_records(start=None, end=None, categories=None, defect_types=None,
     """按时段 + 类别导出图片到目录。
 
     include: 'platform' / 'customer' / 'both'。
-    目录结构：<out_dir>/<成像类别>/<SN>/<id>__platform|customer.<ext>；
-    同级写入 _annotations.coco.json（根目录 / 类别 / SN 三级，含平台检测框）。
+    目录结构：<out_dir>/<年>/<月>/<日>/<成像类别>/<SN>/<id>__platform|customer.<ext>；
+    SN 目录同级写入 _annotations.coco.json（含平台检测框）。
     并写 manifest.csv。as_zip=True 时打包下载。
     """
     rows = forge_db.list_manual_qc(
@@ -925,14 +998,16 @@ def export_records(start=None, end=None, categories=None, defect_types=None,
     return result
 
 
-def generate_training_handoff(start=None, end=None, categories=None, batch_id=None,
+def generate_training_handoff(start=None, end=None, categories=None, defect_types=None,
+                              product_no=None, batch_id=None,
                               training_status='pending', note=None):
     """人工质检 → 标准训练交接包（COCO + images + manifest + provenance）。"""
     from studio.forge import forge_paths
 
     rows = forge_db.list_manual_qc(
         batch_id=batch_id, start=start, end=end, categories=categories,
-        training_status=training_status, limit=100000,
+        defect_types=defect_types, product_no=product_no,
+        training_status=training_status, workflow_status=WORKFLOW_ARCHIVED, limit=100000,
     )
     rows = [r for r in rows if r.get('matched_img_path')]
     if not rows:
@@ -1003,6 +1078,7 @@ def generate_training_handoff(start=None, end=None, categories=None, batch_id=No
     )
     result['run_code'] = run_code
     result['record_count'] = len(rows)
+    result['handoff_dir'] = out_dir
     result['qc_ids'] = qc_ids
     return result
 

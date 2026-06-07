@@ -17,7 +17,10 @@ PRESET_GROUPS: dict[str, dict[str, Any]] = {
     'observe': {
         'label': '观察调试',
         'description': 'view / info / 统计弹窗',
-        'functions': ['view', 'info', 'describe_df', 'count_category_boxes'],
+        'functions': [
+            'view', 'info', 'describe_df', 'count_category_boxes',
+            'plot_bars', 'plot_box_counts', 'plot_value_counts', 'plot_numeric_hist',
+        ],
     },
     'filter': {
         'label': '缺陷筛选',
@@ -75,6 +78,10 @@ FUNCTION_DOCS: dict[str, str] = {
     'strip_boxes_below_confidence': '低于阈值剔除框',
     'remove_empty_ext_rows': '移除无检测框的行',
     'count_category_boxes': '统计各类别框数量',
+    'plot_bars': '柱状图（执行输出区）',
+    'plot_box_counts': '检测框类别柱状图',
+    'plot_value_counts': '列取值频次柱状图',
+    'plot_numeric_hist': '数值列直方图（执行输出区）',
     'apply_random_sample_rows': '随机采样（env: SAMPLE_SIZE / RANDOM_SEED）',
     'stratified_sample_by_type': '按款型分层采样（env 或参数 n/seed）',
     'get_env': "读取环境变量 get_env('KEY', 'default')",
@@ -291,6 +298,10 @@ def _callable_map() -> dict[str, Callable]:
         'strip_boxes_below_confidence': pb.strip_boxes_below_confidence,
         'remove_empty_ext_rows': pb.remove_empty_ext_rows,
         'count_category_boxes': pb.count_category_boxes,
+        'plot_bars': pb.plot_bars,
+        'plot_box_counts': pb.plot_box_counts,
+        'plot_value_counts': pb.plot_value_counts,
+        'plot_numeric_hist': pb.plot_numeric_hist,
         'apply_random_sample_rows': pb.apply_random_sample_rows,
         'stratified_sample_by_type': pb.stratified_sample_by_type,
     }

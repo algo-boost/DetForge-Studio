@@ -164,6 +164,18 @@ def schema_statements(db=None):
           KEY idx_archived (archived_at),
           KEY idx_training (training_status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+        f"""CREATE TABLE IF NOT EXISTS `{db}`.`manual_qc_history` (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          qc_id BIGINT NOT NULL,
+          changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          change_type VARCHAR(32) DEFAULT 'revise',
+          operator VARCHAR(128) DEFAULT NULL,
+          comment TEXT DEFAULT NULL,
+          snapshot_before JSON DEFAULT NULL,
+          snapshot_after JSON DEFAULT NULL,
+          changed_fields JSON DEFAULT NULL,
+          KEY idx_qc_time (qc_id, changed_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
         f"""CREATE TABLE IF NOT EXISTS `{db}`.`curation_batch` (
           id BIGINT AUTO_INCREMENT PRIMARY KEY,
           batch_code VARCHAR(64) NOT NULL,
@@ -918,6 +930,37 @@ def update_manual_qc(qc_id, fields):
 
 def delete_manual_qc(qc_id):
     return _client().execute(f"DELETE FROM {_t('manual_qc')} WHERE id=%s", (int(qc_id),))
+
+
+def insert_manual_qc_history(qc_id, *, change_type='revise', operator=None, comment=None,
+                             snapshot_before=None, snapshot_after=None, changed_fields=None):
+    sql = (
+        f"INSERT INTO {_t('manual_qc_history')} "
+        "(qc_id, change_type, operator, comment, snapshot_before, snapshot_after, changed_fields) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s)"
+    )
+    return _client().execute_returning_id(sql, (
+        int(qc_id),
+        str(change_type or 'revise'),
+        operator or None,
+        comment or None,
+        _json_dump(snapshot_before),
+        _json_dump(snapshot_after),
+        _json_dump(changed_fields),
+    ))
+
+
+def list_manual_qc_history(qc_id, limit=100):
+    rows = _client().fetchall(
+        f"SELECT * FROM {_t('manual_qc_history')} WHERE qc_id=%s "
+        "ORDER BY changed_at DESC, id DESC LIMIT %s",
+        (int(qc_id), int(limit)),
+    )
+    for r in rows:
+        r['snapshot_before'] = _json_load(r.get('snapshot_before'))
+        r['snapshot_after'] = _json_load(r.get('snapshot_after'))
+        r['changed_fields'] = _json_load(r.get('changed_fields'))
+    return rows
 
 
 def find_manual_qc_duplicate(product_no, customer_img_path, *, workflow_status=None):

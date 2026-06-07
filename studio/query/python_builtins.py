@@ -309,6 +309,100 @@ def _df_to_view_payload(df, max_rows=None, max_cols=30):
     }
 
 
+def _emit_viz(payload):
+    """将图表数据写入控制台，供前端在「执行输出」区渲染。"""
+    print('__VIZ_START__')
+    print(json.dumps(payload, ensure_ascii=False))
+    print('__VIZ_END__')
+
+
+def plot_bars(df, x='category', y='count', title=None, top=30):
+    """柱状图（输出到执行区）：适合 count_category_boxes 结果或两列 category/count。
+
+    plot_bars(count_category_boxes(df), title='框数分布')
+    """
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        print('plot_bars() 需要非空 DataFrame')
+        return df
+    cols = list(df.columns)
+    x_col = x if x in cols else cols[0]
+    y_col = y if y in cols else (cols[1] if len(cols) > 1 else cols[0])
+    work = df[[x_col, y_col]].copy()
+    work[y_col] = pd.to_numeric(work[y_col], errors='coerce').fillna(0)
+    work = work.sort_values(y_col, ascending=False).head(max(1, int(top or 30)))
+    labels = [str(v) for v in work[x_col].tolist()]
+    values = [float(v) for v in work[y_col].tolist()]
+    _emit_viz({
+        'chart': 'bar',
+        'title': str(title).strip() if title else f'{y_col} by {x_col}',
+        'x_label': str(x_col),
+        'y_label': str(y_col),
+        'labels': labels,
+        'values': values,
+    })
+    return df
+
+
+def plot_box_counts(df, title='检测框类别分布', top=25):
+    """柱状图：统计 ext 内各类别检测框数量（等价 plot_bars(count_category_boxes(df))）。"""
+    if not isinstance(df, pd.DataFrame):
+        print('plot_box_counts() 需要 DataFrame')
+        return df
+    stats = count_category_boxes(df)
+    return plot_bars(stats, title=title, top=top)
+
+
+def plot_value_counts(df, column, title=None, top=20):
+    """柱状图：某列取值频次（如 product_type / check_status）。"""
+    if not isinstance(df, pd.DataFrame):
+        print('plot_value_counts() 需要 DataFrame')
+        return df
+    if column not in df.columns:
+        print(f'plot_value_counts() 列不存在: {column}')
+        return df
+    vc = df[column].fillna('__NA__').astype(str).value_counts().head(max(1, int(top or 20)))
+    _emit_viz({
+        'chart': 'bar',
+        'title': str(title).strip() if title else f'{column} 分布',
+        'x_label': str(column),
+        'y_label': 'count',
+        'labels': [str(k) for k in vc.index.tolist()],
+        'values': [int(v) for v in vc.values.tolist()],
+    })
+    return df
+
+
+def plot_numeric_hist(df, column, bins=20, title=None):
+    """直方图：数值列分布（输出到执行区）。"""
+    if not isinstance(df, pd.DataFrame):
+        print('plot_numeric_hist() 需要 DataFrame')
+        return df
+    if column not in df.columns:
+        print(f'plot_numeric_hist() 列不存在: {column}')
+        return df
+    series = pd.to_numeric(df[column], errors='coerce').dropna()
+    if series.empty:
+        print(f'plot_numeric_hist() 列 {column} 无有效数值')
+        return df
+    n_bins = max(3, min(50, int(bins or 20)))
+    counts, edges = pd.cut(series, bins=n_bins, retbins=True, duplicates='drop')
+    hist = counts.value_counts().sort_index()
+    labels = []
+    values = []
+    for interval, cnt in hist.items():
+        labels.append(f'{interval.left:.4g}–{interval.right:.4g}')
+        values.append(int(cnt))
+    _emit_viz({
+        'chart': 'hist',
+        'title': str(title).strip() if title else f'{column} 分布',
+        'x_label': str(column),
+        'y_label': 'count',
+        'labels': labels,
+        'values': values,
+    })
+    return df
+
+
 def view(df, description=None, *, max_rows=None, max_cols=30):
     """在浏览器弹窗中查看 DataFrame（通过控制台特殊标记传给前端）。
 
@@ -440,6 +534,10 @@ def build_python_namespace(extra=None):
         'count_category_boxes': count_category_boxes,
         'apply_random_sample_rows': apply_random_sample_rows,
         'stratified_sample_by_type': stratified_sample_by_type,
+        'plot_bars': plot_bars,
+        'plot_box_counts': plot_box_counts,
+        'plot_value_counts': plot_value_counts,
+        'plot_numeric_hist': plot_numeric_hist,
     }
     if extra:
         ns.update(extra)
