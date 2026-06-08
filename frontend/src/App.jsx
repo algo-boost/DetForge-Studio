@@ -15,6 +15,7 @@ const JobsPage = lazy(() => import('./pages/JobsPage'));
 const TrainingPlatformPage = lazy(() => import('./pages/TrainingPlatformPage'));
 const ManualQcPage = lazy(() => import('./pages/ManualQcPage'));
 const CurationPage = lazy(() => import('./pages/CurationPage'));
+const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'));
 const ViewerPage = lazy(() => import('./pages/ViewerPage'));
 const OnlinePredictPage = lazy(() => import('./pages/OnlinePredictPage'));
 
@@ -64,6 +65,7 @@ export default function App() {
               <Route path="settings" element={<Navigate to="/config" replace />} />
               <Route path="history" element={<HistoryPage />} />
               <Route path="curation" element={<CurationPage />} />
+              <Route path="workflows" element={<WorkflowsPage />} />
               <Route path="models" element={<ModelsPage />} />
               <Route path="jobs" element={<JobsPage />} />
               <Route path="training" element={<TrainingPlatformPage />} />

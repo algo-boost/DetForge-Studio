@@ -6,6 +6,7 @@
 """
 import json
 import threading
+import time
 
 DEFAULT_FORGE_DB = 'detforge'
 
@@ -320,6 +321,85 @@ def schema_statements(db=None):
           KEY idx_project (project_id),
           UNIQUE KEY uk_proj_train (project_id, train_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+        f"""CREATE TABLE IF NOT EXISTS `{db}`.`workflow_template` (
+          id VARCHAR(128) NOT NULL PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          description TEXT DEFAULT NULL,
+          version INT DEFAULT 1,
+          definition JSON NOT NULL,
+          enabled TINYINT DEFAULT 1,
+          builtin TINYINT DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+        f"""CREATE TABLE IF NOT EXISTS `{db}`.`workflow_schedule` (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          template_id VARCHAR(128) NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          cron_expr VARCHAR(64) NOT NULL,
+          timezone VARCHAR(32) DEFAULT 'Asia/Shanghai',
+          params JSON NOT NULL,
+          notify_policy JSON DEFAULT NULL,
+          enabled TINYINT DEFAULT 1,
+          mutex TINYINT DEFAULT 1 COMMENT '1=上次未完成则跳过',
+          next_run_at DATETIME DEFAULT NULL,
+          last_run_id BIGINT DEFAULT NULL,
+          last_triggered_at DATETIME DEFAULT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          KEY idx_enabled_next (enabled, next_run_at),
+          KEY idx_template (template_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+        f"""CREATE TABLE IF NOT EXISTS `{db}`.`workflow_run` (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          template_id VARCHAR(128) NOT NULL,
+          schedule_id BIGINT DEFAULT NULL,
+          name VARCHAR(255) DEFAULT NULL,
+          params JSON NOT NULL,
+          context JSON DEFAULT NULL,
+          status VARCHAR(32) NOT NULL DEFAULT 'pending',
+          current_step_id VARCHAR(64) DEFAULT NULL,
+          error TEXT DEFAULT NULL,
+          created_by VARCHAR(128) DEFAULT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          started_at DATETIME DEFAULT NULL,
+          finished_at DATETIME DEFAULT NULL,
+          KEY idx_status (status, id),
+          KEY idx_template (template_id),
+          KEY idx_schedule (schedule_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+        f"""CREATE TABLE IF NOT EXISTS `{db}`.`workflow_step_run` (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          run_id BIGINT NOT NULL,
+          step_id VARCHAR(64) NOT NULL,
+          kind VARCHAR(32) NOT NULL,
+          seq INT DEFAULT 0,
+          status VARCHAR(32) NOT NULL DEFAULT 'pending',
+          input JSON DEFAULT NULL,
+          output JSON DEFAULT NULL,
+          child_job_id BIGINT DEFAULT NULL,
+          child_batch_id BIGINT DEFAULT NULL,
+          human_action JSON DEFAULT NULL,
+          error TEXT DEFAULT NULL,
+          started_at DATETIME DEFAULT NULL,
+          finished_at DATETIME DEFAULT NULL,
+          KEY idx_run (run_id, seq),
+          UNIQUE KEY uk_run_step (run_id, step_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+        f"""CREATE TABLE IF NOT EXISTS `{db}`.`workflow_notification` (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          run_id BIGINT DEFAULT NULL,
+          schedule_id BIGINT DEFAULT NULL,
+          channel VARCHAR(32) NOT NULL,
+          event VARCHAR(64) NOT NULL,
+          title VARCHAR(255) DEFAULT NULL,
+          message TEXT DEFAULT NULL,
+          payload JSON DEFAULT NULL,
+          status VARCHAR(16) DEFAULT 'sent',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          KEY idx_run (run_id),
+          KEY idx_created (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
     ]
 
 
@@ -432,6 +512,7 @@ def schema_ready(client=None, config=None):
         'model_registry', 'job', 'job_item', 'predict_result', 'manual_qc',
         'curation_batch', 'curation_item', 'replay_run',
         'sync_project', 'sync_dataset', 'dataset_item', 'platform_train_model',
+        'workflow_template', 'workflow_schedule', 'workflow_run', 'workflow_step_run',
     }
     return need.issubset(have)
 
@@ -685,6 +766,120 @@ def reclaim_stale_jobs(timeout_seconds=120):
               AND heartbeat < (NOW() - INTERVAL %s SECOND)""",
         (int(timeout_seconds),),
     )
+
+
+def merge_job_params(job_id, patch):
+    job = get_job(job_id)
+    if not job:
+        return 0
+    params = dict(job.get('params') or {})
+    params.update(patch or {})
+    return update_job(job_id, params=_json_dump(params))
+
+
+def clear_job_param_keys(job_id, *keys):
+    job = get_job(job_id)
+    if not job:
+        return 0
+    params = dict(job.get('params') or {})
+    for key in keys:
+        params.pop(key, None)
+    return update_job(job_id, params=_json_dump(params))
+
+
+def reset_running_job_items(job_id):
+    return _client().execute(
+        f"UPDATE {_t('job_item')} SET status='pending' WHERE job_id=%s AND status='running'",
+        (int(job_id),),
+    )
+
+
+def _jobs_with_remaining(statuses=('pending', 'running', 'paused')):
+    placeholders = ','.join(['%s'] * len(statuses))
+    rows = _client().fetchall(
+        f"""SELECT j.id, j.job_type, j.name, j.status, j.params, j.total, j.done, j.failed,
+                   (SELECT COUNT(*) FROM {_t('job_item')} ji
+                    WHERE ji.job_id = j.id AND ji.status IN ('pending','running')) AS remaining
+            FROM {_t('job')} j
+            WHERE j.status IN ({placeholders})
+            HAVING remaining > 0
+            ORDER BY j.id DESC""",
+        tuple(statuses),
+    )
+    for row in rows:
+        row['params'] = _json_load(row.get('params'))
+        row['remaining'] = int(row.get('remaining') or 0)
+    return rows
+
+
+def _mark_job_interrupted(job_id, reason='shutdown'):
+    reset_running_job_items(job_id)
+    merge_job_params(job_id, {
+        'interrupted_at': time.time(),
+        'interrupted_reason': str(reason or 'shutdown'),
+    })
+    return update_job(job_id, status='paused', worker_id=None)
+
+
+def pause_active_jobs_for_service_stop(reason='shutdown'):
+    """关闭服务：将在跑/排队且未完成的作业置为 paused 并打 interrupted 标记。"""
+    rows = _jobs_with_remaining(statuses=('pending', 'running'))
+    count = 0
+    for row in rows:
+        _mark_job_interrupted(row['id'], reason=reason)
+        count += 1
+    return count
+
+
+def isolate_incomplete_jobs_on_startup():
+    """启动时：防止未确认续跑前 worker 自动领取 pending 作业。"""
+    rows = _jobs_with_remaining(statuses=('pending', 'running'))
+    count = 0
+    for row in rows:
+        _mark_job_interrupted(row['id'], reason='startup')
+        count += 1
+    return count
+
+
+def list_interrupted_jobs(limit=50):
+    rows = _jobs_with_remaining(statuses=('paused',))
+    out = []
+    for row in rows:
+        params = row.get('params') or {}
+        if not params.get('interrupted_at'):
+            continue
+        out.append({
+            'id': row['id'],
+            'job_type': row.get('job_type'),
+            'name': row.get('name'),
+            'status': row.get('status'),
+            'total': int(row.get('total') or 0),
+            'done': int(row.get('done') or 0),
+            'failed': int(row.get('failed') or 0),
+            'remaining': row['remaining'],
+            'interrupted_reason': params.get('interrupted_reason'),
+        })
+        if len(out) >= int(limit):
+            break
+    return out
+
+
+def resolve_interrupted_jobs(action, job_ids=None):
+    """action: resume → pending；dismiss → 保持 paused 并清除 interrupted 标记。"""
+    jobs = list_interrupted_jobs(limit=500)
+    if job_ids:
+        wanted = {int(x) for x in job_ids}
+        jobs = [j for j in jobs if j['id'] in wanted]
+    if action == 'resume':
+        for job in jobs:
+            clear_job_param_keys(job['id'], 'interrupted_at', 'interrupted_reason')
+            update_job(job['id'], status='pending', worker_id=None, error=None, finished_at=None)
+        return len(jobs)
+    if action == 'dismiss':
+        for job in jobs:
+            clear_job_param_keys(job['id'], 'interrupted_at', 'interrupted_reason')
+        return len(jobs)
+    raise ValueError(f'无效 action: {action}')
 
 
 def pending_items(job_id, limit=None):
@@ -1742,4 +1937,350 @@ def list_replay_runs(limit=50, offset=0):
     for r in rows:
         r['spec_json'] = _json_load(r.get('spec_json'))
         r['result_json'] = _json_load(r.get('result_json'))
+    return rows
+
+
+# ── 工作流编排 ─────────────────────────────────────────────────────
+
+WORKFLOW_RUN_STATUSES = (
+    'pending', 'running', 'waiting_human', 'done', 'failed', 'canceled', 'paused',
+)
+WORKFLOW_STEP_STATUSES = (
+    'pending', 'running', 'done', 'failed', 'skipped', 'waiting_human',
+)
+
+
+def _hydrate_workflow_template(row):
+    if not row:
+        return row
+    row['definition'] = _json_load(row.get('definition'))
+    return row
+
+
+def _hydrate_workflow_run(row):
+    if not row:
+        return row
+    row['params'] = _json_load(row.get('params'))
+    row['context'] = _json_load(row.get('context'))
+    return row
+
+
+def _hydrate_workflow_step(row):
+    if not row:
+        return row
+    row['input'] = _json_load(row.get('input'))
+    row['output'] = _json_load(row.get('output'))
+    row['human_action'] = _json_load(row.get('human_action'))
+    return row
+
+
+def upsert_workflow_template(data):
+    client = _client()
+    client.execute(
+        f"""INSERT INTO {_t('workflow_template')}
+            (id, name, description, version, definition, enabled, builtin)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            ON DUPLICATE KEY UPDATE
+              name=VALUES(name), description=VALUES(description),
+              version=VALUES(version), definition=VALUES(definition),
+              enabled=VALUES(enabled), builtin=VALUES(builtin)""",
+        (
+            str(data['id']),
+            str(data.get('name') or data['id']),
+            data.get('description'),
+            int(data.get('version') or 1),
+            _json_dump(data.get('definition') or {}),
+            int(data.get('enabled', 1)),
+            int(data.get('builtin', 0)),
+        ),
+    )
+    return str(data['id'])
+
+
+def get_workflow_template(template_id):
+    return _hydrate_workflow_template(
+        _client().fetchone(f"SELECT * FROM {_t('workflow_template')} WHERE id=%s", (str(template_id),))
+    )
+
+
+def list_workflow_templates(enabled_only=False):
+    sql = f"SELECT * FROM {_t('workflow_template')}"
+    if enabled_only:
+        sql += " WHERE enabled=1"
+    sql += " ORDER BY builtin DESC, name ASC"
+    rows = _client().fetchall(sql)
+    return [_hydrate_workflow_template(r) for r in rows]
+
+
+def create_workflow_schedule(data):
+    client = _client()
+    client.execute(
+        f"""INSERT INTO {_t('workflow_schedule')}
+            (template_id, name, cron_expr, timezone, params, notify_policy,
+             enabled, mutex, next_run_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (
+            str(data['template_id']),
+            str(data.get('name') or data['template_id']),
+            str(data['cron_expr']),
+            str(data.get('timezone') or 'Asia/Shanghai'),
+            _json_dump(data.get('params') or {}),
+            _json_dump(data.get('notify_policy')),
+            int(data.get('enabled', 1)),
+            int(data.get('mutex', 1)),
+            data.get('next_run_at'),
+        ),
+    )
+    return client.last_insert_id()
+
+
+def get_workflow_schedule(schedule_id):
+    row = _client().fetchone(f"SELECT * FROM {_t('workflow_schedule')} WHERE id=%s", (int(schedule_id),))
+    if row:
+        row['params'] = _json_load(row.get('params'))
+        row['notify_policy'] = _json_load(row.get('notify_policy'))
+    return row
+
+
+def update_workflow_schedule(schedule_id, **fields):
+    allowed = {
+        'template_id', 'name', 'cron_expr', 'timezone', 'params', 'notify_policy',
+        'enabled', 'mutex', 'next_run_at', 'last_run_id', 'last_triggered_at',
+    }
+    sets, args = [], []
+    for key, val in fields.items():
+        if key not in allowed:
+            continue
+        sets.append(f"`{key}`=%s")
+        if key in ('params', 'notify_policy') and val is not None and not isinstance(val, str):
+            args.append(_json_dump(val))
+        else:
+            args.append(val)
+    if not sets:
+        return 0
+    args.append(int(schedule_id))
+    return _client().execute(
+        f"UPDATE {_t('workflow_schedule')} SET {', '.join(sets)} WHERE id=%s",
+        tuple(args),
+    )
+
+
+def list_workflow_schedules(enabled_only=False, limit=100):
+    sql = f"SELECT * FROM {_t('workflow_schedule')}"
+    if enabled_only:
+        sql += " WHERE enabled=1"
+    sql += " ORDER BY id DESC LIMIT %s"
+    rows = _client().fetchall(sql, (int(limit),))
+    for r in rows:
+        r['params'] = _json_load(r.get('params'))
+        r['notify_policy'] = _json_load(r.get('notify_policy'))
+    return rows
+
+
+def list_due_workflow_schedules(now_str):
+    rows = _client().fetchall(
+        f"""SELECT * FROM {_t('workflow_schedule')}
+            WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at <= %s
+            ORDER BY next_run_at ASC LIMIT 20""",
+        (now_str,),
+    )
+    for r in rows:
+        r['params'] = _json_load(r.get('params'))
+        r['notify_policy'] = _json_load(r.get('notify_policy'))
+    return rows
+
+
+def create_workflow_run(data):
+    client = _client()
+    client.execute(
+        f"""INSERT INTO {_t('workflow_run')}
+            (template_id, schedule_id, name, params, context, status, created_by)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+        (
+            str(data['template_id']),
+            data.get('schedule_id'),
+            data.get('name'),
+            _json_dump(data.get('params') or {}),
+            _json_dump(data.get('context') or {'params': data.get('params') or {}, 'steps': {}}),
+            str(data.get('status') or 'pending'),
+            data.get('created_by'),
+        ),
+    )
+    return client.last_insert_id()
+
+
+def get_workflow_run(run_id):
+    return _hydrate_workflow_run(
+        _client().fetchone(f"SELECT * FROM {_t('workflow_run')} WHERE id=%s", (int(run_id),))
+    )
+
+
+def update_workflow_run(run_id, **fields):
+    allowed = {
+        'status', 'current_step_id', 'context', 'error', 'started_at', 'finished_at', 'name',
+    }
+    sets, args = [], []
+    for key, val in fields.items():
+        if key not in allowed:
+            continue
+        sets.append(f"`{key}`=%s")
+        if key == 'context' and val is not None and not isinstance(val, str):
+            args.append(_json_dump(val))
+        else:
+            args.append(val)
+    if not sets:
+        return 0
+    args.append(int(run_id))
+    return _client().execute(
+        f"UPDATE {_t('workflow_run')} SET {', '.join(sets)} WHERE id=%s",
+        tuple(args),
+    )
+
+
+def list_workflow_runs(status=None, template_id=None, limit=50, offset=0):
+    where, args = [], []
+    if status:
+        where.append('status=%s')
+        args.append(status)
+    if template_id:
+        where.append('template_id=%s')
+        args.append(str(template_id))
+    sql = f"SELECT * FROM {_t('workflow_run')}"
+    if where:
+        sql += ' WHERE ' + ' AND '.join(where)
+    sql += ' ORDER BY id DESC LIMIT %s OFFSET %s'
+    args.extend([int(limit), int(offset)])
+    rows = _client().fetchall(sql, tuple(args))
+    return [_hydrate_workflow_run(r) for r in rows]
+
+
+def count_workflow_runs(status=None, template_id=None):
+    where, args = [], []
+    if status:
+        where.append('status=%s')
+        args.append(status)
+    if template_id:
+        where.append('template_id=%s')
+        args.append(str(template_id))
+    sql = f"SELECT COUNT(*) AS c FROM {_t('workflow_run')}"
+    if where:
+        sql += ' WHERE ' + ' AND '.join(where)
+    row = _client().fetchone(sql, tuple(args) if args else None)
+    return int((row or {}).get('c') or 0)
+
+
+def has_active_workflow_run_for_schedule(schedule_id):
+    row = _client().fetchone(
+        f"""SELECT id FROM {_t('workflow_run')}
+            WHERE schedule_id=%s AND status IN ('pending','running','waiting_human')
+            ORDER BY id DESC LIMIT 1""",
+        (int(schedule_id),),
+    )
+    return bool(row)
+
+
+def insert_workflow_step_runs(run_id, steps):
+    client = _client()
+    for seq, step in enumerate(steps):
+        client.execute(
+            f"""INSERT INTO {_t('workflow_step_run')}
+                (run_id, step_id, kind, seq, status, input)
+                VALUES (%s,%s,%s,%s,'pending',%s)""",
+            (
+                int(run_id),
+                str(step['id']),
+                str(step['kind']),
+                int(seq),
+                _json_dump(step.get('params') or {}),
+            ),
+        )
+
+
+def list_workflow_step_runs(run_id):
+    rows = _client().fetchall(
+        f"SELECT * FROM {_t('workflow_step_run')} WHERE run_id=%s ORDER BY seq ASC",
+        (int(run_id),),
+    )
+    return [_hydrate_workflow_step(r) for r in rows]
+
+
+def get_workflow_step_run(run_id, step_id):
+    return _hydrate_workflow_step(
+        _client().fetchone(
+            f"SELECT * FROM {_t('workflow_step_run')} WHERE run_id=%s AND step_id=%s",
+            (int(run_id), str(step_id)),
+        )
+    )
+
+
+def update_workflow_step_run(run_id, step_id, **fields):
+    allowed = {
+        'status', 'input', 'output', 'child_job_id', 'child_batch_id',
+        'human_action', 'error', 'started_at', 'finished_at',
+    }
+    sets, args = [], []
+    for key, val in fields.items():
+        if key not in allowed:
+            continue
+        sets.append(f"`{key}`=%s")
+        if key in ('input', 'output', 'human_action') and val is not None and not isinstance(val, str):
+            args.append(_json_dump(val))
+        else:
+            args.append(val)
+    if not sets:
+        return 0
+    args.extend([int(run_id), str(step_id)])
+    return _client().execute(
+        f"UPDATE {_t('workflow_step_run')} SET {', '.join(sets)} "
+        f"WHERE run_id=%s AND step_id=%s",
+        tuple(args),
+    )
+
+
+def find_workflow_runs_waiting_on_batch(batch_id):
+    rows = _client().fetchall(
+        f"""SELECT wr.* FROM {_t('workflow_run')} wr
+            JOIN {_t('workflow_step_run')} ws ON ws.run_id=wr.id
+            WHERE wr.status='waiting_human' AND ws.child_batch_id=%s
+              AND ws.status='waiting_human' AND ws.kind='gate_human'
+            ORDER BY wr.id DESC""",
+        (int(batch_id),),
+    )
+    return [_hydrate_workflow_run(r) for r in rows]
+
+
+def insert_workflow_notification(data):
+    client = _client()
+    client.execute(
+        f"""INSERT INTO {_t('workflow_notification')}
+            (run_id, schedule_id, channel, event, title, message, payload, status)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (
+            data.get('run_id'),
+            data.get('schedule_id'),
+            str(data.get('channel') or 'ui'),
+            str(data.get('event') or 'info'),
+            data.get('title'),
+            data.get('message'),
+            _json_dump(data.get('payload')),
+            str(data.get('status') or 'sent'),
+        ),
+    )
+    return client.last_insert_id()
+
+
+def list_workflow_notifications(limit=50, run_id=None):
+    if run_id:
+        rows = _client().fetchall(
+            f"SELECT * FROM {_t('workflow_notification')} WHERE run_id=%s "
+            f"ORDER BY id DESC LIMIT %s",
+            (int(run_id), int(limit)),
+        )
+    else:
+        rows = _client().fetchall(
+            f"SELECT * FROM {_t('workflow_notification')} ORDER BY id DESC LIMIT %s",
+            (int(limit),),
+        )
+    for r in rows:
+        r['payload'] = _json_load(r.get('payload'))
     return rows

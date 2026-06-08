@@ -41,6 +41,13 @@ def create_app():
     app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
+    try:
+        from studio.lifecycle import install_hooks, startup as lifecycle_startup
+        install_hooks()
+        lifecycle_startup()
+    except Exception as e:  # noqa: BLE001
+        print(f'⚠️ 生命周期钩子初始化失败: {e}')
+
     _install_optional_auth(app)
     register_routes(app)
 
@@ -65,6 +72,13 @@ def create_app():
         maybe_start_in_process()
     except Exception as e:  # noqa: BLE001
         print(f"⚠️ worker 自动启动失败（可命令行手动启动 python worker.py）: {e}")
+
+    if os.environ.get('PC_NO_WORKFLOW_SCHEDULER') != '1':
+        try:
+            from studio.forge.workflow_scheduler import init_workflow_scheduler
+            init_workflow_scheduler(app)
+        except Exception as e:  # noqa: BLE001
+            print(f'⚠️ 工作流调度器启动失败: {e}')
 
     @app.after_request
     def add_cors_headers(response):

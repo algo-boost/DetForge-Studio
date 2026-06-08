@@ -43,6 +43,21 @@ def resolve_config_path(path: str, *, must_exist: bool = False) -> str:
     return out
 
 
+def app_temp_dir(config=None) -> str:
+    """应用临时目录：优先 PC_TEMP_DIR / config.temp_dir，否则 exports/.tmp（避免系统 %TEMP% 占 C 盘）。"""
+    env_dir = (os.environ.get('PC_TEMP_DIR') or '').strip()
+    if env_dir:
+        out = os.path.normpath(env_dir)
+    else:
+        if config is None:
+            from server.core import load_config
+            config = load_config()
+        cfg_dir = resolve_config_path(str(config.get('temp_dir') or '').strip())
+        out = cfg_dir if cfg_dir else os.path.join(APP_ROOT, 'exports', '.tmp')
+    os.makedirs(out, exist_ok=True)
+    return out
+
+
 def bundled_tool_dir(name: str) -> str:
     """发行包内 tools/<name>（如 COCOVisualizer、DetUnify-Studio）。"""
     root = os.path.join(APP_ROOT, 'tools', name)

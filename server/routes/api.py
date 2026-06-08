@@ -1380,3 +1380,43 @@ def run_python_code():
             'error': str(e),
             'traceback': traceback.format_exc()
         }), 500
+
+
+@api_bp.route('/api/lifecycle/shutdown', methods=['POST'])
+def lifecycle_shutdown_route():
+    """优雅关闭：暂停作业并终止登记子进程（供 restart 脚本调用）。"""
+    try:
+        from studio.lifecycle import shutdown
+        shutdown('api')
+        return jsonify({'success': True})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@api_bp.route('/api/lifecycle/interrupted-jobs', methods=['GET'])
+def list_interrupted_jobs_route():
+    """服务重启后待用户确认是否续跑的后台作业。"""
+    try:
+        from studio.forge import forge_db
+        jobs = forge_db.list_interrupted_jobs(limit=50)
+        return jsonify({'success': True, 'jobs': jobs, 'count': len(jobs)})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@api_bp.route('/api/lifecycle/interrupted-jobs', methods=['POST'])
+def resolve_interrupted_jobs_route():
+    """续跑或放弃被中断的后台作业。body: { action: resume|dismiss, job_ids?: [] }"""
+    try:
+        from studio.forge import forge_db
+        data = request.json or {}
+        action = str(data.get('action') or '').strip()
+        if action not in ('resume', 'dismiss'):
+            return jsonify({'success': False, 'error': 'action 须为 resume 或 dismiss'}), 400
+        job_ids = data.get('job_ids')
+        if job_ids is not None and not isinstance(job_ids, list):
+            return jsonify({'success': False, 'error': 'job_ids 须为数组'}), 400
+        n = forge_db.resolve_interrupted_jobs(action, job_ids=job_ids)
+        return jsonify({'success': True, 'action': action, 'count': n})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({'success': False, 'error': str(e)}), 500

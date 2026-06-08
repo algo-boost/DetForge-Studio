@@ -32,6 +32,12 @@ $Python = Resolve-PcPython -Root $Root
 Set-Location $Root
 
 Write-Host '==> stopping existing server on :5050...'
+try {
+    Invoke-RestMethod -Uri 'http://127.0.0.1:5050/api/lifecycle/shutdown' -Method POST -TimeoutSec 5 -ErrorAction Stop | Out-Null
+    Start-Sleep -Milliseconds 400
+} catch {
+    # 服务未运行或尚未就绪时忽略
+}
 Stop-PcServer
 
 if ($RebuildFrontend) {

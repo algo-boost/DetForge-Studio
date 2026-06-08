@@ -197,12 +197,19 @@ def run_batch_predict(payload, config=None, timeout=None, log_line=None):
         if ckpt:
             log_line(f'[payload] checkpoint={ckpt}')
 
-    with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False, encoding='utf-8') as tf:
+    from studio.paths import app_temp_dir
+    from studio.process_registry import kill_process_tree, register_child, unregister_child
+
+    with tempfile.NamedTemporaryFile(
+        'w', suffix='.json', delete=False, encoding='utf-8', dir=app_temp_dir(),
+    ) as tf:
         json.dump(payload, tf, ensure_ascii=False)
         payload_path = tf.name
 
     stdout_lines = []
     stderr_lines = []
+    proc = None
+    returncode = 1
 
     def _drain(stream, buf, tag):
         if not stream:
@@ -228,6 +235,7 @@ def run_batch_predict(payload, config=None, timeout=None, log_line=None):
             text=True,
             cwd=cwd,
         )
+        register_child(proc.pid, 'predict_batch')
 
         out_thread = threading.Thread(
             target=_drain, args=(proc.stdout, stdout_lines, 'stdout'), daemon=True,
@@ -240,7 +248,8 @@ def run_batch_predict(payload, config=None, timeout=None, log_line=None):
         try:
             returncode = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            if proc:
+                kill_process_tree(proc.pid)
             proc.wait()
             out_thread.join(timeout=2.0)
             err_thread.join(timeout=2.0)
@@ -252,6 +261,10 @@ def run_batch_predict(payload, config=None, timeout=None, log_line=None):
         stdout = '\n'.join(stdout_lines)
         stderr_text = '\n'.join(stderr_lines)
     finally:
+        if proc is not None:
+            unregister_child(proc.pid)
+            if proc.poll() is None:
+                kill_process_tree(proc.pid)
         try:
             os.unlink(payload_path)
         except OSError:
@@ -371,26 +384,40 @@ def run_health_check(model, device=None, threshold=0.5, max_size=1536, config=No
     import json
     import tempfile
 
-    with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False, encoding='utf-8') as tf:
+    from studio.paths import app_temp_dir
+    from studio.process_registry import kill_process_tree, register_child, unregister_child
+
+    with tempfile.NamedTemporaryFile(
+        'w', suffix='.json', delete=False, encoding='utf-8', dir=app_temp_dir(),
+    ) as tf:
         json.dump(payload, tf, ensure_ascii=False)
         payload_path = tf.name
+    proc = None
+    stdout = ''
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             [settings['predict_python_executable'], settings['predict_script'], '--payload-file', payload_path],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             cwd=settings['detunify_studio_root'] or None,
         )
+        register_child(proc.pid, 'predict_health')
+        stdout, stderr_text = proc.communicate()
+        if proc.returncode != 0:
+            err = (stderr_text or stdout or '').strip()
+            return {'ok': False, 'error': err or f'exit {proc.returncode}', 'device': payload['device']}
     finally:
+        if proc is not None:
+            unregister_child(proc.pid)
+            if proc.poll() is None:
+                kill_process_tree(proc.pid)
         try:
             os.unlink(payload_path)
         except OSError:
             pass
-    if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or '').strip()
-        return {'ok': False, 'error': err or f'exit {proc.returncode}', 'device': payload['device']}
     try:
-        data = parse_subprocess_stdout(proc.stdout)
+        data = parse_subprocess_stdout(stdout)
     except ValueError as e:
         return {'ok': False, 'error': str(e), 'device': payload['device']}
     return {

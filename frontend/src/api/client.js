@@ -140,6 +140,11 @@ async function importPlatformModelsFallback(body = {}) {
 
 export const api = {
   getConfig: () => request('/api/config'),
+  listInterruptedJobs: () => request('/api/lifecycle/interrupted-jobs'),
+  resolveInterruptedJobs: (body) => request('/api/lifecycle/interrupted-jobs', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
   getUserGuide: () => request('/api/docs/user-guide'),
   saveConfig: (config) => request('/api/config', { method: 'POST', body: JSON.stringify({ config }) }),
   testConnection: (body) => request('/api/config/test-connection', { method: 'POST', body: JSON.stringify(body) }),
@@ -337,6 +342,20 @@ export const api = {
   }),
   forgeReplayRunGet: (id) => request(`/api/forge/replay-runs/${id}`),
   forgeReplayRunList: (params = '') => request(`/api/forge/replay-runs${params}`),
+
+  forgeWorkflowTemplates: () => request('/api/forge/workflows/templates'),
+  forgeWorkflowTemplate: (id) => request(`/api/forge/workflows/templates/${encodeURIComponent(id)}`),
+  forgeWorkflowRuns: (params = '') => request(`/api/forge/workflows/runs${params}`),
+  forgeWorkflowRunCreate: (body) => request('/api/forge/workflows/runs', { method: 'POST', body: JSON.stringify(body) }),
+  forgeWorkflowRun: (id) => request(`/api/forge/workflows/runs/${id}`),
+  forgeWorkflowRunResume: (id) => request(`/api/forge/workflows/runs/${id}/resume`, { method: 'POST' }),
+  forgeWorkflowSchedules: (params = '') => request(`/api/forge/workflows/schedules${params}`),
+  forgeWorkflowScheduleCreate: (body) => request('/api/forge/workflows/schedules', { method: 'POST', body: JSON.stringify(body) }),
+  forgeWorkflowScheduleUpdate: (id, body) => request(`/api/forge/workflows/schedules/${id}`, {
+    method: 'PATCH', body: JSON.stringify(body),
+  }),
+  forgeWorkflowScheduleTrigger: (id) => request(`/api/forge/workflows/schedules/${id}/trigger`, { method: 'POST' }),
+  forgeWorkflowNotifications: (params = '') => request(`/api/forge/workflows/notifications${params}`),
 
   forgeSyncTestAuth: () => request('/api/forge/sync/test-auth', { method: 'POST' }),
   forgeSyncDiscover: (body) => request('/api/forge/sync/discover', { method: 'POST', body: JSON.stringify(body) }),

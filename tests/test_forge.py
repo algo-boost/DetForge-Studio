@@ -650,6 +650,19 @@ class ForgeDbIntegrationTests(unittest.TestCase):
         self.assertEqual(forge_db.job_control(job_id, 'resume'), 'pending')
         self.assertEqual(forge_db.job_control(job_id, 'cancel'), 'canceled')
 
+    def test_interrupted_jobs_flow(self):
+        mid = self._make_model()
+        job_id = forge_db.create_job('predict', 'interrupt', {'model_id': mid}, items=['/a.jpg', '/b.jpg'])
+        forge_db.update_job(job_id, status='running')
+        n = forge_db.pause_active_jobs_for_service_stop(reason='test')
+        self.assertGreaterEqual(n, 1)
+        jobs = forge_db.list_interrupted_jobs()
+        self.assertTrue(any(j['id'] == job_id for j in jobs))
+        forge_db.resolve_interrupted_jobs('resume', job_ids=[job_id])
+        job = forge_db.get_job(job_id)
+        self.assertEqual(job['status'], 'pending')
+        self.assertIsNone((job.get('params') or {}).get('interrupted_at'))
+
     def test_claim_next_job(self):
         mid = self._make_model()
         job_id = forge_db.create_job('predict', 'claim', {'model_id': mid}, items=['/x.jpg'])
@@ -681,6 +694,84 @@ class WorkerLaneTests(unittest.TestCase):
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
+
+
+class WorkflowGraphTests(unittest.TestCase):
+    def test_linear_to_graph(self):
+        from studio.forge.workflow_graph import linear_steps_to_graph, topological_steps
+        steps = [
+            {'id': 'a', 'kind': 'query', 'params': {}},
+            {'id': 'b', 'kind': 'predict', 'params': {}, 'requires': ['a']},
+        ]
+        g = linear_steps_to_graph(steps)
+        self.assertEqual(len(g['nodes']), 2)
+        self.assertEqual(len(g['edges']), 1)
+        order = [s['id'] for s in topological_steps(g['nodes'], g['edges'])]
+        self.assertEqual(order, ['a', 'b'])
+
+    def test_branch_edge_eval(self):
+        from studio.forge.workflow_graph import eval_edge_when
+        self.assertTrue(eval_edge_when('empty', 'skipped', {'reason': 'empty_result'}))
+        self.assertTrue(eval_edge_when('not_empty', 'done', {'row_count': 5}))
+        self.assertTrue(eval_edge_when('empty', 'done', {'row_count': 0}))
+        self.assertFalse(eval_edge_when('not_empty', 'skipped', {'reason': 'empty_result'}))
+
+    def test_normalize_v2_graph(self):
+        from studio.forge.workflow_graph import normalize_definition
+        d = normalize_definition({
+            'version': 2,
+            'graph': {
+                'nodes': [
+                    {'id': 'q', 'kind': 'query'},
+                    {'id': 'n', 'kind': 'notify'},
+                ],
+                'edges': [
+                    {'from': 'q', 'to': 'n', 'when': 'empty'},
+                ],
+            },
+        })
+        self.assertEqual(len(d['steps']), 2)
+        self.assertIn('graph', d)
+
+
+class WorkflowTests(unittest.TestCase):
+    def test_builtin_templates_defined(self):
+        from studio.forge.workflow_templates import BUILTIN_TEMPLATES
+        ids = {t['id'] for t in BUILTIN_TEMPLATES}
+        self.assertIn('daily_ng_curation', ids)
+        self.assertIn('weekly_predict_eval', ids)
+
+    def test_resolve_templates(self):
+        from studio.forge.workflow_steps import resolve_templates
+        ctx = {
+            'params': {'strategy_id': 'daily_trawl', 'model_id': 3},
+            'steps': {'query': {'task_id': 'abc-123', 'row_count': 10}},
+        }
+        out = resolve_templates({
+            'task_id': '{{steps.query.task_id}}',
+            'strategy_id': '{{params.strategy_id}}',
+        }, ctx)
+        self.assertEqual(out['task_id'], 'abc-123')
+        self.assertEqual(out['strategy_id'], 'daily_trawl')
+
+    def test_cron_next_run(self):
+        from studio.forge.workflow_scheduler import compute_next_run
+        nra = compute_next_run('0 2 * * *')
+        self.assertRegex(nra, r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$')
+        self.assertTrue(nra.endswith(':00:00') and ' 02:00:00' in nra)
+
+    def test_schema_includes_workflow_tables(self):
+        joined = '\n'.join(forge_db.schema_statements('detforge'))
+        for tbl in ('workflow_template', 'workflow_schedule', 'workflow_run', 'workflow_step_run'):
+            self.assertIn(f'`detforge`.`{tbl}`', joined)
+
+    def test_empty_query_marks_skipped(self):
+        from studio.forge.workflow_steps import run_query_step
+        with patch('studio.forge.workflow_steps.execute_strategy_ref') as mock_exec:
+            mock_exec.return_value = {'count': 0, 'task_id': None}
+            out = run_query_step({'strategy_id': 'daily_trawl'}, {'run_id': 1})
+        self.assertTrue(out.get('skipped'))
+        self.assertEqual(out.get('reason'), 'empty_result')
 
 
 class JobLogTests(unittest.TestCase):

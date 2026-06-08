@@ -41,7 +41,16 @@ def schema_status():
 def schema_init():
     try:
         count = forge_db.ensure_schema()
-        return jsonify({'success': True, 'database': forge_db.forge_db_name(), 'statements': count})
+        from studio.forge.workflow_templates import ensure_builtin_templates, ensure_default_schedules
+        tpl_n = ensure_builtin_templates()
+        sched_n = ensure_default_schedules()
+        return jsonify({
+            'success': True,
+            'database': forge_db.forge_db_name(),
+            'statements': count,
+            'workflow_templates': tpl_n,
+            'workflow_schedules': sched_n,
+        })
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
@@ -1302,6 +1311,13 @@ def curation_import(batch_id):
         if not file_text:
             return _err('请上传 _annotations.coco.json 或提供 coco_json', 400)
         result = curation_service.import_filter_result(batch_id, file_text, filename=filename)
+        try:
+            from studio.forge.workflow_engine import on_curation_imported
+            resumed = on_curation_imported(batch_id)
+            if resumed:
+                result['workflow_resumed'] = resumed
+        except Exception:  # noqa: BLE001
+            pass
         return jsonify({'success': True, **result})
     except ValueError as e:
         return _err(e, 400)
@@ -1385,6 +1401,180 @@ def archive_handoff_list():
         limit = min(int(request.args.get('limit', 50)), 200)
         data = curation_service.list_archive_handoff(limit=limit)
         return jsonify({'success': True, **data})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+# ── 工作流编排 ─────────────────────────────────────────────────────
+
+@forge_bp.route('/api/forge/workflows/templates', methods=['GET'])
+def workflow_templates_list():
+    try:
+        from studio.forge.workflow_templates import ensure_builtin_templates
+        ensure_builtin_templates()
+        enabled = request.args.get('enabled') == '1'
+        data = forge_db.list_workflow_templates(enabled_only=enabled)
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/templates/<template_id>', methods=['GET'])
+def workflow_template_get(template_id):
+    try:
+        from studio.forge.workflow_templates import ensure_builtin_templates
+        ensure_builtin_templates()
+        tpl = forge_db.get_workflow_template(template_id)
+        if not tpl:
+            return _err('模板不存在', 404)
+        return jsonify({'success': True, 'data': tpl})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/runs', methods=['GET'])
+def workflow_runs_list():
+    try:
+        status = request.args.get('status')
+        template_id = request.args.get('template_id')
+        limit = min(int(request.args.get('limit', 50)), 200)
+        offset = int(request.args.get('offset', 0))
+        data = forge_db.list_workflow_runs(
+            status=status or None, template_id=template_id or None,
+            limit=limit, offset=offset,
+        )
+        total = forge_db.count_workflow_runs(status=status or None, template_id=template_id or None)
+        return jsonify({'success': True, 'data': data, 'total': total})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/runs', methods=['POST'])
+def workflow_runs_create():
+    try:
+        from studio.forge.workflow_engine import start_run, start_custom_run
+        body = request.json or {}
+        definition = body.get('definition')
+        if definition:
+            run = start_custom_run(
+                definition,
+                params=body.get('params') or {},
+                name=body.get('name'),
+                created_by=body.get('created_by') or 'ui',
+            )
+        else:
+            template_id = body.get('template_id')
+            if not template_id:
+                return _err('template_id 或 definition 必填', 400)
+            run = start_run(
+                template_id,
+                params=body.get('params') or {},
+                name=body.get('name'),
+                created_by=body.get('created_by') or 'ui',
+            )
+        return jsonify({'success': True, 'data': run})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/runs/<int:run_id>', methods=['GET'])
+def workflow_run_get(run_id):
+    try:
+        from studio.forge.workflow_engine import get_run_detail
+        detail = get_run_detail(run_id)
+        return jsonify({'success': True, **detail})
+    except ValueError as e:
+        return _err(e, 404)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/runs/<int:run_id>/resume', methods=['POST'])
+def workflow_run_resume(run_id):
+    try:
+        from studio.forge.workflow_engine import resume_run
+        run = resume_run(run_id)
+        return jsonify({'success': True, 'data': run})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/schedules', methods=['GET'])
+def workflow_schedules_list():
+    try:
+        from studio.forge.workflow_templates import ensure_default_schedules
+        ensure_default_schedules()
+        data = forge_db.list_workflow_schedules(
+            enabled_only=request.args.get('enabled') == '1',
+        )
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/schedules', methods=['POST'])
+def workflow_schedules_create():
+    try:
+        from studio.forge.workflow_scheduler import compute_next_run
+        body = request.json or {}
+        if not body.get('template_id') or not body.get('cron_expr'):
+            return _err('template_id 与 cron_expr 必填', 400)
+        nra = compute_next_run(body['cron_expr'], body.get('timezone'))
+        sid = forge_db.create_workflow_schedule({**body, 'next_run_at': nra})
+        return jsonify({'success': True, 'data': forge_db.get_workflow_schedule(sid)})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/schedules/<int:schedule_id>', methods=['PATCH'])
+def workflow_schedules_update(schedule_id):
+    try:
+        from studio.forge.workflow_scheduler import compute_next_run
+        body = request.json or {}
+        if body.get('cron_expr'):
+            body['next_run_at'] = compute_next_run(
+                body['cron_expr'], body.get('timezone') or 'Asia/Shanghai',
+            )
+        forge_db.update_workflow_schedule(schedule_id, **body)
+        return jsonify({'success': True, 'data': forge_db.get_workflow_schedule(schedule_id)})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/schedules/<int:schedule_id>/trigger', methods=['POST'])
+def workflow_schedules_trigger(schedule_id):
+    try:
+        from studio.forge.workflow_scheduler import _trigger_schedule
+        sched = forge_db.get_workflow_schedule(schedule_id)
+        if not sched:
+            return _err('调度不存在', 404)
+        run = _trigger_schedule(sched, None)
+        if run is None:
+            return jsonify({'success': True, 'skipped': True})
+        return jsonify({'success': True, 'data': run})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/notifications', methods=['GET'])
+def workflow_notifications_list():
+    try:
+        run_id = request.args.get('run_id')
+        limit = min(int(request.args.get('limit', 50)), 200)
+        data = forge_db.list_workflow_notifications(
+            limit=limit, run_id=int(run_id) if run_id else None,
+        )
+        return jsonify({'success': True, 'data': data})
     except Exception as e:  # noqa: BLE001
         return _err(e)
 

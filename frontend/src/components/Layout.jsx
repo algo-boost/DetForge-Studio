@@ -6,6 +6,7 @@ import { setAppTimezone } from '../lib/timezone';
 import { api } from '../api/client';
 import QueryJobsTray from './QueryJobsTray';
 import FeedbackModal from './FeedbackModal';
+import ResumeJobsModal from './ResumeJobsModal';
 
 const SIDEBAR_COLLAPSED_KEY = 'defectloop.sidebar.collapsed';
 
@@ -172,6 +173,7 @@ export function Layout() {
           <div className="sb-section-label">质检归档</div>
           <NavItem to="/manual-qc" icon="qc">人工质检</NavItem>
           <NavItem to="/curation" icon="docs">筛选归档</NavItem>
+          <NavItem to="/workflows" icon="strategy">工作流编排</NavItem>
 
           <div className="sb-section-label">预测评估</div>
           <NavItem to="/online-predict" icon="predict">在线预测</NavItem>
@@ -205,6 +207,7 @@ export function Layout() {
           </button>
         )}
         <FeedbackModal />
+        <ResumeJobsModal />
         <QueryJobsTray
           onOpenResult={(job) => {
             if (job?.task_id) {

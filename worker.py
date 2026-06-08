@@ -414,6 +414,15 @@ def maybe_start_in_process(concurrency=None):
         return _manager
 
 
+def shutdown_in_process_worker():
+    """Flask 关闭时停止 in-process worker 线程。"""
+    global _manager
+    with _manager_lock:
+        if _manager is not None:
+            _manager.stop()
+            _manager = None
+
+
 def main():
     parser = argparse.ArgumentParser(description='DetForge 后台作业 worker')
     parser.add_argument(
@@ -446,6 +455,11 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         manager.stop()
+        try:
+            from studio.lifecycle import shutdown
+            shutdown('worker-interrupt')
+        except Exception:
+            pass
         print('worker 已停止')
 
 

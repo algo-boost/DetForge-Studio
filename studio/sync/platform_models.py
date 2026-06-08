@@ -53,7 +53,11 @@ def scrape_training_models(training_url, timeout=180, config=None):
     from studio.sync import magic_fox_bridge
     script = find_fetch_script()
     _, token = magic_fox_bridge.get_api_token(config)
-    fd, csv_path = tempfile.mkstemp(suffix='.csv', prefix='forge_train_models_')
+    from studio.paths import app_temp_dir
+
+    fd, csv_path = tempfile.mkstemp(
+        suffix='.csv', prefix='forge_train_models_', dir=app_temp_dir(),
+    )
     os.close(fd)
     try:
         cmd = [

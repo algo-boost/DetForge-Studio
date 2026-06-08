@@ -729,7 +729,9 @@ def open_viz_session_for_sn(sn, limit=100):
     coco = build_platform_sn_coco(records)
     if not coco.get('images'):
         raise ValueError('候选图无有效本地路径，无法打开样本图库')
-    tmp = tempfile.mkdtemp(prefix='mqc_viz_')
+    from studio.paths import app_temp_dir
+
+    tmp = tempfile.mkdtemp(prefix='mqc_viz_', dir=app_temp_dir())
     coco_path = os.path.join(tmp, '_annotations.coco.json')
     with open(coco_path, 'w', encoding='utf-8') as f:
         json.dump(coco, f, ensure_ascii=False, indent=2)
