@@ -1,14 +1,16 @@
 # IISP 绿场架构（Greenfield）
 
-**版本**：v1.2  
-**状态**：绿场目标架构；**定稿以 [IISP_DESIGN_FINAL.md](./IISP_DESIGN_FINAL.md) 为准**  
+> ⚠️ **历史归档** — 本文含过时 Edge/cron/Windmill 描述。**唯一权威**：[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) **v2.2** · [`DOCS_INDEX.md`](./DOCS_INDEX.md)
+
+**版本**：v1.3（归档）  
+**状态**：绿场参考；**定稿以 [IISP_DESIGN_FINAL.md](./IISP_DESIGN_FINAL.md) v2.2 为准**（**编排统一 Kestra**）  
 **关联**：[**最终架构定稿**](./ARCHITECTURE_FINAL.md) · [平台完整说明](./IISP_PLATFORM.md) · [可拆解架构](./ARCHITECTURE_DECOUPLED.md) · [工具箱与编排 v2](./TOOLBOX_ORCHESTRATION.md)
 
 ---
 
 ## 1. 一句话
 
-**IISP = 工具运行时 + 领域 UI + Catalog 客户端；Edge 用 `iisp flow run` + cron，Hub 可选 Kestra/Windmill；模块之间只通过 Tool Contract v1 说话。**
+**IISP = 工具运行时 + 领域 UI + Catalog 客户端 + Kestra 编排（Edge+Hub）；模块之间只通过 Tool Contract v1 说话。**
 
 删掉自研 DAG、删掉 `STEP_HANDLERS`、删掉工作流 DB 状态机。保留工业检测领域能力与 Git 共建模型。**前端保持 React + Vite，本期不做 Electron 桌面壳。**
 

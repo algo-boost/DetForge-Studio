@@ -1,13 +1,13 @@
 # Skills → Tool 共建规范
 
-> **主文档已升级**：非专业开发者请读 **[`SKILL_PLATFORM.md`](./SKILL_PLATFORM.md)**（Skill-first、封装命令、UI 三级）。  
-> 本文保留 **init-from-skill 命令细节** 与 **L1–L4 贡献流程**。
+> **索引**：[`DOCS_INDEX.md`](./DOCS_INDEX.md) · **主文档**：[`SKILL_PLATFORM.md`](./SKILL_PLATFORM.md)（L2 Skill-first）  
+> 本文：`init-from-skill` 命令与 L1–L4 贡献流程。
 
 ## 目标
 
 将 **Platform Skill（SKILL.md）** 转化为可注册进 IISP 工具箱的 `tool.manifest.json` + 运行入口（CLI / script / capability）。
 
-## 推荐路径（非专业）
+## 推荐路径（L2 配置者）
 
 ```text
 Cursor + iisp-skill-author  →  skills/<id>/SKILL.md
@@ -64,7 +64,7 @@ script: scripts/my_script.py
 1. **L1** 沉淀 `skills/<scene>/SKILL.md`（**iisp-skill-author**）
 2. **L2** `init-from-skill` / **skill pack**，实现 script 或 service，提交主仓 PR（**iisp-skill-pack**）
 3. CI：`iisp tool validate`
-4. **L3** Catalog Pipeline 引用 `tool: <id>`（**iisp-compose-flow**）
+4. **L3** Catalog **Kestra Flow** 或 Pipeline（**iisp-compose-flow**）
 5. **L4** 部署侧 `iisp catalog sync`
 
 ## 示范

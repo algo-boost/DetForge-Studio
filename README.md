@@ -29,7 +29,7 @@ python app.py
 
 开发模式：`python app.py` + `cd frontend && npm run dev`（5173 代理 API）。
 
-**快速演示编排**：
+**快速演示编排**（本地 dry-run，生产用 Kestra）：
 
 ```bash
 ./scripts/iisp flow run welcome_demo --reviewer 用户 --auto-resume
@@ -66,24 +66,22 @@ Windows 开发（热重载 + 前端 watch）：
 DetForge-Studio/                 # IISP 主仓库
 ├── app.py                       # 平台入口 + Tool Gateway
 ├── capabilities/                # Tool Registry、Manifest
-├── orchestration/               # flow_runner、catalog_sync、catalog_providers
+├── orchestration/               # flow_runner（dev dry-run）、catalog_sync
 ├── iisp-catalog/                # Catalog 演示树（生产建议独立 Git 仓）
 ├── packages/                    # git submodule + platform 共享层
 ├── studio/                      # 领域能力（查询、质检、forge…）
 ├── frontend/                    # React 19 + Vite 6（非 umi；暂不做 Electron）
-└── docs/IISP_PLATFORM.md        # 平台完整说明（Edge/Hub、Catalog、前端栈）
+详见 [`docs/IISP_PLATFORM.md`](docs/IISP_PLATFORM.md) · [`docs/DOCS_INDEX.md`](docs/DOCS_INDEX.md)
 ```
 
-**编排**：
+**编排（Edge + Hub 统一 Kestra）**：
 
 | 档位 | 方式 |
 |------|------|
-| **Edge**（产线旁、轻量） | `cron` + `iisp flow run`，读 Catalog Pipeline YAML |
-| **Hub**（多 Flow、共建） | 可选 [Kestra](https://kestra.io) / Windmill，HTTP 调 Tool |
+| **Edge** | Kestra 单机 + Git sync `pipelines/kestra/` |
+| **Hub** | Kestra（PG、可选 HA）+ 同一 Flow 源 |
 
-配置源：Git `iisp-catalog`（默认 GitHub，可迁内网 Git / local Provider）。详见 [`docs/CATALOG_CENTER.md`](docs/CATALOG_CENTER.md)。
-
-遗留 `workflow_engine` 处于迁移期；新流程请写入 Catalog `pipelines/`。
+本地开发：`iisp flow run` 仅 dry-run。配置源：Git `iisp-catalog`。
 
 ## 配置与安全
 

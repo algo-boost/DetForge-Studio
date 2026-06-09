@@ -1,9 +1,7 @@
 # IISP 安全与 Token 管理
 
-**版本**：v1.0  
-**日期**：2026-06-09  
-**状态**：定稿（现状说明 + 目标方案 + 实施路线）  
-**关联**：[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) · [`CONFIG_README.md`](../CONFIG_README.md) · [`PLATFORM_RISK_REGISTER.md`](./PLATFORM_RISK_REGISTER.md)
+**版本**：v1.1  
+**标准**：[`DOCS_INDEX.md`](./DOCS_INDEX.md) · [`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) v2.2
 
 ---
 
@@ -15,7 +13,7 @@ IISP 分 **三档** 安全需求，不可混为一谈：
 |------|------|----------|------|
 | **Edge 产线** | 内网单机、固定工位 | 共享 **Service Token** + 网络隔离 | 防误连公网、防内网误访问 |
 | **Hub 协作** | 多团队、共建 Catalog | **OIDC 用户** + 角色 RBAC | 谁改了什么可审计 |
-| **机器调用** | Kestra、cron、MCP、CLI | **Scoped Token** / mTLS（可选） | 编排器仅能 invoke，不能改配置 |
+| **机器调用** | **Kestra**、MCP、CLI | **Scoped Token** / mTLS（可选） | 编排器仅能 invoke，不能改配置 |
 
 **现状**：仅 Edge 档中的 **可选单 Token + 配置加密** 已实现；登录、RBAC、Token 生命周期管理 **未实现**。
 

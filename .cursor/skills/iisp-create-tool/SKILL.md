@@ -7,7 +7,9 @@ description: Create a new IISP Tool from natural language. Use when the user wan
 
 ## 何时使用
 
-用户要：**新增工具**、**封装脚本**、**注册 Capability**、**扩展工具箱**。
+用户要：**新增工具**、**封装脚本**、**注册 Capability** — 且 **Skill 路径不够**（需 custom UI / 复杂 service）时。
+
+> **默认先走** **iisp-skill-author** → **iisp-skill-pack**（L2）。本 Skill 为工程兜底。
 
 ## 必读约束
 

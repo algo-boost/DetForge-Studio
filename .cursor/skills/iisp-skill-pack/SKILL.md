@@ -81,7 +81,7 @@ python -m pytest tools/<id>/tests/ -q
 | `mode: wizard` | 生成 `ui.manifest.json` 步骤 |
 | `mode: custom` | 仅此时创建 `ui/`；需专业规范 |
 
-非专业用户：**默认 schema**，封装时拒绝 unnecessary custom UI。
+L2 用户：**默认 schema**，封装时避免不必要的 custom UI。
 
 ## 协议自检
 

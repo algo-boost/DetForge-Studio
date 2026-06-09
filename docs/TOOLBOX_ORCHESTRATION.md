@@ -1,29 +1,31 @@
 # IISP 工具箱与编排体系
 
-**版本**：v2.2  
-**状态**：Tool Contract 细则；**定稿以 [IISP_DESIGN_FINAL.md](./IISP_DESIGN_FINAL.md) 为准**  
-**关联**：[**最终架构定稿**](./ARCHITECTURE_FINAL.md) · [平台完整说明](./IISP_PLATFORM.md) · [Catalog 配置中心](./CATALOG_CENTER.md) · [可拆解架构](./ARCHITECTURE_DECOUPLED.md) · [绿场重构方案](./ARCHITECTURE_GREENFIELD.md) · [Skills 共建规范](./SKILL_TO_TOOL.md)
+**版本**：v2.3  
+**状态**：Tool Contract 细则；**定稿以 [IISP_DESIGN_FINAL.md](./IISP_DESIGN_FINAL.md) v2.2 为准**  
+**编排决策**：**Edge + Hub 统一使用 [Kestra](https://kestra.io)**；Windmill、cron、`iisp flow run` 生产路径已废弃。
+
+**关联**：[**最终架构定稿**](./IISP_DESIGN_FINAL.md) · [平台完整说明](./IISP_PLATFORM.md) · [Catalog 配置中心](./CATALOG_CENTER.md) · [Skills 共建规范](./SKILL_TO_TOOL.md)
 
 ---
 
 ## 1. 架构决策（已确认）
 
-**不自研编排 DAG 引擎。** 调度、依赖、重试、定时、人工等待由成熟产品或轻量 CLI 承担；IISP 只维护**工具契约**与**领域执行**。
+**不自研编排 DAG 引擎。** 调度、依赖、重试、定时、人工等待 **全部交给 Kestra**；IISP 只维护**工具契约**与**领域执行**。
 
 | 层级 | 选型 | 职责 |
 |------|------|------|
-| **Edge 编排** | **`iisp flow run` + cron** | 读 Catalog Pipeline YAML，顺序 HTTP invoke |
-| **Hub 编排** | **[Kestra](https://github.com/kestra-io/kestra)**（首选）或 Windmill | DAG、定时、Pause/Webhook、Git 同步 |
+| **编排（Edge + Hub）** | **[Kestra](https://github.com/kestra-io/kestra)** | Cron、DAG、Pause/Webhook、Git 同步、执行历史 |
 | **工具运行时** | **IISP Tool Gateway** | 统一 `invoke` API、Registry、Manifest 校验 |
-| **配置源** | **Git `iisp-catalog`** + Provider | `strategies/`、`pipelines/`、`releases.yaml` |
-| **领域 UI** | **IISP :5050**（React + Vite） | 查询、质检、筛选、工具箱；**非 Electron** |
-| **旁路（可选）** | n8n | Webhook、飞书通知 |
-| **设计态（可选）** | Dify | 自然语言生成 Pipeline 草稿 → Catalog PR |
-
-**备选编排**：若人工卡点与长事务要求极高，可将主编排换为 [Temporal](https://github.com/temporalio/temporal)；流程定义偏代码，业务同学改 YAML 成本更高。
+| **配置源** | **Git `iisp-catalog`** + Provider | `strategies/`、`pipelines/kestra/`、`releases.yaml` |
+| **领域 UI** | **IISP :5050**（React + Vite） | 查询、质检、筛选、工具箱、流水线观测 |
+| **旁路（可选）** | n8n | Webhook、飞书通知（**非主编排**） |
+| **设计态（可选）** | Dify / Cursor | 生成 Kestra Flow 或 Pipeline DSL 草稿 → Catalog PR |
+| **本地 dev** | `iisp flow run` | **仅** dry-run / CI；**不**承担生产定时 |
 
 **废弃方向**（不再扩展）：
-- 自研 [`workflow_engine.py`](../studio/forge/workflow_engine.py) 作为主调度器
+- 自研 [`workflow_engine.py`](../studio/forge/workflow_engine.py)
+- **Windmill** 作为备选编排
+- **cron + `iisp flow run`** 作为 Edge 生产调度
 - `STEP_HANDLERS` 内直接 `import studio.*`（过渡期保留，默认 `IISP_USE_REGISTRY=1`）
 
 ---
@@ -32,9 +34,9 @@
 
 ```mermaid
 flowchart TB
-  subgraph orch [L1 成熟编排 Kestra]
+  subgraph orch [L1 Kestra 唯一编排 Edge + Hub]
     Kestra[Kestra Server]
-    GitFlow[Git iisp-catalog/pipelines]
+    GitFlow[Git iisp-catalog/pipelines/kestra]
     Kestra --> GitFlow
   end
 
@@ -54,7 +56,7 @@ flowchart TB
 
   subgraph catalog [L3 Git Catalog]
     Strategies[strategies/]
-    Pipelines[pipelines/]
+    Pipelines[pipelines/kestra/]
     Pins[tool-pins.yaml]
   end
 
@@ -72,8 +74,8 @@ flowchart TB
 | 层 | 目录 | 谁维护 |
 |----|------|--------|
 | L0 工具箱 | `capabilities/`、`tool.manifest.json` | IISP 团队 |
-| L1 编排 | Kestra（外部服务） | 运维 + 平台；Flow 定义在 Catalog |
-| L2 共建 | `skills/`、`packages/*` | 全员 PR |
+| L1 编排 | **Kestra**（外部服务，Edge 单机 / Hub 集群） | 运维 + 平台；Flow 在 Catalog |
+| L2 共建 | `skills/`、`tools/*` | L2 配置者 PR |
 | L3 配置 | `iisp-catalog/` | 全员 PR + CODEOWNERS |
 
 ---
@@ -174,17 +176,17 @@ Content-Type: application/json
 
 ---
 
-## 4. Kestra 主编排
+## 4. Kestra 唯一编排（Edge + Hub）
 
 ### 4.1 职责边界
 
 | Kestra 做 | IISP 不做 |
 |-----------|-----------|
 | 步骤调度、依赖、并行 | 自研 DAG `advance_run` |
-| Cron / 事件触发 | 自研 `workflow_scheduler`（逐步下线） |
-| Pause、Webhook resume（人工卡点） | 引擎内 `waiting_human` 状态机（委托给 Kestra） |
+| Cron / 事件触发（**含 Edge 定时**） | 自研 `workflow_scheduler`、**cron 主编排** |
+| Pause、Webhook resume（人工卡点） | 引擎内 `waiting_human` 状态机 |
 | 执行历史、重试、告警 | `workflow_run` 表（可只读镜像或废弃） |
-| 从 Git 加载 Flow | 内置 `workflow_templates` 种子（迁移到 Catalog） |
+| 从 Git 加载 Flow | 内置 `workflow_templates` 种子 |
 
 | IISP 做 | Kestra 不做 |
 |---------|-------------|
@@ -193,20 +195,21 @@ Content-Type: application/json
 | 策略 JSON（`strategies/`） | 策略内容定义 |
 | 业务 UI（查询页、质检台） | 交互式标注、COCO 编辑 |
 
+**Edge 部署**：Kestra 单机（嵌入式 H2 或轻量 Postgres）；与 Hub 共用同一 Flow Git 源。
+
 ### 4.2 Flow 存放位置
 
-```
+```text
 iisp-catalog/
 ├── pipelines/
-│   ├── kestra/                    # Kestra 原生 Flow YAML（推荐）
+│   ├── kestra/                    # **运行时权威** Kestra Flow YAML
 │   │   └── daily_ng_curation.yaml
-│   └── legacy/                    # 旧 IISP Pipeline DSL（迁移期）
-│       └── daily_ng_curation.yaml
+│   └── legacy/                    # 设计态 Pipeline DSL（编译 → kestra/）
 ├── strategies/
 └── tool-pins.yaml
 ```
 
-Kestra 通过 [Git 同步](https://kestra.io/docs/developer-guide/git) 或 CI 部署拉取 `pipelines/kestra/`。
+Kestra 通过 [Git 同步](https://kestra.io/docs/developer-guide/git) 拉取 `pipelines/kestra/`（Edge / Hub 相同）。
 
 示例 Flow：[`docs/examples/kestra/daily_ng_curation.yaml`](./examples/kestra/daily_ng_curation.yaml)
 
@@ -233,23 +236,21 @@ tasks:
       }) }}
 ```
 
-下一步将上一步响应中的 `outputs` 注入 `params` / `inputs`（见示例文件）。
-
 ### 4.4 人工卡点
 
 | 场景 | Kestra 做法 |
 |------|-------------|
-| 等待上传 COCO | `io.kestra.plugin.core.flow.Pause` 或带 `onResume` 的 Webhook |
-| 用户在 IISP 质检页完成操作 | IISP 回调 Kestra resume API（或 n8n 中转） |
-| `gate-human` 工具 | 返回 `waiting_human` 后，Flow 进入 Pause 而非轮询 DB |
+| 等待上传 COCO | `io.kestra.plugin.core.flow.Pause` 或 Webhook `onResume` |
+| 用户在 IISP 质检页完成操作 | `POST /v1/orchestration/resume` → Kestra resume API |
+| `gate-human` 工具 | 返回 `waiting_human` 后 Flow 进入 Pause |
 
 ### 4.5 环境变量
 
 | 变量 | 说明 |
 |------|------|
-| `IISP_BASE_URL` | Kestra Flow 内 `vars.iisp_base`，如 `http://iisp:5050` |
-| `KESTRA_URL` | IISP 可选：展示执行状态、接收 resume 回调 |
-| `IISP_CATALOG_REPO` | 策略与 Flow 的 Git 源（与现有一致） |
+| `IISP_BASE_URL` | Kestra Flow 内 `vars.iisp_base` |
+| `KESTRA_URL` | IISP 展示执行状态、resume 回调 |
+| `IISP_CATALOG_REPO` | 策略与 Flow 的 Git 源 |
 
 ---
 
@@ -258,14 +259,18 @@ tasks:
 ### 5.1 n8n（集成态）
 
 - Catalog PR 合并 → Webhook → `POST /api/catalog/refresh`
-- `workflow_done` / 失败 → 飞书通知
+- Flow 完成/失败 → 飞书通知
 - **不**承担主编排
 
 ### 5.2 Dify（设计态）
 
-- 自然语言 → 生成 Kestra Flow YAML 草稿
-- 人工审核后提交 `iisp-catalog` PR
-- **不**执行 `invoke`；执行仍在 Kestra + IISP
+- 自然语言 → 生成 Kestra Flow YAML 草稿 → Catalog PR
+- **不**执行 `invoke`
+
+### 5.3 `iisp flow run`（仅 dev/CI）
+
+- 本地 dry-run、单测、无 Kestra 环境的 CI
+- **禁止**作为 Edge 生产定时替代
 
 ---
 
@@ -277,87 +282,26 @@ tasks:
 | `predict` | 批量预测 | `job_id`, `status` | |
 | `curation-create` | 创建筛选批次 | `batch_id` | |
 | `curation-export` | 导出出站包 | `export_dir` | |
-| `gate-human` | 人工卡点 | `batch_id`, `waiting` | 配合 Kestra Pause |
+| `gate-human` | 人工卡点 | `batch_id`, `waiting` | 配合 Pause |
 | `curation-import` | 导入 COCO | `keep_count` | |
 | `curation-archive` | 归档 | `archive_dir` | |
-| `notify` | 通知 | `event` | 可改为 n8n |
-| `manual-qc` | 人工质检 | `records`, `count` | 独立业务工具 |
-| `coco-visualizer` | 看图 | — | Blueprint `/viz`，非 Flow 步骤 |
-| `detunify` | 预测 UI | — | Blueprint `/unify` |
+| `manual-qc` | 人工质检 | `records`, `count` | |
 
 ---
 
 ## 7. 迁移路线
 
-```mermaid
-gantt
-  title 编排迁移至 Kestra
-  dateFormat YYYY-MM
-  section M1 契约
-  Tool Contract v1 文档与校验     :m1a, 2026-06, 1w
-  POST v1/tools/id/invoke Gateway :m1b, after m1a, 2w
-  section M2 PoC
-  Kestra 部署与 Git 同步          :m2a, after m1b, 1w
-  daily_ng_curation Kestra 跑通   :m2b, after m2a, 2w
-  section M3 切换
-  新流程只建 Kestra Flow          :m3a, after m2b, 2w
-  旧 workflow_engine 只读/下线    :m3b, after m3a, 4w
-  section M4 可选
-  n8n 通知 Dify 草稿              :m4a, after m3b, 4w
-```
-
-| 阶段 | 交付 | 验收 |
-|------|------|------|
-| **M1** | `/v1/tools/{id}/invoke`、Manifest `contract_version` | 工具箱页与 Kestra 用同一 API |
-| **M2** | `docs/examples/kestra/daily_ng_curation.yaml` 生产可用 | 与旧内置模板结果一致 |
-| **M3** | Catalog 内 Flow 为 Kestra 格式；定时任务迁到 Kestra | 新需求不再改 `workflow_templates.py` |
-| **M4** | n8n/Dify 旁路 | 团队按需 |
-
-**过渡期**：
-- `IISP_USE_REGISTRY=1` 保留，兼容旧 `workflow_engine` 调用同一 Registry
-- `iisp-catalog/pipelines/legacy/` 保留旧 DSL 直至 M3 完成
+| 阶段 | 交付 |
+|------|------|
+| **M2** | Edge + Hub Kestra Git sync、`daily_ng_curation` 跑通 |
+| **M3** | 新 Flow **只**进 `pipelines/kestra/` |
+| **M4** | 删 `workflow_engine` / `workflow_scheduler` |
 
 ---
 
-## 8. 已实现资产（v1.0 基础）
-
-| 资产 | 路径 | 迁移后角色 |
-|------|------|------------|
-| Registry | `capabilities/registry.py` | Gateway 后端 |
-| Manifest | `**/tool.manifest.json` | 契约声明 |
-| Catalog | `iisp-catalog/` | 策略 + **Kestra Flow** |
-| CLI | `scripts/iisp` | `tool invoke`、`catalog sync` |
-| 工具箱 UI | `/toolbox` | 试运行 `invoke` |
-| 工作流助手 | `/workflows` → 助手 Tab | 改为输出 Kestra YAML |
-
----
-
-## 9. CLI 速查
-
-```bash
-# 工具
-python scripts/iisp tool list
-python scripts/iisp tool validate
-
-# Catalog（策略；Flow 由 Kestra Git 同步或共用同一仓）
-python scripts/iisp catalog sync
-
-# 校验 Kestra Flow（待实现：kestra validate 包装）
-# kestra flow validate docs/examples/kestra/daily_ng_curation.yaml
-
-# Skills → Tool
-python scripts/iisp tool init-from-skill skills/yf-door-panel-query/SKILL.md --out packages/my_tool
-```
-
----
-
-## 10. 文档修订记录
+## 8. 文档修订记录
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| v1.0 | 2026-06-09 | 初版：Registry、Catalog、内置 workflow_engine |
-| v2.0 | 2026-06-09 | **定稿**：Kestra 主编排 + Tool Contract v1；废弃自研引擎扩展；n8n/Dify 旁路 |
-
----
-
-*实施 M1 时同步更新 [ARCHITECTURE_DECOUPLED.md](./ARCHITECTURE_DECOUPLED.md) §9 与 [TEST_MATRIX.md](./TEST_MATRIX.md)。*
+| v2.3 | 2026-06-09 | **编排统一 Kestra**（Edge+Hub）；废弃 Windmill、cron 生产路径 |
+| v2.0 | 2026-06-09 | Kestra 主编排 + Tool Contract v1 |

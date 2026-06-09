@@ -1,9 +1,9 @@
 # IISP 编码规范与技术选型
 
-**版本**：v1.0  
+**版本**：v1.2  
 **日期**：2026-06-09  
 **状态**：项目级强制约定 — Vibe Coding / 人工 PR 均须遵守  
-**关联**：[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) · [`AGENTS.md`](../AGENTS.md) · [`.cursor/skills/`](../.cursor/skills/)
+**标准**：[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) v2.2 · [`DOCS_INDEX.md`](./DOCS_INDEX.md)
 
 ---
 
@@ -27,7 +27,7 @@
 |---|------|------|
 | P1 | **平台薄、工具厚** | 组合逻辑在 Catalog Pipeline，不在 Platform |
 | P2 | **契约唯一** | 集成只通过 Tool Contract v1 + Pipeline YAML |
-| P3 | **编排零 import** | Kestra/cron/UI 不得 `import studio.*` 执行业务 |
+| P3 | **编排零 import** | Kestra / UI 不得 `import studio.*` 执行业务 |
 | P4 | **Tool 不互引** | 禁止 Tool A import Tool B 的 `service.py` |
 | P5 | **可序列化边界** | 跨步只传 JSON 与 artifact URI，不传 DataFrame/句柄 |
 | P6 | **配置进 Git** | 策略与 Pipeline 权威在 `iisp-catalog`，不在 DB 模板 |
@@ -74,8 +74,7 @@ config.json / .config.key            # 禁止提交
 | 校验 | Pydantic v2 / JSON Schema | 手写 if 校验 params |
 | 队列 | RQ + Redis（Edge）/ Celery（Hub） | 无限线程轮询 |
 | ORM/SQL | 现有 MySQL 访问层 + `lib/platform/db` | 新 Tool 内嵌 SQL 硬编码连接串 |
-| 编排 Hub | Kestra / Windmill | 自研 DAG |
-| 编排 Edge | cron + `iisp flow run` | Kestra on Edge |
+| 编排（Edge + Hub） | **Kestra** | 自研 DAG、Windmill、cron 主编排 |
 | 配置 | Git Catalog + Provider | DB workflow 模板 |
 | Agent | Cursor Skills + MCP | 运行时 LLM 编排 |
 
@@ -266,6 +265,10 @@ Skill：`.cursor/skills/iisp-platform-core/SKILL.md`
 - [ ] 未 import 其他 Tool service
 - [ ] 未改 workflow_engine/scheduler
 - [ ] 未在 Gateway 写组合逻辑
+
+## 变更记录
+- [ ] 已更新 `docs/PLATFORM_CHANGELOG.md` [Unreleased]（或注明无用户可见变更）
+- [ ] 已同步 PRODUCT_DESIGN / releases.yaml / USER_GUIDE 等（见 PLATFORM_CHANGELOG 映射表）
 ```
 
 ---
@@ -292,13 +295,14 @@ Skill：`.cursor/skills/iisp-review-pr/SKILL.md`
 
 | 反模式 | 正确做法 |
 |--------|----------|
+| 功能改了不写 changelog | **iisp-record-platform-change** + 同 PR 更新 `PLATFORM_CHANGELOG.md` |
 | 在 `workflow_engine` 加新步骤 handler | 新 Tool + Pipeline YAML |
 | Tool A 调 Tool B | Pipeline 串联 + invoke |
 | 编排 Flow 里写 Python | YAML + Kestra HTTP |
 | Agent 改 `server/core` 加组合 | Catalog PR |
 | 前端轮询每页一套 | TanStack Query / 共享 Tray |
 | 传 CSV 内容跨步 | 传 `task_id` + artifact URI |
-| Edge 部署 Kestra | cron + flow run |
+| Edge 用 cron 代替 Kestra | **Edge 也部署 Kestra**（单机） |
 
 ---
 
@@ -306,6 +310,7 @@ Skill：`.cursor/skills/iisp-review-pr/SKILL.md`
 
 | 资源 | 路径 |
 |------|------|
+| 平台 changelog | `docs/PLATFORM_CHANGELOG.md` |
 | 最终架构 | `docs/IISP_DESIGN_FINAL.md` |
 | 产品设计 | `docs/PRODUCT_DESIGN.md` |
 | 架构图 | `docs/ARCHITECTURE_DIAGRAMS.md` |
@@ -318,4 +323,6 @@ Skill：`.cursor/skills/iisp-review-pr/SKILL.md`
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| v1.0 | 2026-06-09 | 首版：原则、选型、Tool/Pipeline/前端/PR |
+| v1.2 | 2026-06-09 | PLATFORM_CHANGELOG、变更记录 PR 模板 |
+| v1.1 | 2026-06-09 | Kestra 唯一编排、DOCS_INDEX |
+| v1.0 | 2026-06-09 | 首版 |

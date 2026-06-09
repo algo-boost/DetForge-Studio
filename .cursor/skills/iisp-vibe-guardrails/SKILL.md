@@ -8,22 +8,23 @@ description: >-
 
 # IISP Vibe Guardrails（总约束）
 
-在 **任何** IISP 仓库改动前，先确认本文 + [`docs/CODING_STANDARDS.md`](../../docs/CODING_STANDARDS.md)。
+在 **任何** IISP 仓库改动前，先确认本文 + [`docs/CODING_STANDARDS.md`](../../docs/CODING_STANDARDS.md) + **karpathy-guidelines**（最小 diff、不过度设计）。
 
 ## 30 秒自检
 
 1. 这是 **新业务能力** 吗？→ 应走 **Tool + Pipeline PR**，不是改 Platform 调度  
-2. 这是 **组合/定时/顺序** 吗？→ 只写 **Catalog YAML** 或 Kestra，不写 Python 链  
+2. 这是 **组合/定时/顺序** 吗？→ **Kestra Flow**（`pipelines/kestra/`）或设计态 DSL，不写 Python 链  
 3. 是否只通过 **HTTP invoke** 集成？→ 禁止编排 `import studio.*`  
 4. 改动路径在 **允许列表** 内吗？→ 见 CODING_STANDARDS §2.2  
 5. 能否 **`validate`**？→ Tool / Pipeline 必须过 CLI  
+6. **用户可见吗？**→ 是则 **iisp-record-platform-change** 更新 `PLATFORM_CHANGELOG.md`  
 
 ## 允许 vs 禁止
 
 | ✅ 允许 | ❌ 禁止 |
 |--------|--------|
 | `tools/<id>/` 新 Tool | 扩展 `workflow_engine` |
-| `iisp-catalog/pipelines/*.yaml` | `workflow_scheduler` 新 cron 逻辑 |
+| `iisp-catalog/pipelines/kestra/*.yaml` | `workflow_scheduler`、cron 主编排 |
 | `skills/*/SKILL.md` | Gateway 内业务 if-else |
 | `frontend/` UI（符合规范） | Tool 互 import service |
 | `tests/` | 跳过 validate 合并 |
@@ -43,11 +44,12 @@ description: >-
 | 编排/定时/组合 | `iisp-compose-flow` |
 | 改 Gateway/Registry/sync | `iisp-platform-core` |
 | 提交 PR 前 | `iisp-review-pr` |
+| **平台功能变更** | **`iisp-record-platform-change`** |
 
 ## 设计态 vs 运行态
 
 - **设计态**：Cursor 生成文件 → validate → PR（可用 LLM）  
-- **运行态**：cron / Kestra + invoke（**无 LLM**）
+- **运行态**：**Kestra** + invoke（**无 LLM**）
 
 ## 完成后必跑（如适用）
 

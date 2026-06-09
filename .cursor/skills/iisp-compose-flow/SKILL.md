@@ -1,9 +1,9 @@
 ---
 name: iisp-compose-flow
-description: Compose an IISP Pipeline YAML from natural language. Use when the user wants workflow orchestration, cron jobs, combining query/QC/curation/predict tools, or daily automation flows.
+description: Compose Kestra Flow YAML or IISP Pipeline DSL for Catalog. Use when the user wants workflow orchestration, scheduled jobs, combining query/QC/curation/predict tools, or daily automation flows.
 ---
 
-# IISP — 编排 Pipeline（Vibe Coding）
+# IISP — 编排 Flow（Kestra · Vibe Coding）
 
 ## 何时使用
 
@@ -12,106 +12,72 @@ description: Compose an IISP Pipeline YAML from natural language. Use when the u
 ## 必读约束
 
 1. 先读 **iisp-vibe-guardrails** 与 [`docs/CODING_STANDARDS.md`](../../../docs/CODING_STANDARDS.md) §5  
-2. 阅读 [`docs/IISP_DESIGN_FINAL.md`](../../../docs/IISP_DESIGN_FINAL.md) Part VII、Part VIII。  
-2. **只产出 YAML**，不写 Python 组合逻辑、不改 `workflow_engine`。  
-3. 每个 `nodes[].tool` **必须**已存在于 Registry。
+2. 阅读 [`docs/IISP_DESIGN_FINAL.md`](../../../docs/IISP_DESIGN_FINAL.md) Part VII、[`docs/TOOLBOX_ORCHESTRATION.md`](../../../docs/TOOLBOX_ORCHESTRATION.md)  
+3. **编排统一 Kestra**（Edge + Hub）；**禁止** cron / `iisp flow run` 作为生产方案  
+4. **只产出 YAML**，不写 Python 组合逻辑、不改 `workflow_engine`  
+5. 每个步骤调用的 `tool_id` **必须**已存在于 Registry
 
 ## 工作流（按顺序）
 
 ### 1. 获取工具清单
 
-优先 MCP `iisp_list_tools` 或：
-
 ```bash
-./scripts/iisp agent context --json   # 规划 CLI
 ./scripts/iisp tool list
+./scripts/iisp agent context --json   # 规划
 ```
 
-**不得**编造 tool_id。若无合适 Tool，先走 `iisp-create-tool`  Skill。
+**不得**编造 tool_id。若无合适 Tool，先走 **iisp-skill-author** / **iisp-create-tool**。
 
 ### 2. 澄清
 
-- flow `id`（snake_case）  
-- 触发方式（Edge cron / Hub Kestra）  
-- 人工卡点（哪些步 `waiting_human`，对应 `ui_url`）  
-- 入参 `params_schema`
+- Flow `id`（snake_case）  
+- **Kestra 触发**：Cron / 手动 / Webhook  
+- 部署档位：Edge 单机 Kestra 或 Hub  
+- 人工卡点（Kestra `Pause` + `ui_url`）  
+- 入参 `inputs` / `params_schema`
 
 ### 3. 参考范例
 
-阅读：`iisp-catalog/pipelines/demo/welcome_flow.yaml`
+- Kestra：[`docs/examples/kestra/daily_ng_curation.yaml`](../../../docs/examples/kestra/daily_ng_curation.yaml)  
+- 设计态 DSL：[`iisp-catalog/pipelines/demo/welcome_flow.yaml`](../../../iisp-catalog/pipelines/demo/welcome_flow.yaml)（需编译到 `pipelines/kestra/`）
 
-### 4. 编写 YAML
+### 4. 编写 YAML（优先 Kestra 原生）
 
-路径：`iisp-catalog/pipelines/<scene>/<flow_id>.yaml`
+**运行时权威路径**：`iisp-catalog/pipelines/kestra/<scene>/<flow_id>.yaml`
 
-```yaml
-id: my_flow
-label: 人类可读名
-version: "1"
-description: |
-  从用户原话摘要
+每步使用 `io.kestra.plugin.core.http.Request` 调 `POST {{ vars.iisp_base }}/v1/tools/{tool_id}/invoke`（见 TOOLBOX_ORCHESTRATION §4.3）。
 
-params_schema:
-  type: object
-  properties:
-    time_window:
-      type: object
-  required: []
+设计态可先用 Pipeline DSL（`pipelines/<scene>/`），PR 时 **同步或编译** 到 `pipelines/kestra/`。
 
-nodes:
-  - id: query
-    tool: query
-    params:
-      strategy_id: daily_trawl
-      time_window: "{{params.time_window}}"
-
-  - id: export
-    tool: curation-export
-    params:
-      task_id: "{{steps.query.outputs.task_id}}"
-
-notes:
-  - 人工上传 COCO：/curation?batch=…，完成后 resume
-```
-
-### 5. 模板语法
-
-| 写法 | 含义 |
-|------|------|
-| `{{params.x}}` | Flow 入参 |
-| `{{steps.<node_id>.outputs.<field>}}` | 上游输出 |
-
-### 6. 校验
+### 5. 校验
 
 ```bash
 ./scripts/iisp workflow validate iisp-catalog/pipelines/<scene>/<flow_id>.yaml
+# Kestra: kestra flow validate …（部署环境）
 ```
 
-有 MCP 时调用 `iisp_validate_pipeline`。
+### 6. PR
 
-### 7. PR
+Catalog PR；更新 `releases.yaml` 若上线。合并后 **Kestra Git sync** 生效。
 
-**iisp-catalog** 仓 PR（或主仓内 demo 路径）；更新 `releases.yaml` 若上线。
-
-### 8. 运行验证
+### 7. 本地验证（非生产）
 
 ```bash
-./scripts/iisp flow run <flow_id> --param ...
+./scripts/iisp flow run <flow_id> --param ...   # 仅 dry-run
 ```
 
-Hub：合并后 Kestra Git sync 或 compile kestra YAML。
+生产定时与历史 **只在 Kestra**。
 
 ## 禁止
 
-- 在 Pipeline 里写 Python、SQL、import  
+- cron / systemd 作为主编排  
+- Windmill  
+- Pipeline 里写 Python、SQL、import  
 - 引用未注册 tool  
-- 在 Platform DB 存模板替代 YAML  
-- 运行时让 LLM 决定下一步（设计态只生成文件）
+- 运行时 LLM 决定下一步
 
 ## 人工卡点
 
-使用会返回 `waiting_human` 的 Tool；在 `notes` 写清：
-
-- `ui_url`（如 `/curation?batch={batch_id}`）  
-- Edge：`iisp flow run --resume` 或 API resume  
-- Hub：Kestra Pause + `/v1/orchestration/resume`
+- Tool 返回 `waiting_human` → Kestra **Pause**  
+- 用户在 IISP 完成操作 → `POST /v1/orchestration/resume` 或 Kestra Webhook resume  
+- 在 Flow `description` / Catalog `notes` 写清 `ui_url`

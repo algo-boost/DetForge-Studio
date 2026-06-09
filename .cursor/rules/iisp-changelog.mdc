@@ -1,0 +1,16 @@
+---
+description: 平台功能变更必须同步 PLATFORM_CHANGELOG 与关联文档
+globs: server/**,frontend/**,capabilities/**,tools/**,orchestration/**,iisp-catalog/**,docs/PRODUCT_DESIGN.md,docs/IISP_PLATFORM.md,docs/USER_GUIDE.md
+alwaysApply: false
+---
+
+# 平台功能变更 — 同步记录
+
+实现 **用户可见** 或 **契约/部署** 变更时，**同一任务/PR** 必须：
+
+1. 更新 [`docs/PLATFORM_CHANGELOG.md`](../../docs/PLATFORM_CHANGELOG.md) 的 `[Unreleased]`
+2. 按变更类型同步 [`docs/PLATFORM_CHANGELOG.md`](../../docs/PLATFORM_CHANGELOG.md) §「变更类型 → 必同步文档」
+3. 使用 Skill：**iisp-record-platform-change**
+4. PR 前：**iisp-review-pr** 检查 changelog 是否已更新
+
+纯 refactor 无行为变化 → PR 注明「无用户可见变更」，可不写 changelog。

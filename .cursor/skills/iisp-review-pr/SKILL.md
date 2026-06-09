@@ -2,8 +2,7 @@
 name: iisp-review-pr
 description: >-
   Reviews IISP pull requests for architecture violations, missing validate,
-  Tool cross-imports, and workflow_engine changes. Use before commit, before
-  PR, or when user asks to review IISP changes.
+  missing PLATFORM_CHANGELOG, Tool cross-imports, and workflow_engine changes.
 ---
 
 # IISP PR 审查清单
@@ -13,9 +12,10 @@ description: >-
 ## 1. 变更分类
 
 - [ ] 新 Tool  
-- [ ] 新 Pipeline  
+- [ ] 新 Pipeline / Kestra Flow  
 - [ ] 平台 Core（需平台组）  
-- [ ] 前端 UI  
+- [ ] 前端 UI（含 L1/L2 导航）  
+- [ ] **平台功能变更记录**（`PLATFORM_CHANGELOG.md`）  
 - [ ] 文档 only  
 
 ## 2. 架构红线（任一命中则要求修改）
@@ -34,6 +34,14 @@ description: >-
 ./scripts/iisp workflow validate <yaml>
 python -m pytest <paths> -q
 ```
+
+## 3.1 变更记录（用户可见功能必填）
+
+- [ ] 已更新 [`docs/PLATFORM_CHANGELOG.md`](../../docs/PLATFORM_CHANGELOG.md) `[Unreleased]`（Skill：**iisp-record-platform-change**）
+- [ ] 已同步关联文档（`PRODUCT_DESIGN` / `releases.yaml` / `USER_GUIDE` 等，见 PLATFORM_CHANGELOG §映射表）
+- [ ] 或 PR 明确标注「无用户可见变更」
+
+**任一用户可见功能变更但无 changelog → 结论：需修改**
 
 ## 4. Tool PR 额外项
 
@@ -62,4 +70,4 @@ python -m pytest <paths> -q
 
 ## 7. 通过标准
 
-**零红线 + validate 全过 + diff 范围合理** 方可 approve。
+**零红线 + validate 全过 + changelog 合规（或注明无用户可见变更）+ diff 范围合理** 方可 approve。

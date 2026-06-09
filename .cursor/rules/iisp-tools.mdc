@@ -1,0 +1,31 @@
+---
+description: IISP Tool 与 Capability 编码规范 — manifest、invoke、禁止互引
+globs: tools/**/*,capabilities/**/*,packages/*/tool.manifest.json,packages/*/invoke.py,packages/*/*capability*
+alwaysApply: false
+---
+
+# IISP Tool 编码
+
+完整规范：`docs/CODING_STANDARDS.md` §4。
+
+## 结构
+
+`tool.manifest.json` + `invoke.py`（映射）+ `service.py`（业务）
+
+## 必须
+
+- `contract_version: v1`
+- `handle` 返回 `status`: done|failed|skipped|waiting_human|accepted
+- outputs 可 JSON 序列化；大文件用 artifact URI
+- 仅依赖 `packages/platform` 或 `lib/platform`，不 import 其他 Tool
+
+## 提交前
+
+```bash
+./scripts/iisp tool validate path/to/tool.manifest.json
+python -m pytest tools/<id>/tests/ -q
+```
+
+## 反模式
+
+在 Gateway 加路由执行业务、在 workflow_engine 加 handler、Tool 间直接调用。

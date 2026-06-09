@@ -1,9 +1,8 @@
 # IISP 产品设计
 
-**版本**：v1.1  
-**日期**：2026-06-09  
+**版本**：v1.2  
 **状态**：产品定稿  
-**关联**：[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) · [`SKILL_PLATFORM.md`](./SKILL_PLATFORM.md) · [`USER_GUIDE.md`](./USER_GUIDE.md) · [`UI_REDESIGN_CHECKLIST.md`](./UI_REDESIGN_CHECKLIST.md)  
+**索引**：[`DOCS_INDEX.md`](./DOCS_INDEX.md) · [`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) v2.2  
 **业务来源**：[飞书 · 数据闭环建设方案评审](https://zcnce50wan15.feishu.cn/wiki/H7RQwspDKiqDsPkFJu0cgIaFnuB)
 
 ---
@@ -44,7 +43,7 @@
 
 **L1 产品原则**：
 
-- 复杂逻辑（SQL+Python、策略 JSON、定时 cron）由 **L2 预先封装** 为 Tool / Pipeline；L1 只见 **表单 / 待办 / 向导**。  
+- 复杂逻辑（SQL+Python、策略 JSON、定时任务）由 **L2 预先封装** 为 Tool / Kestra Flow  
 - 导航 **不出现**「流水线配置」「策略编辑」「工具箱开发者」「Catalog 管理」。  
 - 首页 = **待办 + 进行中任务 + 最近作业**（≤ 2 次点击进业务页）。
 
@@ -67,7 +66,7 @@
 | 角色 | 职责 |
 |------|------|
 | **平台开发** | Gateway、Registry、Catalog Provider、MCP |
-| **运维 SRE** | 部署、catalog sync、cron/Kestra、告警通道 |
+| **运维 SRE** | 部署、Kestra、catalog sync、告警通道 |
 
 Hub 规划：OIDC 映射 `operator` / `configurer` / `admin`；L1 内可细分为 `delivery` / `customer_qc` 默认首页差异。
 
@@ -337,8 +336,7 @@ journey
 
 | 参考 | IISP 取舍 |
 |------|-----------|
-| Windmill | 借鉴 Script/Flow/App；配置用 Git Catalog 非内置 DB |
-| Kestra | Hub 编排首选 |
+| Kestra | Hub/Edge 统一编排；配置用 Git Catalog |
 | 自研 BPM | 不做主路径 |
 | Label Studio | 可选对接；manual_qc 保留定制流程 |
 
@@ -362,7 +360,7 @@ journey
 2. **L2** 新组合模块：**零 Platform 发版**（Catalog sync + Tool PR）  
 3. **SA** 上线标准验收 Flow：**1 周内** Catalog 可跑通  
 4. **算法** 误检/召回评测：模板 Flow **复制即用**  
-5. Edge 部署：**无 Kestra** 可跑通主线 Flow  
+5. Edge / Hub 均可跑通主线 Flow（**Kestra**）  
 
 ---
 
@@ -370,5 +368,6 @@ journey
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| v1.1 | 2026-06-09 | L1/L2 两层、五角色、飞书生态与子/组合模块地图 |
+| v1.2 | 2026-06-09 | DOCS_INDEX、Kestra 统一、文档交叉引用 |
+| v1.1 | 2026-06-09 | L1/L2 两层、五角色、飞书生态 |
 | v1.0 | 2026-06-09 | 角色、IA、旅程、能力地图 |

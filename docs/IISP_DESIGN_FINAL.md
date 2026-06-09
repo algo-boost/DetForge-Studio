@@ -1,10 +1,11 @@
 # IISP 平台最终设计（全文定稿）
 
-**版本**：Final v2.1  
+**版本**：Final v2.2  
 **日期**：2026-06-09  
 **状态**：**唯一权威定稿** — 平台实现、共建、Agent、PR 评审均以本文为准  
-**产品**：IISP（Industrial Inspection Solutions Platform）  
-**仓库**：`DetForge-Studio`
+**v2.2 变更**：**编排统一 [Kestra](https://kestra.io)**（Edge + Hub）；移除 Windmill、cron/`iisp flow run` 生产路径。  
+**文档索引**：[`DOCS_INDEX.md`](./DOCS_INDEX.md)  
+**仓库**：`DetForge-Studio` · **产品**：IISP（Industrial Inspection Solutions Platform）
 
 ---
 
@@ -30,13 +31,16 @@
 | [`IISP_PLATFORM.md`](./IISP_PLATFORM.md) | 运行部署与 API 速查 |
 | [`CATALOG_CENTER.md`](./CATALOG_CENTER.md) | Catalog Provider |
 | [`TOOLBOX_ORCHESTRATION.md`](./TOOLBOX_ORCHESTRATION.md) | Tool Contract 细则 |
-| [`SKILL_PLATFORM.md`](./SKILL_PLATFORM.md) | **Skill-first（非专业主路径）** |
+| [`PLATFORM_CHANGELOG.md`](./PLATFORM_CHANGELOG.md) | **平台功能变更记录** |
+| [`DOCS_INDEX.md`](./DOCS_INDEX.md) | **文档索引与现行标准** |
+| [`ARCHITECTURE_DIAGRAMS.md`](./ARCHITECTURE_DIAGRAMS.md) | **架构图集** |
+| [`SKILL_PLATFORM.md`](./SKILL_PLATFORM.md) | **Skill-first（L2 主路径）** |
 | [`SKILL_TO_TOOL.md`](./SKILL_TO_TOOL.md) | Skill → Tool 命令与 L1–L4 |
 | [`UI_REDESIGN_CHECKLIST.md`](./UI_REDESIGN_CHECKLIST.md) | 前端实施 |
 | [`AGENTS.md`](../AGENTS.md) | Agent 入口 |
 | [`.cursor/skills/`](../.cursor/skills/README.md) | **项目级 Skills** |
 
-历史只读：[`ARCHITECTURE_DECOUPLED.md`](./ARCHITECTURE_DECOUPLED.md) · [`ARCHITECTURE_FINAL.md`](./ARCHITECTURE_FINAL.md)
+历史只读：[`ARCHITECTURE_DECOUPLED.md`](./ARCHITECTURE_DECOUPLED.md) · [`ARCHITECTURE_FINAL.md`](./ARCHITECTURE_FINAL.md) · [`ARCHITECTURE_GREENFIELD.md`](./ARCHITECTURE_GREENFIELD.md) · [`AGENT_VIBE_CODING.md`](./AGENT_VIBE_CODING.md)
 
 ---
 
@@ -51,17 +55,17 @@
 | 目标 | 实现 |
 |------|------|
 | 平台只做核心 | Gateway、Registry、Catalog Sync、Shell 壳、`lib/platform` |
-| 尽量成熟框架 | Kestra/cron、Git、RQ/Celery、OpenAPI、n8n、OIDC、Cursor+MCP |
+| 尽量成熟框架 | **Kestra**、Git、RQ/Celery、OpenAPI、n8n、OIDC、Cursor+MCP |
 | 彻底解耦 | 仅 `POST /v1/tools/{id}/invoke` + JSON/URI |
 | 扩展靠工具箱 | `tool.manifest.json` + Tool 包 / `.iisp-tool` |
-| 扩展靠工作流 | Catalog `pipelines/*.yaml` + Kestra 或 `iisp flow run` |
+| 扩展靠工作流 | Catalog `pipelines/kestra/*.yaml` + Kestra Git sync |
 | 扩展靠 Agent | **设计态** Vibe → SKILL/Tool/YAML → validate → PR |
 | 运行态无 LLM | 生产调度不调用大模型 |
 
 ## 3. 三条铁律
 
-1. **编排零自研 DAG** — Hub：Kestra/Windmill；Edge：cron + `iisp flow run`（200 行解释器，非引擎）。  
-2. **契约唯一** — 编排/UI/Agent 只认 Tool Contract v1 + Pipeline YAML schema。  
+1. **编排零自研 DAG** — **唯一编排器：Kestra**（Edge 单机 + Hub 集群）；IISP 不维护第二套调度。  
+2. **契约唯一** — Kestra / UI / Agent 测试只认 Tool Contract v1 + Kestra Flow YAML（或 Pipeline DSL **编译为** Kestra）。  
 3. **AI 只写文件** — 允许 `skills/`、`tools/`、`iisp-catalog/`；禁止改 Gateway、engine、scheduler。
 
 ---
@@ -77,8 +81,7 @@ flowchart TB
   end
 
   subgraph ext [成熟框架 运行态]
-    Kestra[Kestra / Windmill]
-    Cron[cron + flow run]
+    Kestra[Kestra 唯一编排]
     Git[Git Catalog]
     RQ[RQ / Celery]
     N8N[n8n]
@@ -100,7 +103,6 @@ flowchart TB
 
   CI -->|merge| Git
   Git --> Cat
-  Cron --> GW
   Kestra -->|invoke| GW
   GW --> Reg --> TX
   RQ -.-> GW
@@ -112,7 +114,7 @@ flowchart TB
 | 层 | 职责 | 谁维护 |
 |----|------|--------|
 | **Catalog** | 策略、Pipeline、releases | Git PR（+ 可选 Nacos 热更新） |
-| **Orchestration** | 调度、Pause、重试 | Kestra / cron（**非 IISP**） |
+| **Orchestration** | 调度、Pause、重试、Cron | **Kestra**（**非 IISP**） |
 | **Tool** | 单步业务 | 工具箱贡献者 |
 | **Control** | Gateway、UI、Sync、MCP | 平台组 |
 | **Agent** | 生成 Tool/YAML 草稿 | Cursor + Skills（**非运行时**） |
@@ -128,7 +130,7 @@ flowchart TB
 | **Tool Gateway** | `/v1/tools/{id}/invoke`、Pydantic 校验、OpenAPI | 业务组合 if-else |
 | **Registry** | 扫描 Manifest、inprocess/http/cli 路由 | 编排逻辑 |
 | **Catalog Client** | Provider git/local、sync、releases | DB 存权威 Pipeline |
-| **flow_runner** | Edge 线性 YAML 解释 | DAG、DB 状态机 |
+| **flow_runner** | **仅**本地 dev/CI dry-run（非生产调度） | DAG、DB 状态机、Cron |
 | **Resume API** | `POST /v1/orchestration/resume` | 自研 waiting 轮询 |
 | **Shell UI** | 工作台、作业壳、流水线观测、工具箱 | DAG 编辑器主路径 |
 | **MCP Server** | list/validate 工具与 Pipeline（设计态） | 生产 invoke 写库 |
@@ -140,9 +142,8 @@ flowchart TB
 
 | 领域 | 选用 | 替代自研 |
 |------|------|----------|
-| Hub 编排 | **Kestra**（首选）/ Windmill | workflow_engine、DAG UI |
-| Edge 定时 | **cron** + `iisp flow run` | workflow_scheduler |
-| 配置 | **Git** Catalog | DB workflow 模板 |
+| **编排（Edge + Hub）** | **[Kestra](https://kestra.io)** | workflow_engine、Windmill、cron 主编排、DAG UI |
+| 配置 | **Git** Catalog `pipelines/kestra/` | DB workflow 模板 |
 | 队列 | **RQ** / Celery | 前端轮询、ad-hoc worker |
 | API | **FastAPI** 或 Flask+Pydantic | 手写校验 |
 | 通知 | **n8n** | 自研通知 |
@@ -161,7 +162,7 @@ flowchart TB
 
 | 调用方 | 允许 | 禁止 |
 |--------|------|------|
-| Kestra / cron / UI / Agent 测试 | HTTP invoke | import studio / Tool 互引 |
+| Kestra / UI / Agent 测试 | HTTP invoke | import studio / Tool 互引 |
 | Tool | lib/platform、本包 service | 其他 Tool 的 service |
 | Gateway | Registry + importlib invoke 入口 | 业务逻辑 |
 | Agent | 写 skills/tools/catalog 文件 | 改 core/、server 编排 |
@@ -198,8 +199,9 @@ POST /v1/tools/{tool_id}/invoke
 ```text
 iisp-catalog/
 ├── strategies/
-├── pipelines/**/*.yaml      # 权威编排（Edge + 编译源）
-├── pipelines/kestra/        # Hub 可选
+├── pipelines/
+│   ├── kestra/              # **运行时权威**：Kestra Flow YAML
+│   └── legacy/              # 设计态 Pipeline DSL（编译 → kestra/）
 ├── releases.yaml
 ├── environments/
 ├── tool-pins.yaml
@@ -237,8 +239,8 @@ notes:
 
 ## 7.3 运行
 
-- **Edge**：`iisp flow run <id> [--param k=v]` + cron  
-- **Hub**：Kestra Git sync 或 compile → `POST invoke` 每步  
+- **生产（Edge + Hub）**：Kestra Git sync `pipelines/kestra/` → 每步 `POST /v1/tools/{id}/invoke`  
+- **开发/CI**：`iisp workflow validate`；可选 `iisp flow run` **dry-run**（不替代 Kestra 定时与历史）
 
 ---
 
@@ -253,11 +255,11 @@ notes:
 | 态 | LLM | 职责 |
 |----|-----|------|
 | **设计态** | ✅ Cursor / 可选 Dify | 生成 SKILL、Tool、Pipeline YAML |
-| **运行态** | ❌ | Kestra、cron、invoke |
+| **运行态** | ❌ | **Kestra** + HTTP invoke |
 
 ## 8.2 路径 A：Vibe 新 Tool（默认 Skill-first）
 
-**非专业（推荐）**
+**L2 配置者（推荐）**
 
 ```text
 用户描述 → iisp-skill-author
@@ -282,7 +284,7 @@ notes:
   → MCP iisp_list_tools（只用已有 tool_id）
   → 写 iisp-catalog/pipelines/<scene>/<id>.yaml
   → iisp workflow validate
-  → Catalog PR → sync → cron/Kestra
+  → Catalog PR → sync → **Kestra** 拉取 Flow
 ```
 
 ## 8.4 Agent 上下文包（固定、可缓存）
@@ -364,7 +366,7 @@ config.json
 
 | Skill | 文件 | 触发 |
 |-------|------|------|
-| **iisp-skill-author** | [`.cursor/skills/iisp-skill-author/SKILL.md`](../.cursor/skills/iisp-skill-author/SKILL.md) | **非专业**：只写 Platform Skill |
+| **iisp-skill-author** | [`.cursor/skills/iisp-skill-author/SKILL.md`](../.cursor/skills/iisp-skill-author/SKILL.md) | **L2**：只写 Platform Skill |
 | **iisp-skill-pack** | [`.cursor/skills/iisp-skill-pack/SKILL.md`](../.cursor/skills/iisp-skill-pack/SKILL.md) | Skill 封装为可加载 Tool |
 | **iisp-compose-flow** | [`.cursor/skills/iisp-compose-flow/SKILL.md`](../.cursor/skills/iisp-compose-flow/SKILL.md) | 编排、定时、组合流程 |
 | **iisp-create-tool** | [`.cursor/skills/iisp-create-tool/SKILL.md`](../.cursor/skills/iisp-create-tool/SKILL.md) | 工程兜底、复杂 Tool |
@@ -389,8 +391,8 @@ config.json
 
 | 档位 | 编排 | 组件 | Agent/MCP |
 |------|------|------|-----------|
-| **Edge** | cron + flow run | IISP、MySQL、可选 Redis | 开发机 Cursor，Edge 不跑 MCP |
-| **Hub** | Kestra | + Postgres、Redis、可选 n8n/OIDC | MCP 连 Hub dev 实例 |
+| **Edge** | **Kestra**（单机，H2 或轻量 PG） | IISP、Kestra、MySQL、可选 Redis | 开发机 Cursor |
+| **Hub** | **Kestra**（PG、可选 HA） | + n8n/OIDC、Metabase | MCP 连 Hub dev 实例 |
 
 ---
 
@@ -412,7 +414,7 @@ L4  releases.yaml + environments/     运维发布
 | PR 类型 | 必过检查 |
 |---------|----------|
 | Tool | `iisp tool validate`、单测、import-linter（不引其他 Tool） |
-| Pipeline | `iisp workflow validate`、YAML lint |
+| Pipeline | `iisp workflow validate`、YAML lint、**PLATFORM_CHANGELOG**（用户可见 Flow） |
 | Catalog | CODEOWNERS |
 | Platform Core | 禁止改动或平台组 approve |
 | Agent 生成 | 同上述；**无 validate 通过不得 merge** |
@@ -472,7 +474,8 @@ GitHub Actions 示例步骤：
 
 - 运行时 LLM 编排、Electron、umi、平台内 DAG 设计器（主路径）  
 - Agent 绕过 PR 改生产  
-- Edge 部署 Kestra / n8n / Dify  
+- **Windmill / cron 主编排 / 双编排路径**  
+- n8n、Dify **承担主编排**（仅旁路通知/设计态）
 
 ## 16.2 成功标准
 
@@ -482,7 +485,7 @@ GitHub Actions 示例步骤：
 | 2 | Vibe 新人仅用 Cursor 完成 1 Tool + 1 Flow，validate 全过 |
 | 3 | 幻觉 tool_id / 非法 YAML 无法 merge |
 | 4 | 生产运行时零 LLM；与手写 YAML 行为一致 |
-| 5 | Hub 编排器可换（Kestra ↔ Windmill），Contract 不变 |
+| 5 | **唯一 Kestra** 编排（Edge+Hub），Tool Contract 不变 |
 | 6 | OpenAPI + MCP 为 Agent 与人类单一契约来源 |
 
 ---
@@ -514,6 +517,7 @@ DetForge-Studio/
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| **Final v2.2** | 2026-06-09 | **编排统一 Kestra**（Edge+Hub）；废弃 Windmill、cron 生产路径 |
 | **Final v2.1** | 2026-06-09 | 链入编码规范、产品设计、架构图、项目 Skills/Rules |
 | Final v2.0 | 2026-06-09 | 合并架构 + Agent/Vibe + MCP |
 | Final v1.0 | 2026-06-09 | ARCHITECTURE_FINAL（已取代） |

@@ -2,14 +2,14 @@
 
 团队共建的配置目录仓（Git 源-of-truth）。各 IISP 实例通过 Catalog Provider 同步到本地 `catalog_cache/`。
 
-**关联**：[**最终定稿**](../docs/IISP_DESIGN_FINAL.md) · [平台说明](../docs/IISP_PLATFORM.md)
+> **编排（v2.2）**：Edge + Hub **统一 Kestra**。历史文档中 Windmill、cron、`iisp flow run` 生产路径已废弃；以 [`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) 为准。
 
 ## 目录
 
 - `strategies/` — 数据收集策略 JSON
-- `pipelines/demo/` — 演示 Flow（如 `welcome_demo`）
-- `pipelines/legacy/` — Pipeline DSL（Edge 可直接 `iisp flow run`）
-- `pipelines/kestra/` — Hub：Kestra 原生 Flow YAML（可选）
+- `pipelines/kestra/` — **运行时权威**：Kestra Flow YAML（Edge + Hub）
+- `pipelines/legacy/` — 设计态 Pipeline DSL（编译 → `kestra/`）
+- `pipelines/demo/` — 演示 Flow
 - `environments/` — 环境 → release 绑定
 - `releases.yaml` — 发布清单
 - `tool-pins.yaml` — 各环境工具版本锁定
@@ -17,12 +17,14 @@
 
 ## 编排模型
 
-| 部署 | 用法 |
-|------|------|
-| **Edge** | `cron` + `./scripts/iisp flow run <flow_id>` |
-| **Hub** | Kestra / Windmill 调 `POST /v1/tools/{id}/invoke` |
+**Edge + Hub 统一 Kestra**；Flow 存放在 `pipelines/kestra/`，Kestra Git sync 加载。
 
-Pipeline YAML 为权威配置；Kestra YAML 可由编译器生成或单独维护。
+| 场景 | 用法 |
+|------|------|
+| **生产调度** | Kestra Cron / 事件 → `POST /v1/tools/{id}/invoke` |
+| **本地 dev** | `./scripts/iisp flow run <flow_id>`（dry-run，非生产） |
+
+设计态 Pipeline DSL（`pipelines/legacy/` 或 `demo/`）可编译为 Kestra YAML 后合入 `kestra/`。
 
 ## 贡献流程
 

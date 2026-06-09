@@ -1,10 +1,13 @@
 # IISP 最终架构设计
 
-**版本**：Final v1.0（**已由 [`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) v2.0 取代**）  
+> ⚠️ **历史归档 v1.0** — 本文多处已过时。**唯一权威**：[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) **Final v2.2** · 索引 [`DOCS_INDEX.md`](./DOCS_INDEX.md)  
+> 现行标准：**Kestra 唯一编排** · **L1/L2 用户分层** · **Skill-first（L2）** · 废弃 Windmill / cron 生产 / `iisp flow run` 生产。
+
+**版本**：Final v1.0（**已由 [`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) v2.2 取代**）  
 **日期**：2026-06-09  
 **状态**：归档 — 请阅读 **[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md)**
 
-> 本文保留作 v1 历史参考。平台 + Agent + Vibe Coding 的完整定稿见 **`docs/IISP_DESIGN_FINAL.md`**。
+> 本文保留作 v1 历史参考。**编排已统一为 Kestra（v2.2）**；请以 **`docs/IISP_DESIGN_FINAL.md`** 为准。
 
 ---
 

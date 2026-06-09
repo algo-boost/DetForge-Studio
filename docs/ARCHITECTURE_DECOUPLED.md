@@ -2,8 +2,8 @@
 
 **IISP** = **I**ndustrial **I**nspection **S**olutions **P**latform（工业检测解决方案平台）
 
-**版本**：v0.4  
-**状态**：设计评审稿 + 子模块集成已启动；**编排定稿：Kestra + Tool Contract v1**（见 [TOOLBOX_ORCHESTRATION.md](./TOOLBOX_ORCHESTRATION.md)）  
+**版本**：v0.5（历史参考）  
+**状态**：设计评审稿；**定稿**：[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) **v2.2** · **Kestra 唯一编排** · [`DOCS_INDEX.md`](./DOCS_INDEX.md)  
 **关联**：[用户使用手册](./USER_GUIDE.md) · [工具箱与编排](./TOOLBOX_ORCHESTRATION.md) · [packages/README](../packages/README.md) · [数据闭环建设方案评审](https://zcnce50wan15.feishu.cn/wiki/H7RQwspDKiqDsPkFJu0cgIaFnuB) · [Benchmark 方法论](https://zcnce50wan15.feishu.cn/wiki/WD4Pwu5eWipfJPk0snGcY6RTnTg)
 
 ---

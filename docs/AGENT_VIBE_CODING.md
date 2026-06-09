@@ -1,6 +1,8 @@
 # IISP Agent 与 Vibe Coding 设计
 
-**版本**：v1.0（**已并入 [`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) Part VIII–X**）  
+> ⚠️ **已并入 [`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) Part VIII–X**。现行标准 v2.2：运行态 **仅 Kestra**；见 [`DOCS_INDEX.md`](./DOCS_INDEX.md)。
+
+**版本**：v1.0（归档）  
 **日期**：2026-06-09  
 **状态**：归档 — 请阅读 **[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md)**
 
@@ -12,12 +14,12 @@
 ## 1. 核心原则（最简单的一条线）
 
 ```text
-人描述意图 → AI 只产出「可校验文件」→ CLI/CI 校验 → Git PR → 合并后 Catalog sync → 运行时照旧（invoke + Kestra/cron）
+人描述意图 → AI 只产出「可校验文件」→ CLI/CI 校验 → Git PR → merge → Catalog sync → **Kestra** 运行（HTTP invoke）
 ```
 
 | 原则 | 说明 |
 |------|------|
-| **Agent 在设计态，不在运行态** | 生产调度仍是 Kestra / cron + `iisp flow run`；LLM **不**参与逐步调度 |
+| **Agent 在设计态，不在运行态** | 生产调度 **仅 Kestra**；`iisp flow run` 仅 dev dry-run |
 | **AI 只写文件，不写平台内核** | 允许改：`skills/`、`tools/`、`iisp-catalog/pipelines/`；禁止改 Gateway、engine、scheduler |
 | **契约先行** | 一切产出必须过 `iisp tool validate` / `iisp workflow validate` |
 | **Cursor 即 IDE Agent** | 最简方案：**Cursor Skills + MCP**；可选后期加 Shell 对话页，共用同一套校验 API |

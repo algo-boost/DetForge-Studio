@@ -1,17 +1,17 @@
-# IISP Skill 平台规范（非专业开发者主路径）
+# IISP Skill 平台规范（L2 配置者 · Skill-first）
 
-**版本**：v1.0  
+**版本**：v1.1  
 **日期**：2026-06-09  
-**状态**：定稿 — **L2 配置者**通过 Skill 扩展 Tool；**L1 作业者**只使用已发布能力  
-**读者**：**L2** — SA、算法、光学（配置与共建）；平台组维护封装器  
-**关联**：[`PRODUCT_DESIGN.md`](./PRODUCT_DESIGN.md) §2 · [`TOOL_PLUGIN_MODEL.md`](./TOOL_PLUGIN_MODEL.md)
+**状态**：定稿 — **L2（SA/算法/光学）** 扩展 Tool 的默认路径  
+**读者**：L2 配置者；**L1（交付/客户质检）不参与 Skill 编写**  
+**关联**：[`PRODUCT_DESIGN.md`](./PRODUCT_DESIGN.md) §2 · [`DOCS_INDEX.md`](./DOCS_INDEX.md) · [`TOOL_PLUGIN_MODEL.md`](./TOOL_PLUGIN_MODEL.md)
 
 ---
 
 ## 1. 核心结论
 
 ```text
-非专业开发者只写 / 只改  SKILL.md（+ 可选一个脚本）
+L2 配置者只写 / 只改  SKILL.md（+ 可选一个脚本）
         ↓
 平台封装命令  iisp skill pack
         ↓
@@ -226,7 +226,7 @@ mount: /tools/my-daily-export
 
 ---
 
-## 7. 非专业开发者工作流（唯一推荐路径）
+## 7. L2 配置者工作流（Skill → Tool → Kestra）
 
 ```mermaid
 flowchart LR
@@ -326,4 +326,5 @@ my-export.iisp-skill/
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| v1.0 | 2026-06-09 | Skill-first、非专业路径、UI 三级、封装命令 |
+| v1.1 | 2026-06-09 | 读者改为 L2；对齐 Kestra、DOCS_INDEX |
+| v1.0 | 2026-06-09 | Skill-first、UI 三级、封装命令 |

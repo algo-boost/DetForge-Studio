@@ -1,8 +1,8 @@
 # IISP 平台完整说明
 
-**版本**：v1.0  
+**版本**：v1.1  
 **日期**：2026-06-09  
-**状态**：当前架构与实施路线（Electron **不在**本期范围）
+**索引**：[`DOCS_INDEX.md`](./DOCS_INDEX.md) · [`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) v2.2
 
 > **IISP**（Industrial Inspection Solutions Platform）— 工业检测解决方案平台：数据查询、训练平台同步、预测、人工质检、筛选归档、评测流水线与 COCO/CSV 导出。  
 > 代码仓库目录名仍为 `DetForge-Studio`，与产品名 IISP 并存。
@@ -13,6 +13,7 @@
 
 | 文档 | 用途 |
 |------|------|
+| **[`DOCS_INDEX.md`](./DOCS_INDEX.md)** | **文档索引与现行标准 v2.2** |
 | **[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md)** | **架构定稿** |
 | [`CODING_STANDARDS.md`](./CODING_STANDARDS.md) | 编码规范与技术选型 |
 | [`PRODUCT_DESIGN.md`](./PRODUCT_DESIGN.md) | 产品设计 |
@@ -32,10 +33,9 @@
 
 | 目标 | 做法 |
 |------|------|
-| **编排即配置** | Pipeline YAML 为权威定义；可 Git 版本、PR 审核、跨环境 sync |
-| **用户零安装** | 工具在平台内运行；`POST /v1/tools/{id}/invoke`（过渡期 `/api/tools/{id}/execute`） |
-| **Edge 足够轻** | 产线旁 2GB 机器：`cron` + `iisp flow run`，**不部署 Kestra/JVM** |
-| **Hub 可扩展** | 多项目、复杂 DAG：可选 Kestra 或 Windmill，仍调同一 HTTP 契约 |
+| **编排即配置** | Kestra Flow 在 `pipelines/kestra/`；Git 版本、PR 审核、Kestra sync |
+| **Edge / Hub 统一** | **均部署 Kestra**；Edge 单机，Hub 可 HA |
+| **用户零安装** | Tool 经 `POST /v1/tools/{id}/invoke` |
 | **配置可迁移** | Catalog 先用 GitHub；Provider 抽象支持 local / 未来 Nacos / bundle |
 | **前端务实演进** | 保留 **React 19 + Vite 6**；不迁 umi、**不做 Electron 桌面壳** |
 
@@ -53,21 +53,15 @@ flowchart TB
   subgraph iisp [IISP Control Plane :5050]
     Shell[React Shell Vite 构建]
     Gateway[Tool Gateway invoke]
-    FlowCLI[iisp flow run 解释器]
     CatalogSync[Catalog Sync Agent]
     Shell --> Gateway
-    FlowCLI --> Gateway
     CatalogSync --> Cache[(catalog_cache)]
   end
 
-  subgraph orch_edge [Edge 编排 无 JVM]
-    Cron[cron / systemd]
-    Cron --> FlowCLI
-  end
-
-  subgraph orch_hub [Hub 编排 可选]
-    Kestra[Kestra / Windmill]
+  subgraph orch [Kestra 唯一编排 Edge + Hub]
+    Kestra[Kestra Server]
     Kestra -->|HTTP invoke| Gateway
+    GitHub -->|pipelines/kestra| Kestra
   end
 
   subgraph catalog_src [Catalog 源]
@@ -96,19 +90,19 @@ flowchart TB
 **三件事分离**：
 
 1. **Catalog** — 「配置是什么」（策略 JSON、Pipeline YAML、releases、环境绑定）  
-2. **编排** — 「什么时候、按什么顺序跑」（Edge：cron + CLI；Hub：Kestra/Windmill）  
+2. **编排** — 「什么时候、按什么顺序跑」（**Kestra**，Edge + Hub）  
 3. **Tool** — 「每一步做什么」（Gateway + capabilities）
 
 ---
 
 ## 3. 两档部署：Edge 与 Hub
 
-| 档位 | 典型场景 | 内存目标 | 编排 | IISP |
-|------|----------|----------|------|------|
-| **Edge** | 单项目产线旁、流程固定 | 常态 &lt; 512 MB | `cron` + **`iisp flow run`** | 单 worker；viz/unify 默认不挂载 |
-| **Hub** | 多 Flow、共建 PR、人工 Pause 丰富 | 1.5–4 GB+ | **Kestra**（全功能）或 **Windmill**（更轻） | Gateway + 可选独立 viz/unify 端口 |
+| 档位 | 典型场景 | 编排 | IISP |
+|------|----------|------|------|
+| **Edge** | 单项目产线旁 | **Kestra 单机**（H2 或轻量 PG） | 单 worker |
+| **Hub** | 多 Flow、共建 PR | **Kestra**（PG、可选 HA） | Gateway + 子服务 |
 
-**重要**：Edge 上的 `iisp flow run` **不是**自研 DAG 引擎，而是约 200 行级的**无状态解释器**：读 Catalog 中的 Pipeline YAML → 顺序调用 Tool → 处理 `waiting_human` 暂停文件。复杂并行、重试、可视化编排历史仍在 Hub。
+`iisp flow run` **仅**本地 dev/CI dry-run，不承担生产 Cron。
 
 详见 [`ARCHITECTURE_GREENFIELD.md` §16](./ARCHITECTURE_GREENFIELD.md#16-轻量化与性能内存优先)。
 
@@ -192,26 +186,25 @@ params_schema:
 - `params` / `{{steps.xxx.outputs}}` 模板由 flow runner 渲染  
 - `requires` 可声明上游输出字段
 
-### 5.2 Edge：本地 Flow Runner
+### 5.2 生产：Kestra（Edge + Hub）
+
+- Flow 权威路径：`iisp-catalog/pipelines/kestra/`  
+- Kestra [Git 同步](https://kestra.io/docs/developer-guide/git) 加载 Flow  
+- 每步 `io.kestra.plugin.core.http.Request` → `POST /v1/tools/{id}/invoke`  
+- Cron、Pause、重试、执行历史 **均在 Kestra**
+
+详见 [`TOOLBOX_ORCHESTRATION.md`](./TOOLBOX_ORCHESTRATION.md)。
+
+### 5.3 本地 dev：`iisp flow run`（dry-run）
 
 ```bash
 ./scripts/iisp flow list
 ./scripts/iisp flow run welcome_demo --reviewer 张三 --auto-resume
 ```
 
-- 实现：`orchestration/flow_runner.py`  
-- Web 演示：`http://127.0.0.1:5173/demo`（开发）或构建后 `/demo`  
-- API：`POST /api/flows/run`
-
-**不部署 Kestra** 即可完成定时流水线（配合 cron）。
-
-### 5.3 Hub：Kestra / Windmill
-
-- Flow YAML 可**编译**为 Kestra 原生 YAML（每步 `POST /v1/tools/{id}/invoke`）  
-- 人工卡点：`waiting_human` + Kestra `Pause` + IISP `POST /v1/orchestration/resume`（规划中）  
-- 128GB Hub 足够；**编译 Kestra YAML 不增加运行时内存**，重的是 JVM + Postgres
-
-主编排细节见 [`TOOLBOX_ORCHESTRATION.md`](./TOOLBOX_ORCHESTRATION.md)。
+- 实现：`orchestration/flow_runner.py` — **非生产调度**  
+- Web 演示：`/demo`  
+- **禁止**用 cron + flow run 替代 Kestra 生产定时
 
 ### 5.4 遗留 workflow_engine
 
@@ -413,16 +406,16 @@ DetForge-Studio/
 
 ---
 
-## 13. 与 Windmill 参考形态的对应
+## 13. 与低代码平台的差异（参考）
 
-| Windmill | IISP |
-|----------|------|
-| Script | Tool（`invoke` + Manifest） |
-| Flow | Catalog `pipelines/*.yaml` → Edge runner 或 Kestra |
-| App | IISP React Shell + 领域页 |
-| 资源 / 变量 | `environments/*.yaml`、`releases.yaml`、设置页 |
+| 概念 | IISP |
+|------|------|
+| 单步能力 | Tool（`invoke` + Manifest） |
+| 组合流程 | **`pipelines/kestra/` + Kestra**（Edge + Hub 统一） |
+| 界面 | IISP React Shell + 领域页 |
+| 配置 | `environments/`、`releases.yaml`、Git Catalog |
 
-Windmill 是「一体化低代码」；IISP 选择 **Git Catalog + 固定 Tool 契约**，以便工业场景 PR 审核与 Edge 无 JVM 部署。
+IISP 选择 **Git Catalog + Kestra + Tool 契约**，不用 Windmill 等一体化低代码作为主路径。
 
 ---
 

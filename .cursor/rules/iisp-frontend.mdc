@@ -1,0 +1,27 @@
+---
+description: IISP 前端 Shell — React Vite、fetch、禁止 DAG 编辑器主路径
+globs: frontend/**/*
+alwaysApply: false
+---
+
+# IISP 前端
+
+规范：`docs/CODING_STANDARDS.md` §6 · `docs/UI_REDESIGN_CHECKLIST.md`
+
+## 栈
+
+React 19 + Vite 6 + fetch + CSS tokens。不迁 umi、不做 Electron。
+
+## 必须
+
+- API 走 `frontend/src/api/client.js`
+- 新页用布局类，少 inline style
+- 长任务用 TanStack Query 或现有 Context，不复制轮询
+
+## 禁止
+
+自研 DAG 编辑器作为主路径、把 Pipeline 权威定义 POST 到 workflow 模板 API
+
+## IA
+
+工作台 · 作业 · 流水线 · 平台（四域）

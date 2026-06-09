@@ -1,8 +1,7 @@
 # IISP UI 改造实施清单
 
-**版本**：v1.0  
-**日期**：2026-06-09  
-**关联**：[**最终定稿** `./IISP_DESIGN_FINAL.md`) · [平台说明](./IISP_PLATFORM.md) · [UI 清单](./UI_REDESIGN_CHECKLIST.md)
+**版本**：v1.1  
+**标准**：[`DOCS_INDEX.md`](./DOCS_INDEX.md) · v2.2（Kestra · L1/L2）
 
 本文是**可执行 checklist**：按阶段 U1→U5 排列，含路由、组件、API、验收标准。  
 **技术约束不变**：React 19 + Vite 6 + 现有 CSS token；不迁 umi；不做 Electron。
@@ -196,7 +195,7 @@ export const NAV_GROUPS = [
 | 路径 | 页面 | 说明 |
 |------|------|------|
 | `/flows` | `FlowsCatalogPage` | Flow 卡片列表（releases + pipelines） |
-| `/flows/runs` | `FlowRunsPage` | 运行历史（forge + catalog flow runs） |
+| `/flows/runs` | `FlowRunsPage` | Kestra 执行历史（外链或 API 镜像） |
 | `/flows/runs/:id` | `FlowRunDetailPage` | 步骤时间线 + resume |
 | `/flows/demo` | 迁自 `DemoFlowPage` | 演示 |
 | `/workflows` | `<Navigate to="/flows/runs" />` | 兼容 |
@@ -232,7 +231,7 @@ export const NAV_GROUPS = [
 | DAG 编辑器 | 标记 **deprecated**，隐藏入口或移到「高级 / 遗留」 |
 | 模板组合 launch | 改为 Catalog Flow 卡片「运行」 |
 | Agent 草稿 | 移到 Platform 或 Flows 页「开发者」折叠区 |
-| Schedules | Edge：展示 cron 说明；Hub：链 Kestra |
+| Schedules | **Kestra** Cron（Edge + Hub）；IISP 只读展示/外链 Kestra UI |
 | Notifications | 保留在 FlowRuns 详情侧边 |
 
 ### 3.6 U3 验收标准
@@ -438,4 +437,5 @@ Week 4:  U5 tokens + CommandPalette + 角色 + 文档截图
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| v1.0 | 2026-06-09 | 首版：U1–U5 路由、组件、API、验收 |
+| v1.1 | 2026-06-09 | L1/L2 导航、Kestra Schedules |
+| v1.0 | 2026-06-09 | U1–U5 首版 |

@@ -1,6 +1,6 @@
 # IISP Catalog 配置中心
 
-**关联**：[**最终定稿** `./IISP_DESIGN_FINAL.md`) · [平台说明](./IISP_PLATFORM.md) · [工具箱与编排](./TOOLBOX_ORCHESTRATION.md)
+**标准**：[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) v2.2 · [`DOCS_INDEX.md`](./DOCS_INDEX.md) · [`TOOLBOX_ORCHESTRATION.md`](./TOOLBOX_ORCHESTRATION.md)
 
 ---
 
@@ -11,7 +11,7 @@
 | 内容 | 目录 | 消费者 |
 |------|------|--------|
 | 数据收集策略 | `strategies/` | 查询页、query tool |
-| 流水线定义 | `pipelines/` | `iisp flow run`、Kestra（编译后） |
+| 流水线定义 | `pipelines/kestra/` | **Kestra** Git sync |
 | 发布清单 | `releases.yaml` | UI 展示「已上线 Flow」 |
 | 环境绑定 | `environments/*.yaml` | 各实例 pin 到某 release |
 | 工具版本 | `tool-pins.yaml` | Gateway 校验 |

@@ -83,10 +83,11 @@ packaging/dist/
 packaging/build/
 *.spec.bak
 
-# --- Cursor 本地状态（skills 可提交）---
+# --- Cursor 本地状态（skills + 项目 rules 可提交）---
 .cursor/projects/
 .cursor/plans/
-.cursor/rules/
+.cursor/rules/*
+!.cursor/rules/*.mdc
 
 # --- Agent 本地 ---
 .reasonix/

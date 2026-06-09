@@ -1,10 +1,10 @@
 # IISP 技术架构图集
 
-**版本**：v1.0  
+**版本**：v1.1  
 **日期**：2026-06-09  
-**关联**：[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) · [`PRODUCT_DESIGN.md`](./PRODUCT_DESIGN.md) · [`CODING_STANDARDS.md`](./CODING_STANDARDS.md)
+**标准**：[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) **v2.2** · [`DOCS_INDEX.md`](./DOCS_INDEX.md)
 
-> 本文集中存放架构图，便于评审、 onboarding 与 Agent 引用。实现细节以设计定稿为准。
+> 实现细节以设计定稿为准。编排：**Kestra 唯一**（Edge + Hub）。
 
 ---
 
@@ -14,21 +14,22 @@
 C4Context
   title IISP 系统上下文
 
-  Person(qc, "质检员", "审图、上传 COCO")
-  Person(algo, "算法工程师", "查询、Flow、模型")
-  Person(ops, "运维", "部署、Catalog、Kestra")
-  Person(vibe, "Vibe 贡献者", "Cursor 开发 Tool/Pipeline")
+  Person(l1, "L1 交付/质检", "待办、查询场景、审图")
+  Person(l2, "L2 SA/算法/光学", "策略、Kestra Flow、Tool 共建")
+  Person(ops, "运维 SRE", "Kestra、Catalog sync")
+  Person(vibe, "Cursor 贡献者", "Skill/Tool/Pipeline PR")
 
   System(iisp, "IISP Platform", "Tool Gateway + Shell + Catalog Client")
-  System_Ext(kestra, "Kestra / Windmill", "Hub 编排")
-  System_Ext(git, "Git iisp-catalog", "策略与 Pipeline")
+  System_Ext(kestra, "Kestra", "唯一编排 Edge+Hub")
+  System_Ext(git, "Git iisp-catalog", "策略 + pipelines/kestra")
   System_Ext(mf, "Magic-Fox", "训练平台")
   System_Ext(vb, "vision_backend", "产线库")
-  System_Ext(n8n, "n8n", "通知")
+  System_Ext(feishu, "飞书多维表格", "指标看板")
+  System_Ext(n8n, "n8n", "通知旁路")
   System_Ext(cursor, "Cursor + MCP", "设计态 Agent")
 
-  Rel(qc, iisp, "浏览器")
-  Rel(algo, iisp, "浏览器")
+  Rel(l1, iisp, "浏览器")
+  Rel(l2, iisp, "浏览器")
   Rel(ops, iisp, "管理")
   Rel(vibe, cursor, "Vibe Coding")
   Rel(cursor, git, "PR")
@@ -36,7 +37,8 @@ C4Context
   Rel(kestra, iisp, "HTTP invoke")
   Rel(iisp, vb, "查询")
   Rel(iisp, mf, "同步")
-  Rel(n8n, kestra, "Webhook")
+  Rel(kestra, feishu, "metrics sync Tool")
+  Rel(n8n, kestra, "Webhook 通知")
 ```
 
 ---
@@ -52,15 +54,13 @@ flowchart TB
 
   subgraph edge [Edge 节点]
     IISP_E[IISP :5050]
+    Kestra_E[Kestra 单机]
     MySQL_E[(MySQL)]
-    Redis_E[(Redis 可选)]
-    Cron_E[cron]
   end
 
   subgraph hub [Hub 节点]
     IISP_H[IISP Gateway]
-    Kestra[Kestra]
-    PG[(Postgres)]
+    Kestra_H[Kestra + PG]
     Redis_H[(Redis)]
     MySQL_H[(MySQL)]
   end
@@ -70,8 +70,8 @@ flowchart TB
   end
 
   subgraph embed [子应用 可选]
-    Viz[COCOVisualizer :viz]
-    Unify[DetUnify :unify]
+    Viz[COCOVisualizer /viz]
+    Unify[DetUnify /unify]
   end
 
   Browser --> IISP_E
@@ -79,16 +79,15 @@ flowchart TB
   Browser --> Viz
   Browser --> Unify
   CursorIDE -->|MCP dev| IISP_H
-  Cron_E -->|flow run| IISP_E
+  Kestra_E -->|invoke| IISP_E
+  Kestra_H -->|invoke| IISP_H
   IISP_E --> MySQL_E
-  IISP_E --> Redis_E
-  Kestra -->|invoke| IISP_H
   IISP_H --> Redis_H
   IISP_H --> MySQL_H
-  Kestra --> PG
   Catalog -->|sync| IISP_E
   Catalog -->|sync| IISP_H
-  Kestra -->|git sync| Catalog
+  Kestra_E -->|git sync pipelines/kestra| Catalog
+  Kestra_H -->|git sync pipelines/kestra| Catalog
 ```
 
 ---
@@ -104,13 +103,13 @@ flowchart TB
 
   subgraph L4 [L4 配置 Catalog]
     Strat[strategies]
-    Pipe[pipelines]
+    Pipe[pipelines/kestra]
     Rel[releases]
   end
 
-  subgraph L3 [L3 编排 Orchestration]
-    K[Kestra Hub]
-    C[cron + flow run Edge]
+  subgraph L3 [L3 编排 Kestra]
+    K_E[Kestra Edge]
+    K_H[Kestra Hub]
   end
 
   subgraph L2 [L2 契约 Contract]
@@ -134,8 +133,8 @@ flowchart TB
   Agent --> MCP
   Agent -->|PR| L4
   L4 --> L3
-  C --> GW
-  K --> GW
+  K_E --> GW
+  K_H --> GW
   GW --> OAS
   GW --> T1 & T2 & T3 & TN
   T1 --> VB
@@ -145,7 +144,7 @@ flowchart TB
 
 ---
 
-## 4. Tool 调用序列（Hub）
+## 4. Tool 调用序列（Kestra）
 
 ```mermaid
 sequenceDiagram
@@ -163,7 +162,7 @@ sequenceDiagram
   T-->>G: status done + outputs
   G-->>K: JSON response
   K->>G: POST /v1/tools/curation-export/invoke
-  Note over K,G: params 含 steps.query.outputs.task_id
+  Note over K,G: params 含上游 outputs
 ```
 
 ---
@@ -172,21 +171,21 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-  participant O as 编排 Kestra/flow run
+  participant K as Kestra
   participant G as Gateway
-  participant U as 用户 UI
+  participant U as 用户 UI L1
   participant R as Resume API
 
-  O->>G: invoke export
-  G-->>O: done batch_id
-  O->>G: invoke gate / next
-  G-->>O: waiting_human + resume.token
-  O->>O: Pause / 写 pause 文件
+  K->>G: invoke export
+  G-->>K: done batch_id
+  K->>G: invoke gate-human
+  G-->>K: waiting_human
+  K->>K: Pause
   U->>U: /curation 上传 COCO
   U->>R: POST /v1/orchestration/resume
-  R->>O: resume
-  O->>G: invoke import
-  G-->>O: done
+  R->>K: resume execution
+  K->>G: invoke import
+  G-->>K: done
 ```
 
 ---
@@ -195,12 +194,12 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-  subgraph human [人]
+  subgraph l2 [L2 配置者]
     NL[自然语言]
   end
 
   subgraph cursor [Cursor]
-    SK[Skills]
+    SK[iisp-skill-author / compose-flow]
     AG[Agent]
     NL --> AG
     SK --> AG
@@ -215,7 +214,7 @@ flowchart LR
   subgraph out [产出]
     SKILL[skills/SKILL.md]
     TOOL[tools/*]
-    YAML[pipelines/*.yaml]
+    YAML[pipelines/kestra/*.yaml]
   end
 
   subgraph gate [门禁]
@@ -226,7 +225,7 @@ flowchart LR
   AG --> mcp
   AG --> out
   out --> V --> CI
-  CI -->|merge| RUN[运行态 无 LLM]
+  CI -->|merge + Kestra sync| RUN[运行态 Kestra 无 LLM]
 ```
 
 ---
@@ -240,33 +239,36 @@ flowchart LR
   Sync[iisp catalog sync]
   Cache[catalog_cache]
   Strat[strategies 加载]
-  Flow[flow_runner / Kestra]
+  Kestra[Kestra git sync]
 
   GH --> PR --> GH
   GH --> Sync --> Cache
   Cache --> Strat
-  Cache --> Flow
+  GH --> Kestra
 ```
 
 ---
 
-## 8. 前端组件关系（目标）
+## 8. 前端与 L1/L2 导航（目标）
 
 ```mermaid
 flowchart TB
-  Shell[App Shell Layout]
-  Home[HomePage 工作台]
-  Work[作业页 + SceneHubNav]
-  Flows[FlowsCatalog + Runs]
-  Plat[Toolbox + Config]
+  Shell[App Shell]
+  subgraph L1 [L1 operator]
+    Home[工作台/待办]
+    Work[作业/场景]
+    Tasks[我的任务]
+  end
+  subgraph L2 [L2 configurer]
+    Flows[流水线 + Kestra 外链]
+    Plat[工具箱/策略/Catalog]
+  end
 
-  Shell --> Home & Work & Flows & Plat
-  Work --> API[api/client.js]
+  Shell --> Home & Work & Tasks
+  Shell --> Flows & Plat
+  Home --> API[api/client.js]
   Flows --> API
-  Plat --> API
   API --> GW[Flask /v1]
-  Home --> Todo[TodoList]
-  Home --> Tray[GlobalTaskStrip]
 ```
 
 ---
@@ -286,7 +288,7 @@ flowchart TB
     Cross[Tool A → Tool B service]
   end
 
-  Orch[Kestra/cron/UI] -->|HTTP only| GW[Gateway]
+  Orch[Kestra/UI] -->|HTTP only| GW[Gateway]
   GW --> Tools
   GW --> Cap
   Tools --> Platform
@@ -307,7 +309,7 @@ gantt
   section 平台 M
   M0 Registry Catalog demo   :done, m0, 2026-05, 2026-06
   M1 v1 Gateway OpenAPI RQ   :m1, 2026-06, 2026-07
-  M2 Kestra 生产 Flow        :m2, after m1, 2026-08
+  M2 Kestra Edge+Hub 生产    :m2, after m1, 2026-08
   M3 tools 标准包 UI 工作台   :m3, after m2, 2026-09
   M4 删 workflow_engine      :m4, after m3, 2026-10
   section Agent A
@@ -316,9 +318,9 @@ gantt
   A3 validate 加强           :a3, after a2, 2026-07
   A4 MCP Server              :a4, after a3, 2026-07
   section UI U
-  U1 工作台                  :u1, 2026-06, 2026-07
-  U2 四域导航                :u2, after u1, 2026-07
-  U3 流水线页                :u3, after u2, 2026-08
+  U1 工作台 L1/L2            :u1, 2026-06, 2026-07
+  U2 分层导航                :u2, after u1, 2026-07
+  U3 流水线 Kestra 观测      :u3, after u2, 2026-08
 ```
 
 ---
@@ -327,4 +329,5 @@ gantt
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| v1.0 | 2026-06-09 | C4、容器、序列、Vibe、路线图 |
+| v1.1 | 2026-06-09 | Kestra 唯一、L1/L2 角色、移除 cron/Windmill 图 |
+| v1.0 | 2026-06-09 | 首版 |

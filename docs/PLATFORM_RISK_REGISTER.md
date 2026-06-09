@@ -1,6 +1,7 @@
 # IISP 平台风险与遗漏清单
 
-**版本**：v1.0  
+**版本**：v1.1  
+**标准**：[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) v2.2 · [`DOCS_INDEX.md`](./DOCS_INDEX.md)  
 **日期**：2026-06-09  
 **用途**：架构/产品评审 — 当前设计**尚未覆盖或仅浅层提及**的问题  
 **关联**：[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) · [`SECURITY.md`](./SECURITY.md) · [`PRODUCT_DESIGN.md`](./PRODUCT_DESIGN.md)
@@ -45,7 +46,7 @@
 | **并发 Flow** | Edge 未限 | 同 flow_id 互斥（文件锁或 DB） |
 | **Catalog sync 竞态** | sync 覆盖 cache | 运行中 Flow 读旧/新 YAML 策略：sync 后版本号 pin |
 | **部分失败补偿** | 无 Saga | 文档化 manual 步骤；关键 Flow 人工 checklist |
-| **时钟 skew** | 有时区工具 | cron/Kestra 统一 UTC + 显示本地 |
+| **时钟 skew** | 有时区工具 | **Kestra** Cron 统一 UTC + UI 显示本地 |
 | **Dead letter** | RQ 失败任务 | 失败队列 + UI 可见 |
 
 ---
