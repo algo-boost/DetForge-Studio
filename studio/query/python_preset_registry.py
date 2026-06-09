@@ -347,12 +347,14 @@ def build_execution_namespace(
         group_ids = infer_preset_groups_from_code(code)
 
     fn_names = _expand_group_ids(group_ids) | pipeline_fn_names
-    if explicit is None and not pipeline_fn_names:
-        fn_names |= set(_NAME_RE.findall(code or ''))
-        if strategy and 'apply_filter_rules' in (strategy.get('python_code') or ''):
-            fn_names |= _expand_group_ids(['filter'])
-        if strategy and 'apply_random_sample_rows' in (strategy.get('python_code') or ''):
-            fn_names.add('apply_random_sample_rows')
+    # 始终以实跑代码为准补全内置函数（pipeline / 显式 presets 可能与请求体代码不一致）
+    exec_code = code or ''
+    fn_names |= set(_NAME_RE.findall(exec_code))
+    strat_py = (strategy or {}).get('python_code') or ''
+    if 'apply_filter_rules' in strat_py or 'apply_filter_rules' in exec_code:
+        fn_names |= _expand_group_ids(['filter'])
+    if 'apply_random_sample_rows' in strat_py or 'apply_random_sample_rows' in exec_code:
+        fn_names.add('apply_random_sample_rows')
 
     cmap = _callable_map()
     extra: dict[str, Any] = {

@@ -173,8 +173,7 @@ export default function OnlinePredictPage() {
     setParams(nextParams, { replace: true });
   };
 
-  const handleCreated = (res) => {
-    onCreated?.(res);
+  const handleCreated = () => {
     navigate('/jobs');
   };
 

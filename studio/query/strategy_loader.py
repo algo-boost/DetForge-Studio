@@ -225,3 +225,20 @@ def resolve_strategy_ref(stage_spec, strategies=None):
     if not strategy:
         raise ValueError(f'策略不存在: {sid}')
     return dict(strategy)
+
+
+def merge_strategy_for_execution(strategy: dict | None, request_data: dict | None = None) -> dict | None:
+    """合并请求体中的 pipeline / presets，使 Python 命名空间与实跑代码一致。"""
+    data = request_data or {}
+    if not strategy and not data:
+        return None
+    out = dict(strategy) if strategy else {}
+    for key in (
+        'process_pipeline', 'python_presets', 'preset_functions',
+        'flow', 'filter_rules_code', 'filter_mode', 'sample_code', 'python_code',
+    ):
+        val = data.get(key)
+        if val is None or val == '' or val == []:
+            continue
+        out[key] = val
+    return out or None
