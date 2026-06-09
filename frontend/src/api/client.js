@@ -357,6 +357,20 @@ export const api = {
   forgeWorkflowScheduleTrigger: (id) => request(`/api/forge/workflows/schedules/${id}/trigger`, { method: 'POST' }),
   forgeWorkflowNotifications: (params = '') => request(`/api/forge/workflows/notifications${params}`),
 
+  listTools: () => request('/api/tools'),
+  toolStats: () => request('/api/tools/stats'),
+  executeTool: (toolId, body) => request(`/api/tools/${encodeURIComponent(toolId)}/execute`, {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  catalogSync: (body = {}) => request('/api/catalog/sync', { method: 'POST', body: JSON.stringify(body) }),
+  catalogLogs: (params = '?limit=20') => request(`/api/catalog/logs${params}`),
+  listPipelines: () => request('/api/pipelines'),
+  workflowAgentCompile: (body) => request('/api/workflows/agent-compile', { method: 'POST', body: JSON.stringify(body) }),
+  workflowImport: (body) => request('/api/workflows/import', { method: 'POST', body: JSON.stringify(body) }),
+
+  flowDemoInfo: () => request('/api/flows/demo'),
+  flowRun: (body) => request('/api/flows/run', { method: 'POST', body: JSON.stringify(body) }),
+
   forgeSyncTestAuth: () => request('/api/forge/sync/test-auth', { method: 'POST' }),
   forgeSyncDiscover: (body) => request('/api/forge/sync/discover', { method: 'POST', body: JSON.stringify(body) }),
   forgeSyncDiscoverImport: (body) => request('/api/forge/sync/discover/import', { method: 'POST', body: JSON.stringify(body) }),

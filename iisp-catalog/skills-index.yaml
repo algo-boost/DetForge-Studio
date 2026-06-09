@@ -1,0 +1,7 @@
+skills:
+  - id: yf-door-panel-query
+    label: 延锋门板查询
+    skill_path: skills/yf-door-panel-query/SKILL.md
+    tool_id: yf-door-panel-query
+    contributors:
+      - platform-team

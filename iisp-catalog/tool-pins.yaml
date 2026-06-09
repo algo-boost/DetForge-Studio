@@ -1,0 +1,14 @@
+# 各部署环境工具与 Catalog 版本锁定
+dev-local:
+  catalog_ref: main
+  tools:
+    query: "1.0.0"
+    manual-qc: "1.0.0"
+    coco-visualizer: "1.0.0"
+    detunify: "1.0.0"
+
+prod-yf:
+  catalog_ref: main
+  tools:
+    query: "1.0.0"
+    manual-qc: "1.0.0"

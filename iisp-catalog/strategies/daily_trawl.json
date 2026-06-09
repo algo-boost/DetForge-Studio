@@ -1,0 +1,120 @@
+{
+  "category": "内置",
+  "created_at": "2026-05-29T00:00:00",
+  "description": "多规则循环筛选缺陷框，移除空行后限量采样",
+  "env_schema": [
+    {
+      "key": "MAX_RAWS",
+      "label": "随机采样数量",
+      "type": "number",
+      "default": "300",
+      "placeholder": "",
+      "description": ""
+    },
+    {
+      "key": "_RANDOM_SEED",
+      "label": "随机种子",
+      "type": "number",
+      "default": "42",
+      "placeholder": "",
+      "description": ""
+    }
+  ],
+  "filter_mode": "rules",
+  "filter_rules_code": "def apply_filter_rules(df):\n    # [loop1] loop(rules)\n    _rules = [{'categories': ['其他', '水渍', '异色', '焊丝', '脏污'], 'confidence_range': [0, 1], 'random_drop_ratio': 1}, {'categories': ['其他', '凹坑', '划伤', '压痕', '发亮', '异物外漏', '异色', '抛线', '拼接间隙', '擦伤', '断线', '未开孔', '杂质', '水渍', '漏墨', '焊丝', '爆线', '破损', '碰伤', '红标签', '纹理缺失', '线头', '缺料', '胶水', '脏污', '色差', '褶皱（重度）', '针眼', '飞边', '麻点', '鼓包'], 'confidence_range': [0, 0.25], 'random_drop_ratio': 1}]\n    for _loop_rule in _rules:\n        # [f1] filter\n        if _loop_rule.get('confidence_mode') == 'min_threshold' or _loop_rule.get('min_confidence') is not None:\n            df = strip_boxes_below_confidence(df, categories=_loop_rule.get('categories', []), min_confidence=float(_loop_rule.get('min_confidence', (_loop_rule.get('confidence_range') or [0, 1])[0])), positions=_loop_rule.get('positions') or None)\n        else:\n            df = filter_df_by_ext(df, categories=_loop_rule.get('categories', []), confidence_range=tuple(_loop_rule.get('confidence_range', [0, 1])), random_drop_ratio=_loop_rule.get('random_drop_ratio', 1.0), positions=_loop_rule.get('positions') or None)\n    return df\n",
+  "flow": {
+    "version": 2,
+    "nodes": [
+      {
+        "body": [
+          {
+            "id": "f1",
+            "params": {
+              "bind_loop_rule": "loop_rule"
+            },
+            "type": "builtin.filter_df_by_ext"
+          }
+        ],
+        "id": "loop1",
+        "params": {
+          "loop_mode": "rules",
+          "rules": [
+            {
+              "categories": [
+                "其他",
+                "水渍",
+                "异色",
+                "焊丝",
+                "脏污"
+              ],
+              "confidence_range": [
+                0,
+                1
+              ],
+              "random_drop_ratio": 1
+            },
+            {
+              "categories": [
+                "其他",
+                "凹坑",
+                "划伤",
+                "压痕",
+                "发亮",
+                "异物外漏",
+                "异色",
+                "抛线",
+                "拼接间隙",
+                "擦伤",
+                "断线",
+                "未开孔",
+                "杂质",
+                "水渍",
+                "漏墨",
+                "焊丝",
+                "爆线",
+                "破损",
+                "碰伤",
+                "红标签",
+                "纹理缺失",
+                "线头",
+                "缺料",
+                "胶水",
+                "脏污",
+                "色差",
+                "褶皱（重度）",
+                "针眼",
+                "飞边",
+                "麻点",
+                "鼓包"
+              ],
+              "confidence_range": [
+                0,
+                0.25
+              ],
+              "random_drop_ratio": 1
+            }
+          ]
+        },
+        "type": "control.loop"
+      },
+      {
+        "id": "s1",
+        "params": {
+          "max_rows": 300,
+          "random_seed": 42
+        },
+        "template_id": "random_sample",
+        "type": "template.random_sample"
+      }
+    ]
+  },
+  "id": "daily_trawl",
+  "name": "日常捞图",
+  "python_code": "def process_data(df):\n    view(count_category_boxes(df), \"SQL输出类别统计\")\n    view(df, \"SQL输出DataFrame\")\n    # [loop1] loop(rules)\n    df = apply_filter_rules(df)\n    view(df, \"过滤之后的DataFrame\")\n    view(count_category_boxes(df), \"过滤之后的类别统计\")\n    # [s1] 随机采样\n    df = apply_random_sample_rows(df, max_rows=get_env(\"MAX_RAWS\"), random_seed=get_env(\"_RANDOM_SEED\"))\n    view(df, \"最终输出的DataFrame\")\n    view(count_category_boxes(df), \"最终输出的类别统计\")\n    return df\n",
+  "sample_code": "def apply_random_sample_rows(df, max_rows=300, random_seed=42):\n    \"\"\"随机采样；行数不足时返回全部。\"\"\"\n    max_rows = int(max_rows)\n    seed = int(random_seed)\n    if max_rows <= 0 or len(df) <= max_rows:\n        return df.reset_index(drop=True)\n    return df.sample(n=max_rows, random_state=seed).reset_index(drop=True)\n",
+  "sample_size": 200,
+  "schema_version": 2,
+  "sql_template": "SELECT d.*, r.product_type AS result_product_type FROM `product_detection_detail_result` d LEFT JOIN (SELECT product_no, MAX(product_type) AS product_type FROM product_detection_result GROUP BY product_no) r ON d.product_no = r.product_no WHERE d.c_time BETWEEN '${START_TIME}' AND '${END_TIME}' AND d.ext NOT LIKE '%\"original_predictions\": []%'",
+  "updated_at": "2026-06-01T11:26:30.146743",
+  "random_seed": 42
+}

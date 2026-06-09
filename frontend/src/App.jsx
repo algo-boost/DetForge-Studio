@@ -16,6 +16,8 @@ const TrainingPlatformPage = lazy(() => import('./pages/TrainingPlatformPage'));
 const ManualQcPage = lazy(() => import('./pages/ManualQcPage'));
 const CurationPage = lazy(() => import('./pages/CurationPage'));
 const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'));
+const ToolboxPage = lazy(() => import('./pages/ToolboxPage'));
+const DemoFlowPage = lazy(() => import('./pages/DemoFlowPage'));
 const ViewerPage = lazy(() => import('./pages/ViewerPage'));
 const OnlinePredictPage = lazy(() => import('./pages/OnlinePredictPage'));
 
@@ -66,6 +68,8 @@ export default function App() {
               <Route path="history" element={<HistoryPage />} />
               <Route path="curation" element={<CurationPage />} />
               <Route path="workflows" element={<WorkflowsPage />} />
+              <Route path="toolbox" element={<ToolboxPage />} />
+              <Route path="demo" element={<DemoFlowPage />} />
               <Route path="models" element={<ModelsPage />} />
               <Route path="jobs" element={<JobsPage />} />
               <Route path="training" element={<TrainingPlatformPage />} />

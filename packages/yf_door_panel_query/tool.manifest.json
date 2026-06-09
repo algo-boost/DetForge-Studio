@@ -1,0 +1,25 @@
+{
+  "id": "yf-door-panel-query",
+  "version": "0.1.0",
+  "label": "延锋门板查询",
+  "description": "按策略查询延锋门板平台数据并创建查询任务",
+  "kind": "capability",
+  "entry": {
+    "capability": "packages.yf_door_panel_query.capability:YfDoorPanelQueryCapability",
+    "cli": null,
+    "blueprint": null
+  },
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "strategy_id": { "type": "string" },
+      "time_window": { "type": "object" },
+      "data_source": { "type": "string", "default": "detail" }
+    },
+    "required": ["strategy_id"]
+  },
+  "inputs": ["strategy_id", "time_window"],
+  "outputs": ["task_id", "row_count", "count"],
+  "artifacts": ["csv"],
+  "skill_source": "skills/yf-door-panel-query/SKILL.md"
+}

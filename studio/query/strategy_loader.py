@@ -7,6 +7,15 @@ import os
 from studio.paths import APP_ROOT as BASE_DIR, resource_path
 
 STRATEGIES_DIR = resource_path('strategies')
+CATALOG_STRATEGIES_DIR = os.path.join(BASE_DIR, 'catalog_cache', 'strategies')
+
+
+def effective_strategies_dir() -> str:
+    """优先 Catalog 同步目录，回退本地 strategies/。"""
+    if os.environ.get('IISP_CATALOG_STRATEGIES', '1').lower() not in ('0', 'false', 'no'):
+        if os.path.isdir(CATALOG_STRATEGIES_DIR) and os.listdir(CATALOG_STRATEGIES_DIR):
+            return CATALOG_STRATEGIES_DIR
+    return STRATEGIES_DIR
 TEMPLATES_DIR = os.path.join(STRATEGIES_DIR, 'templates')
 # 块模板库目录（非「预设策略」）
 TEMPLATE_LIBRARY_DIRS = ('_presets', '_library', '_builtin')
@@ -153,12 +162,13 @@ def get_preset_strategies():
 
 def get_all_strategies():
     items = {}
+    strategies_root = effective_strategies_dir()
 
-    if os.path.isdir(STRATEGIES_DIR):
-        for entry in os.listdir(STRATEGIES_DIR):
+    if os.path.isdir(strategies_root):
+        for entry in os.listdir(strategies_root):
             if entry.endswith('.json'):
                 try:
-                    with open(os.path.join(STRATEGIES_DIR, entry), 'r', encoding='utf-8') as f:
+                    with open(os.path.join(strategies_root, entry), 'r', encoding='utf-8') as f:
                         data = json.load(f)
                         sid = data.get('id')
                         if sid in LEGACY_STRATEGY_ALIASES and LEGACY_STRATEGY_ALIASES[sid] in items:
@@ -168,8 +178,8 @@ def get_all_strategies():
                 except Exception as e:
                     print(f"⚠️ 加载策略失败: {entry}: {e}")
 
-        for entry in os.listdir(STRATEGIES_DIR):
-            epath = os.path.join(STRATEGIES_DIR, entry)
+        for entry in os.listdir(strategies_root):
+            epath = os.path.join(strategies_root, entry)
             if not os.path.isdir(epath) or entry in STRATEGY_SKIP_DIRS:
                 continue
             for root, _, files in os.walk(epath):

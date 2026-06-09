@@ -48,6 +48,19 @@ def create_app():
     except Exception as e:  # noqa: BLE001
         print(f'⚠️ 生命周期钩子初始化失败: {e}')
 
+    try:
+        from capabilities.registry import init_registry
+        init_registry()
+    except Exception as e:  # noqa: BLE001
+        print(f'⚠️ Capability Registry 初始化失败: {e}')
+
+    if os.environ.get('IISP_CATALOG_SYNC_ON_START', '0').lower() in ('1', 'true', 'yes'):
+        try:
+            from orchestration.catalog_sync import sync_catalog
+            sync_catalog()
+        except Exception as e:  # noqa: BLE001
+            print(f'⚠️ Catalog 启动同步失败: {e}')
+
     _install_optional_auth(app)
     register_routes(app)
 

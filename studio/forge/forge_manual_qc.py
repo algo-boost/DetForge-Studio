@@ -77,94 +77,21 @@ def save_categories(imaging_categories=None, defect_types=None, defect_strict=No
 
 # ── 平台缺陷图查找 ─────────────────────────────────────────────────
 
-def _img_path_from_object_key(object_key):
-    from server.core import load_config, DEFAULT_CONFIG
-    if not object_key:
-        return ''
-    config = load_config()
-    base = str(config.get('img_base_path') or DEFAULT_CONFIG['img_base_path'] or '').strip()
-    if base and not base.endswith(('/', '\\')):
-        base += '/'
-    return base + str(object_key)
-
-
-def _normalize_existing_path(path):
-    """返回磁盘上真实存在的路径；Windows 上尝试 E:/D: 盘符互换。"""
-    path = str(path or '').strip()
-    if not path:
-        return ''
-    if os.path.isfile(path):
-        return path
-    if os.name == 'nt' and len(path) >= 2 and path[1] == ':':
-        drive = path[0].upper()
-        rest = path[2:].lstrip('\\/')
-        for alt_drive in ('E', 'D', 'C'):
-            if alt_drive == drive:
-                continue
-            alt = f'{alt_drive}:/{rest}'.replace('/', '\\')
-            if os.path.isfile(alt):
-                return alt
-    return path
-
-
-def _resolve_detail_img_path(row):
-    """解析平台明细图绝对路径：优先 local_pic_url 原路径，其次 origin_object_key 拼接。"""
-    row = dict(row or {})
-    local_pic = str(row.get('local_pic_url') or '').strip()
-    if local_pic:
-        path = _normalize_existing_path(local_pic.replace('\\', '/'))
-        if path:
-            return path
-
-    ok = str(row.get('origin_object_key') or '').strip()
-    if ok:
-        path = _normalize_existing_path(_img_path_from_object_key(ok))
-        if path:
-            return path
-
-    return local_pic or _img_path_from_object_key(ok) or ''
-
-
-_DETAIL_SELECT = """
-    SELECT d.id, d.product_no, d.origin_object_key, d.local_pic_url, d.ext, d.c_time,
-           d.check_status, d.detection_result_status,
-           r.product_type AS product_type
-    FROM product_detection_detail_result d
-    LEFT JOIN (
-        SELECT product_no, MAX(product_type) AS product_type
-        FROM product_detection_result GROUP BY product_no
-    ) r ON d.product_no = r.product_no
-"""
+from packages.platform.img_path import (
+    img_path_from_object_key as _img_path_from_object_key,
+    normalize_existing_path as _normalize_existing_path,
+    resolve_detail_img_path as _resolve_detail_img_path,
+)
+from packages.platform.sn_query import (
+    DETAIL_SELECT as _DETAIL_SELECT,
+    fetch_detail_record as _fetch_detail_record,
+    find_records_by_sn,
+)
 
 
 def find_platform_records_by_sn(sn, limit=50):
     """按 SN 查平台明细缺陷记录（含款型 product_type），用于展示该 SN 全部图。"""
-    from server.core import get_db_client
-    sn = str(sn or '').strip()
-    if not sn:
-        return []
-    client = get_db_client()
-    sql = _DETAIL_SELECT + " WHERE d.product_no = %s ORDER BY d.id DESC LIMIT %s"
-    try:
-        rows = client.fetchall(sql, (sn, int(limit)))
-    except Exception:
-        rows = []
-    for row in rows:
-        row['img_path'] = _resolve_detail_img_path(row)
-    return rows
-
-
-def _fetch_detail_record(detail_id):
-    from server.core import get_db_client
-    client = get_db_client()
-    sql = _DETAIL_SELECT + " WHERE d.id = %s LIMIT 1"
-    try:
-        row = client.fetchone(sql, (int(detail_id),))
-    except Exception:
-        row = None
-    if row:
-        row['img_path'] = _resolve_detail_img_path(row)
-    return row or {}
+    return find_records_by_sn(sn, limit=limit)
 
 
 def _match_status(records):

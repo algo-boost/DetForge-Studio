@@ -1,0 +1,56 @@
+id: daily_ng_curation
+name: 每日捞图 · 出站筛选归档
+description: 查询筛选 NG 样本 → 创建筛选批次 → 导出出站包 → 等待上传 COCO → 导入 → 归档
+version: "2"
+params_schema:
+  strategy_id:
+    type: strategy
+    default: daily_trawl
+    label: 捞图策略
+  time_window:
+    type: time_window
+    default:
+      preset: yesterday
+  reviewer:
+    type: string
+    label: 复核人
+nodes:
+  - id: query
+    tool: query
+    params:
+      strategy_id: "{{params.strategy_id}}"
+      time_window: "{{params.time_window}}"
+      data_source: detail
+  - id: batch
+    tool: curation-create
+    requires: [query]
+    params:
+      task_id: "{{steps.query.task_id}}"
+      intent_type: daily_ng
+      reviewer: "{{params.reviewer}}"
+  - id: export
+    tool: curation-export
+    requires: [batch]
+    params:
+      batch_id: "{{steps.batch.batch_id}}"
+  - id: human_edit
+    tool: gate-human
+    requires: [export]
+    params:
+      gate_type: curation_coco_edit
+      batch_id: "{{steps.batch.batch_id}}"
+      instructions: 请用 COCO 工具编辑出站包，完成后继续流程
+  - id: import
+    tool: curation-import
+    requires: [human_edit]
+    params:
+      batch_id: "{{steps.batch.batch_id}}"
+  - id: archive
+    tool: curation-archive
+    requires: [import]
+    params:
+      batch_id: "{{steps.batch.batch_id}}"
+  - id: notify
+    tool: notify
+    params:
+      event: workflow_done

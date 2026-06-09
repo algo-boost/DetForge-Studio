@@ -1,0 +1,21 @@
+# 发布清单 — 标记「已上线」的工作流与策略（供各 IISP 实例 sync 后展示）
+
+releases:
+  "2026.06.1":
+    published_at: "2026-06-09T00:00:00Z"
+    status: published
+    note: 示例发布；生产环境在独立 Catalog 仓维护
+    pipelines:
+      - id: daily_ng_curation
+        path: pipelines/legacy/daily_ng_curation.yaml
+        version: "2"
+      - id: welcome_demo
+        path: pipelines/demo/welcome_flow.yaml
+        version: "1"
+    strategies:
+      - daily_trawl
+
+  draft-next:
+    published_at: null
+    status: draft
+    pipelines: []

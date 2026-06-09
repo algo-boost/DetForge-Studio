@@ -181,6 +181,8 @@ export function Layout() {
           <NavItem to="/models" icon="models">模型</NavItem>
 
           <div className="sb-section-label">平台工具</div>
+          <NavItem to="/demo" icon="jobs">编排演示</NavItem>
+          <NavItem to="/toolbox" icon="strategy">工具箱</NavItem>
           <NavItem to="/training" icon="sync">训练平台</NavItem>
           <NavItem to="/viewer" icon="viewer">样本图库</NavItem>
 

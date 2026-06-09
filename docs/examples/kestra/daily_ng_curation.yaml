@@ -1,0 +1,142 @@
+# Kestra Flow 示例：每日捞图 · 出站筛选归档
+# 前置：部署 Kestra；配置 vars.iisp_base 指向 IISP（如 http://127.0.0.1:5050）
+# 契约：POST /v1/tools/{tool_id}/invoke — 见 docs/TOOLBOX_ORCHESTRATION.md §3
+
+id: daily_ng_curation
+namespace: iisp
+description: 查询筛选 NG → 创建批次 → 导出 → 人工卡点 → 导入 → 归档
+
+inputs:
+  - id: strategy_id
+    type: STRING
+    defaults: daily_trawl
+  - id: time_window
+    type: JSON
+    defaults: '{"preset":"yesterday"}'
+  - id: reviewer
+    type: STRING
+    required: false
+
+variables:
+  iisp_base: "{{ envs.iisp_base | default('http://127.0.0.1:5050') }}"
+
+tasks:
+  - id: query
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.iisp_base }}/v1/tools/query/invoke"
+    method: POST
+    contentType: application/json
+    body: |
+      {{ json({
+        "run_id": execution.id,
+        "step_id": "query",
+        "params": {
+          "strategy_id": inputs.strategy_id,
+          "time_window": inputs.time_window,
+          "data_source": "detail"
+        },
+        "inputs": { "upstream": {} }
+      }) }}
+
+  - id: batch
+    type: io.kestra.plugin.core.http.Request
+    dependsOn:
+      - query
+    uri: "{{ vars.iisp_base }}/v1/tools/curation-create/invoke"
+    method: POST
+    contentType: application/json
+    body: |
+      {{ json({
+        "run_id": execution.id,
+        "step_id": "batch",
+        "params": {
+          "task_id": json(outputs.query.body).outputs.task_id,
+          "intent_type": "daily_ng",
+          "reviewer": inputs.reviewer
+        },
+        "inputs": { "upstream": json(outputs.query.body).outputs }
+      }) }}
+
+  - id: export
+    type: io.kestra.plugin.core.http.Request
+    dependsOn:
+      - batch
+    uri: "{{ vars.iisp_base }}/v1/tools/curation-export/invoke"
+    method: POST
+    contentType: application/json
+    body: |
+      {{ json({
+        "run_id": execution.id,
+        "step_id": "export",
+        "params": {
+          "batch_id": json(outputs.batch.body).outputs.batch_id
+        },
+        "inputs": { "upstream": json(outputs.batch.body).outputs }
+      }) }}
+
+  - id: human_edit
+    type: io.kestra.plugin.core.flow.Pause
+    dependsOn:
+      - export
+    description: |
+      请在 IISP 筛选归档页或 COCO 工具编辑出站包并上传。
+      batch_id={{ json(outputs.batch.body).outputs.batch_id }}
+    onResume:
+      - id: resume_notify
+        type: io.kestra.plugin.core.log.Log
+        message: "人工编辑完成，继续导入"
+
+  - id: import
+    type: io.kestra.plugin.core.http.Request
+    dependsOn:
+      - human_edit
+    uri: "{{ vars.iisp_base }}/v1/tools/curation-import/invoke"
+    method: POST
+    contentType: application/json
+    body: |
+      {{ json({
+        "run_id": execution.id,
+        "step_id": "import",
+        "params": {
+          "batch_id": json(outputs.batch.body).outputs.batch_id
+        },
+        "inputs": { "upstream": json(outputs.export.body).outputs }
+      }) }}
+
+  - id: archive
+    type: io.kestra.plugin.core.http.Request
+    dependsOn:
+      - import
+    uri: "{{ vars.iisp_base }}/v1/tools/curation-archive/invoke"
+    method: POST
+    contentType: application/json
+    body: |
+      {{ json({
+        "run_id": execution.id,
+        "step_id": "archive",
+        "params": {
+          "batch_id": json(outputs.batch.body).outputs.batch_id
+        },
+        "inputs": { "upstream": json(outputs.import.body).outputs }
+      }) }}
+
+  - id: notify
+    type: io.kestra.plugin.core.http.Request
+    dependsOn:
+      - archive
+    uri: "{{ vars.iisp_base }}/v1/tools/notify/invoke"
+    method: POST
+    contentType: application/json
+    body: |
+      {{ json({
+        "run_id": execution.id,
+        "step_id": "notify",
+        "params": { "event": "workflow_done" },
+        "inputs": { "upstream": json(outputs.archive.body).outputs }
+      }) }}
+
+triggers:
+  - id: daily_cron
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 2 * * *"
+    timezone: Asia/Shanghai

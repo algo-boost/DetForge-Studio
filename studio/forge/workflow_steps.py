@@ -226,7 +226,7 @@ def run_notify_step(params, context):
     return {'event': event}
 
 
-STEP_HANDLERS = {
+_STEP_HANDLERS_LEGACY = {
     'query': run_query_step,
     'predict': run_predict_step,
     'curation_create': run_curation_create_step,
@@ -236,3 +236,30 @@ STEP_HANDLERS = {
     'curation_archive': run_curation_archive_step,
     'notify': run_notify_step,
 }
+
+
+def _handler_for_kind(kind: str):
+    from capabilities.step_bridge import execute_via_registry, use_registry
+    if use_registry():
+        return lambda params, context: execute_via_registry(kind, params, context)
+    fn = _STEP_HANDLERS_LEGACY.get(kind)
+    if not fn:
+        return None
+    return fn
+
+
+class _StepHandlersProxy(dict):
+    """兼容 dict 接口；IISP_USE_REGISTRY=1 时走 Capability Registry。"""
+
+    def get(self, key, default=None):
+        h = _handler_for_kind(key)
+        return h if h is not None else default
+
+    def __contains__(self, key):
+        if key in _STEP_HANDLERS_LEGACY:
+            return True
+        from capabilities.registry import get_registry
+        return get_registry().get(key) is not None
+
+
+STEP_HANDLERS = _StepHandlersProxy()

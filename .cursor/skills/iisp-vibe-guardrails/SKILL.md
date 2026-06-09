@@ -1,0 +1,58 @@
+---
+name: iisp-vibe-guardrails
+description: >-
+  Enforces IISP architecture guardrails for any code change in DetForge-Studio.
+  Use when editing IISP, vibe coding, adding features, fixing bugs, or before
+  any PR — ensures Tool Contract, Catalog pipelines, and no workflow_engine hacks.
+---
+
+# IISP Vibe Guardrails（总约束）
+
+在 **任何** IISP 仓库改动前，先确认本文 + [`docs/CODING_STANDARDS.md`](../../docs/CODING_STANDARDS.md)。
+
+## 30 秒自检
+
+1. 这是 **新业务能力** 吗？→ 应走 **Tool + Pipeline PR**，不是改 Platform 调度  
+2. 这是 **组合/定时/顺序** 吗？→ 只写 **Catalog YAML** 或 Kestra，不写 Python 链  
+3. 是否只通过 **HTTP invoke** 集成？→ 禁止编排 `import studio.*`  
+4. 改动路径在 **允许列表** 内吗？→ 见 CODING_STANDARDS §2.2  
+5. 能否 **`validate`**？→ Tool / Pipeline 必须过 CLI  
+
+## 允许 vs 禁止
+
+| ✅ 允许 | ❌ 禁止 |
+|--------|--------|
+| `tools/<id>/` 新 Tool | 扩展 `workflow_engine` |
+| `iisp-catalog/pipelines/*.yaml` | `workflow_scheduler` 新 cron 逻辑 |
+| `skills/*/SKILL.md` | Gateway 内业务 if-else |
+| `frontend/` UI（符合规范） | Tool 互 import service |
+| `tests/` | 跳过 validate 合并 |
+| 平台组：`core/`、`gateway/`（见 iisp-platform-core） | 运行态 LLM 调度 |
+
+## 文档优先级
+
+1. [`docs/IISP_DESIGN_FINAL.md`](../../docs/IISP_DESIGN_FINAL.md)  
+2. [`docs/CODING_STANDARDS.md`](../../docs/CODING_STANDARDS.md)  
+3. [`docs/ARCHITECTURE_DIAGRAMS.md`](../../docs/ARCHITECTURE_DIAGRAMS.md)  
+
+## 该用哪个 Skill？
+
+| 用户意图 | Skill |
+|----------|-------|
+| 新工具/封装能力 | `iisp-create-tool` |
+| 编排/定时/组合 | `iisp-compose-flow` |
+| 改 Gateway/Registry/sync | `iisp-platform-core` |
+| 提交 PR 前 | `iisp-review-pr` |
+
+## 设计态 vs 运行态
+
+- **设计态**：Cursor 生成文件 → validate → PR（可用 LLM）  
+- **运行态**：cron / Kestra + invoke（**无 LLM**）
+
+## 完成后必跑（如适用）
+
+```bash
+./scripts/iisp tool validate ...
+./scripts/iisp workflow validate ...
+python -m pytest ... -q
+```

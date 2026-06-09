@@ -37,6 +37,8 @@ export default function WorkflowsPage() {
   const [busy, setBusy] = useState(false);
   const [launchTpl, setLaunchTpl] = useState('');
   const [launchParams, setLaunchParams] = useState({});
+  const [agentDraft, setAgentDraft] = useState('');
+  const [agentResult, setAgentResult] = useState(null);
 
   const selectedTemplate = useMemo(
     () => templates.find((t) => t.id === launchTpl),
@@ -236,6 +238,7 @@ export default function WorkflowsPage() {
       <div className="wf-tabs">
         {[
           ['compose', '流程设计器'],
+          ['agent', '工作流助手'],
           ['runs', '运行记录'],
           ['schedules', '定时'],
           ['templates', '模板库'],
@@ -301,6 +304,68 @@ export default function WorkflowsPage() {
             )}
           </section>
         </div>
+      )}
+
+      {tab === 'agent' && (
+        <section className="wf-compose-panel" style={{ padding: 16 }}>
+          <h4>工作流助手（Agent 配置通道）</h4>
+          <p style={{ fontSize: 13, color: 'var(--muted)' }}>
+            粘贴含 <code>```yaml</code> 代码块的 Pipeline 草稿，校验通过后导入为工作流模板。
+          </p>
+          <textarea
+            rows={14}
+            style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }}
+            placeholder={'```yaml\nid: my_flow\nnodes:\n  - id: query\n    tool: query\n    params:\n      strategy_id: daily_trawl\n```'}
+            value={agentDraft}
+            onChange={(e) => setAgentDraft(e.target.value)}
+          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              disabled={busy || !agentDraft.trim()}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const r = await api.workflowAgentCompile({ text: agentDraft });
+                  setAgentResult(r.data || null);
+                  if (r.success) toast('YAML 校验通过');
+                  else toast((r.data?.errors || [r.data?.error]).join?.('; ') || '校验失败', 'error');
+                } catch (e) { toast(e.message, 'error'); }
+                finally { setBusy(false); }
+              }}
+            >
+              校验 YAML
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy || !agentResult?.success}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const r = await api.workflowImport({
+                    pipeline: agentResult.pipeline,
+                    definition: agentResult.definition,
+                  });
+                  if (r.success) {
+                    toast(`已导入模板: ${r.data?.id}`);
+                    loadTemplates();
+                    setTab('templates');
+                  }
+                } catch (e) { toast(e.message, 'error'); }
+                finally { setBusy(false); }
+              }}
+            >
+              导入为模板
+            </button>
+          </div>
+          {agentResult ? (
+            <pre style={{ marginTop: 12, fontSize: 11, background: 'var(--bg-subtle)', padding: 12, borderRadius: 8, overflow: 'auto' }}>
+              {JSON.stringify(agentResult, null, 2)}
+            </pre>
+          ) : null}
+        </section>
       )}
 
       {tab === 'runs' && (

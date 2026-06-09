@@ -1,4 +1,4 @@
-"""DefectLoop Studio entry point."""
+"""IISP (Industrial Inspection Solutions Platform) entry point."""
 import os
 from server.factory import create_app
 

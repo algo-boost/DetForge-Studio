@@ -1,0 +1,8 @@
+# 环境绑定示例 — 产线/Hub 跟哪一版 release
+
+env_id: dev-local
+release: "2026.06.1"
+description: 本地开发默认可选子集
+pipelines:
+  - welcome_demo
+  - daily_ng_curation

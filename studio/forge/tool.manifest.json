@@ -1,0 +1,23 @@
+{
+  "id": "manual-qc",
+  "version": "1.0.0",
+  "label": "人工质检",
+  "description": "按 SN 查询平台缺陷图记录，供人工核对",
+  "kind": "capability",
+  "entry": {
+    "capability": "studio.forge.manual_qc_capability:ManualQcCapability",
+    "cli": null,
+    "blueprint": null
+  },
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "sn": { "type": "string" },
+      "limit": { "type": "integer", "default": 50 }
+    },
+    "required": ["sn"]
+  },
+  "inputs": ["sn"],
+  "outputs": ["records", "match_status", "count"],
+  "artifacts": []
+}

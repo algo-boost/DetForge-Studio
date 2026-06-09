@@ -1,0 +1,6 @@
+[submodule "packages/coco-visualizer"]
+	path = packages/coco-visualizer
+	url = git@github.com:algo-boost/COCOVisualizer.git
+[submodule "packages/detunify"]
+	path = packages/detunify
+	url = git@github.com:algo-boost/DetUnify-Studio.git

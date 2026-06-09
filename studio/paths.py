@@ -9,6 +9,12 @@ _BUNDLE_TOOL_NAMES = {
     'detunify': 'DetUnify-Studio',
 }
 
+# packages/ 下 git submodule 目录名（IISP 仓内集成）
+_PACKAGE_TOOL_DIRS = {
+    'coco': 'coco-visualizer',
+    'detunify': 'detunify',
+}
+
 
 def _resolve_app_root() -> str:
     if getattr(sys, 'frozen', False):
@@ -64,17 +70,33 @@ def bundled_tool_dir(name: str) -> str:
     return os.path.normpath(root) if os.path.isdir(root) else ''
 
 
+def package_tool_dir(kind: str) -> str:
+    """IISP 仓内 packages/<submodule>（git submodule 集成路径）。"""
+    folder = _PACKAGE_TOOL_DIRS.get(kind, '')
+    if not folder:
+        return ''
+    root = os.path.join(APP_ROOT, 'packages', folder)
+    return os.path.normpath(root) if os.path.isdir(root) else ''
+
+
+def _first_existing_dir(*candidates: str) -> str:
+    for path in candidates:
+        if path and os.path.isdir(path):
+            return path
+    return ''
+
+
 def default_coco_visualizer_root() -> str:
-    bundled = bundled_tool_dir(_BUNDLE_TOOL_NAMES['coco'])
-    if bundled:
-        return bundled
-    sibling = os.path.normpath(os.path.join(APP_ROOT, '..', _BUNDLE_TOOL_NAMES['coco']))
-    return sibling if os.path.isdir(sibling) else ''
+    return _first_existing_dir(
+        package_tool_dir('coco'),
+        bundled_tool_dir(_BUNDLE_TOOL_NAMES['coco']),
+        os.path.normpath(os.path.join(APP_ROOT, '..', _BUNDLE_TOOL_NAMES['coco'])),
+    )
 
 
 def default_detunify_studio_root() -> str:
-    bundled = bundled_tool_dir(_BUNDLE_TOOL_NAMES['detunify'])
-    if bundled:
-        return bundled
-    sibling = os.path.normpath(os.path.join(APP_ROOT, '..', _BUNDLE_TOOL_NAMES['detunify']))
-    return sibling if os.path.isdir(sibling) else ''
+    return _first_existing_dir(
+        package_tool_dir('detunify'),
+        bundled_tool_dir(_BUNDLE_TOOL_NAMES['detunify']),
+        os.path.normpath(os.path.join(APP_ROOT, '..', _BUNDLE_TOOL_NAMES['detunify'])),
+    )

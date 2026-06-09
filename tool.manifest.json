@@ -1,0 +1,24 @@
+{
+  "id": "query",
+  "version": "1.0.0",
+  "label": "数据查询",
+  "description": "按策略查询平台数据并创建查询任务",
+  "kind": "capability",
+  "entry": {
+    "capability": "studio.query.capabilities:QueryCapability",
+    "cli": null,
+    "blueprint": null
+  },
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "strategy_id": { "type": "string" },
+      "time_window": { "type": "object" },
+      "data_source": { "type": "string", "default": "detail" }
+    },
+    "required": ["strategy_id"]
+  },
+  "inputs": ["time_window"],
+  "outputs": ["task_id", "row_count", "count"],
+  "artifacts": ["csv"]
+}

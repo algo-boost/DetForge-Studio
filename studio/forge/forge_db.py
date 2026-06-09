@@ -400,6 +400,18 @@ def schema_statements(db=None):
           KEY idx_run (run_id),
           KEY idx_created (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+        f"""CREATE TABLE IF NOT EXISTS `{db}`.`catalog_sync_log` (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          repo VARCHAR(512) DEFAULT NULL,
+          ref_name VARCHAR(128) DEFAULT NULL,
+          commit_hash VARCHAR(64) DEFAULT NULL,
+          prev_commit VARCHAR(64) DEFAULT NULL,
+          strategies_files INT DEFAULT 0,
+          pipelines_files INT DEFAULT 0,
+          summary JSON DEFAULT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          KEY idx_created (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
     ]
 
 
@@ -2283,4 +2295,34 @@ def list_workflow_notifications(limit=50, run_id=None):
         )
     for r in rows:
         r['payload'] = _json_load(r.get('payload'))
+    return rows
+
+
+def insert_catalog_sync_log(summary: dict):
+    """记录 Catalog 同步审计日志。"""
+    client = _client()
+    client.execute(
+        f"""INSERT INTO {_t('catalog_sync_log')}
+            (repo, ref_name, commit_hash, prev_commit, strategies_files, pipelines_files, summary)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+        (
+            summary.get('repo'),
+            summary.get('ref'),
+            summary.get('commit'),
+            summary.get('prev_commit'),
+            int(summary.get('strategies_files') or 0),
+            int(summary.get('pipelines_files') or 0),
+            _json_dump(summary),
+        ),
+    )
+    return client.last_insert_id()
+
+
+def list_catalog_sync_logs(limit=20):
+    rows = _client().fetchall(
+        f"SELECT * FROM {_t('catalog_sync_log')} ORDER BY id DESC LIMIT %s",
+        (int(limit),),
+    )
+    for r in rows:
+        r['summary'] = _json_load(r.get('summary'))
     return rows
