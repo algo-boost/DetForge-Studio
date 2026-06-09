@@ -32,6 +32,23 @@ class PythonPresetRegistryTests(unittest.TestCase):
         self.assertIn('apply_random_sample_rows', ns)
         self.assertNotIn('view', ns)
 
+    def test_build_namespace_view_from_code_when_presets_omit_observe(self):
+        code = "def process_data(df):\n    view(df, 'x')\n    return df\n"
+        strategy = {'python_presets': ['filter']}
+        ns = build_execution_namespace({}, strategy=strategy, code=code)
+        self.assertIn('view', ns)
+
+    def test_build_namespace_view_when_pipeline_lacks_observe(self):
+        code = "def process_data(df):\n    view(count_category_boxes(df), '统计')\n    return df\n"
+        strategy = {
+            'process_pipeline': [
+                {'template_id': 'preset_apply_filter_rules', 'params': {}},
+            ],
+        }
+        ns = build_execution_namespace({}, strategy=strategy, code=code)
+        self.assertIn('view', ns)
+        self.assertIn('count_category_boxes', ns)
+
     def test_fill_time_env_defaults(self):
         start, end = time_range_for_preset('today')
         out = fill_time_env_defaults({}, schema=[{'key': 'START_TIME'}, {'key': 'END_TIME'}])

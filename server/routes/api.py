@@ -470,12 +470,15 @@ def preview_filter():
             if python_code:
                 try:
                     filter_python_ran = True
+                    from studio.query.strategy_loader import merge_strategy_for_execution
+
+                    exec_strategy = merge_strategy_for_execution(strategy, merge_data)
                     df, console_output, execution_time = execute_python_filter(
                         df,
                         python_code,
                         capture_output=True,
                         env_context=env_ctx,
-                        strategy=strategy,
+                        strategy=exec_strategy,
                     )
                     filter_rows = len(df)
                     if ds == 'predict_result':

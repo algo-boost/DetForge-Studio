@@ -9,7 +9,7 @@ from studio.query.env_context import (
     format_unresolved_vars_error,
     substitute_template,
 )
-from studio.query.strategy_loader import get_all_strategies, get_all_templates
+from studio.query.strategy_loader import get_all_strategies, get_all_templates, merge_strategy_for_execution
 
 
 def _resolve_query_python_for_request(data, templates, resolve_query_python):
@@ -112,12 +112,13 @@ def run_query_request(data, *, get_db_client, execute_python_filter, build_query
 
     if python_code and python_code.strip():
         try:
+            exec_strategy = merge_strategy_for_execution(strategy, data)
             df, console_output, execution_time = execute_python_filter(
                 df,
                 python_code,
                 capture_output=True,
                 env_context=env_ctx,
-                strategy=strategy,
+                strategy=exec_strategy,
             )
         except Exception as e:
             return {
