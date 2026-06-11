@@ -14,7 +14,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# 勿写 lib/：会误伤 frontend/src/lib/ 与 lib/iisp_cli/；构建产物已在 build/、.venv/ 中忽略
 lib64/
 parts/
 sdist/
