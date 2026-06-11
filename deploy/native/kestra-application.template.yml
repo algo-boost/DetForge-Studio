@@ -1,0 +1,44 @@
+# 由 orchestration.native.config_render 生成，勿手改 runtime/ 下文件
+datasources:
+  mysql:
+    url: "{{JDBC_URL}}"
+    driverClassName: com.mysql.cj.jdbc.Driver
+    username: {{DB_USER}}
+    password: {{DB_PASSWORD}}
+    dialect: MYSQL
+
+flyway:
+  datasources:
+    mysql:
+      enabled: true
+      locations:
+        - classpath:migrations/mysql
+      ignore-migration-patterns: "*:missing,*:future"
+      out-of-order: true
+
+kestra:
+  url: http://127.0.0.1:{{KESTRA_PORT}}/
+  tutorialFlows:
+    enabled: false
+  server:
+    basic-auth:
+      username: {{KESTRA_USER}}
+      password: {{KESTRA_PASSWORD}}
+  repository:
+    type: mysql
+  storage:
+    type: local
+    local:
+      base-path: "{{STORAGE_PATH}}"
+  queue:
+    type: mysql
+  tasks:
+    tmp-dir:
+      path: "{{TMP_PATH}}/tmp"
+
+micronaut:
+  io:
+    watch:
+      enabled: true
+      paths:
+        - "{{FLOWS_PATH}}"

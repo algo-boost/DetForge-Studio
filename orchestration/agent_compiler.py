@@ -9,7 +9,7 @@ try:
 except ImportError:
     yaml = None
 
-from orchestration.loader import validate_pipeline
+from orchestration.pipeline_validate import validate_pipeline_any
 
 
 def extract_yaml_from_text(text: str) -> str:
@@ -36,15 +36,20 @@ def compile_agent_draft(text: str) -> dict:
         return {'success': False, 'error': f'YAML 解析失败: {e}', 'yaml': raw_yaml}
     if not isinstance(defn, dict):
         return {'success': False, 'error': 'Pipeline 必须是对象', 'yaml': raw_yaml}
-    errors = validate_pipeline(defn)
+    errors = validate_pipeline_any(defn)
     from orchestration.loader import pipeline_to_workflow_definition
-    return {
+    result: dict = {
         'success': len(errors) == 0,
         'yaml': raw_yaml,
-        'definition': pipeline_to_workflow_definition(defn),
         'pipeline': defn,
         'errors': errors,
+        'engine': 'kestra' if defn.get('tasks') else 'legacy',
     }
+    if defn.get('tasks'):
+        result['definition'] = None
+    else:
+        result['definition'] = pipeline_to_workflow_definition(defn)
+    return result
 
 
 def build_agent_system_prompt(tools: list[dict]) -> str:

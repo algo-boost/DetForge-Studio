@@ -70,7 +70,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 - 功能变更后：`iisp record-platform-change` → 更新 `docs/PLATFORM_CHANGELOG.md`
 - 架构/PR：`iisp-vibe-guardrails` · `iisp-review-pr`
-- 校验：`iisp tool validate` / `iisp workflow validate` / `pytest`
+- 校验：`iisp tool validate` / `iisp workflow validate` / `pytest`（**功能与测试同 PR**，见 **iisp-unit-tests**）
 
 ---
 

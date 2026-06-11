@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import SettingsTabBar, { StatusPill } from '../components/settings/SettingsTabBar';
+import UserPrefsSettings from '../components/settings/UserPrefsSettings';
 import {
   id2nameToText, rootsToText, textToId2name, textToRoots,
 } from '../components/settings/settingsUtils';
@@ -674,10 +675,13 @@ export default function ConfigPage({ embedded = false }) {
         )}
 
         {activeTab === 'system' && (
-          <TimezoneSettingsCard
-            config={config}
-            onTimezoneChange={(v) => set('timezone', v)}
-          />
+          <>
+            <UserPrefsSettings />
+            <TimezoneSettingsCard
+              config={config}
+              onTimezoneChange={(v) => set('timezone', v)}
+            />
+          </>
         )}
 
         {activeTab === 'system' && (

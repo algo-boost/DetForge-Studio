@@ -1,0 +1,35 @@
+id: welcome_demo
+name: 欢迎体验 · 迷你编排
+description: |
+  模拟 Windmill Script→Flow：demo-query → demo-pack → gate-human → demo-notify。
+  无需数据库，CLI 或 Web「编排演示」页一键运行。
+version: "1"
+params_schema:
+  reviewer:
+    type: string
+    default: demo-user
+    label: 操作人
+nodes:
+  - id: query
+    tool: demo-query
+    params:
+      keyword: "{{params.reviewer}}"
+  - id: pack
+    tool: demo-pack
+    requires: [query]
+    params:
+      task_id: "{{steps.query.task_id}}"
+      row_count: "{{steps.query.row_count}}"
+  - id: approve
+    tool: gate-human
+    requires: [pack]
+    params:
+      gate_type: demo_approval
+      batch_id: "{{steps.pack.batch_id}}"
+      instructions: 演示人工卡点：Web 页点击「继续运行」，或 CLI 加 --auto-resume
+  - id: notify
+    tool: demo-notify
+    requires: [approve]
+    params:
+      event: demo_done
+      batch_id: "{{steps.pack.batch_id}}"

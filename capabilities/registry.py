@@ -174,6 +174,7 @@ class CapabilityRegistry:
                 'usage_count': self._usage.get(spec.id, 0),
                 'skill_source': manifest.get('skill_source'),
                 'manifest_path': manifest.get('manifest_path'),
+                'tags': manifest.get('tags') or [],
             })
         return sorted(out, key=lambda x: x['id'])
 

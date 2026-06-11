@@ -3,7 +3,7 @@
 PRODUCT_NAME = 'IISP'
 PRODUCT_NAME_FULL = 'Industrial Inspection Solutions Platform'
 PRODUCT_NAME_ZH = '工业检测解决方案平台'
-PRODUCT_TAGLINE = '工业检测数据闭环与解决方案平台'
+PRODUCT_TAGLINE = PRODUCT_NAME_ZH
 PRODUCT_TAGLINE_SHORT = '工业检测解决方案'
 
 # 历史名称（文档/迁移兼容）

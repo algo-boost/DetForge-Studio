@@ -1,27 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, toast } from '../api/client';
+import StatusPill, { WORKFLOW_RUN_STATUS_MAP, WORKFLOW_STEP_STATUS_MAP } from '../components/ui/StatusPill';
 import WorkflowDagEditor from '../components/forge/WorkflowDagEditor';
 import WorkflowFlowCanvas from '../components/forge/WorkflowFlowCanvas';
 import WorkflowParamsForm from '../components/forge/WorkflowParamsForm';
 import WorkflowPipelineViz from '../components/forge/WorkflowPipelineViz';
+import {
+  filterWaitingHumanRuns,
+  findGateStep,
+  getGateBatchId,
+} from '../hooks/useHumanGates';
+import { usePolling } from '../hooks/usePolling';
 import { graphFromLinearSteps } from '../lib/workflowGraph';
 import { defaultParamsFromSchema } from '../lib/workflowCatalog';
-
-const RUN_STATUS = {
-  pending: '排队',
-  running: '运行中',
-  waiting_human: '待上传 COCO',
-  done: '完成',
-  failed: '失败',
-  canceled: '已取消',
-  paused: '暂停',
-};
-
-function StatusPill({ status, map }) {
-  const label = map[status] || status || '—';
-  return <span className={`wf-pill wf-pill-${status || 'default'}`}>{label}</span>;
-}
 
 export default function WorkflowsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -103,14 +95,14 @@ export default function WorkflowsPage() {
     }
   }, [searchParams, loadDetail]);
 
-  useEffect(() => {
-    if (!selectedRunId) return undefined;
-    const t = setInterval(() => loadDetail(selectedRunId), 4000);
-    return () => clearInterval(t);
-  }, [selectedRunId, loadDetail]);
+  const pollDetail = useCallback(
+    () => { if (selectedRunId) loadDetail(selectedRunId); },
+    [selectedRunId, loadDetail],
+  );
+  usePolling(pollDetail, { interval: 4000, immediate: false, enabled: Boolean(selectedRunId) });
 
   const waitingRuns = useMemo(
-    () => runs.filter((r) => r.status === 'waiting_human'),
+    () => filterWaitingHumanRuns(runs),
     [runs],
   );
 
@@ -186,8 +178,8 @@ export default function WorkflowsPage() {
     setTab('compose');
   };
 
-  const gateStep = runDetail?.steps?.find((s) => s.status === 'waiting_human');
-  const batchId = gateStep?.child_batch_id || gateStep?.human_action?.batch_id;
+  const gateStep = findGateStep(runDetail);
+  const batchId = getGateBatchId(gateStep);
 
   const runGraph = useMemo(() => {
     if (!runDetail) return null;
@@ -389,7 +381,7 @@ export default function WorkflowsPage() {
                   >
                     <td>{r.id}</td>
                     <td>{r.name || '—'}</td>
-                    <td><StatusPill status={r.status} map={RUN_STATUS} /></td>
+                    <td><StatusPill status={r.status} map={WORKFLOW_RUN_STATUS_MAP} /></td>
                     <td>{r.created_at || '—'}</td>
                   </tr>
                 ))}
@@ -404,7 +396,7 @@ export default function WorkflowsPage() {
               <>
                 <div className="wf-detail-head">
                   <h3>#{runDetail.run.id} {runDetail.run.name}</h3>
-                  <StatusPill status={runDetail.run.status} map={RUN_STATUS} />
+                  <StatusPill status={runDetail.run.status} map={WORKFLOW_RUN_STATUS_MAP} />
                 </div>
 
                 {runGraph ? (
@@ -444,11 +436,7 @@ export default function WorkflowsPage() {
                   <div className="wf-step-detail">
                     <h4>
                       步骤 {activeStep.step_id}
-                      <StatusPill status={activeStep.status} map={{
-                        pending: '待执行', running: '执行中', done: '完成',
-                        failed: '失败', skipped: '已跳过', waiting_human: '待人工',
-                      }}
-                      />
+                      <StatusPill status={activeStep.status} map={WORKFLOW_STEP_STATUS_MAP} />
                     </h4>
                     {activeStep.output && (
                       <pre className="wf-step-output">{JSON.stringify(activeStep.output, null, 2)}</pre>

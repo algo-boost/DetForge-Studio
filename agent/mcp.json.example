@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "iisp": {
+      "command": "python",
+      "args": ["mcp/iisp_server.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "IISP_ENV": "dev",
+        "IISP_AGENT_ALLOW_INVOKE": "0"
+      }
+    }
+  }
+}

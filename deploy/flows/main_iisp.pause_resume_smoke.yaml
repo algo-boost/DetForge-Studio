@@ -1,0 +1,12 @@
+id: pause_resume_smoke
+namespace: iisp
+description: Resume API 冒烟 — 立即 Pause，IISP resume 后继续
+
+tasks:
+  - id: wait_human
+    type: io.kestra.plugin.core.flow.Pause
+    description: IISP POST /v1/orchestration/resume 后继续
+
+  - id: after_resume
+    type: io.kestra.plugin.core.log.Log
+    message: "Resume OK — execution={{ execution.id }}"

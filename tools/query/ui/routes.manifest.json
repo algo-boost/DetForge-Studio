@@ -1,0 +1,11 @@
+{
+  "tool_id": "query",
+  "mount": "/tools/query",
+  "routes_module": "frontend/src/tools/query/routes.jsx",
+  "pages": [
+    { "path": "/query", "component": "QueryPage" },
+    { "path": "/query-results", "component": "QueryResultsPage" },
+    { "path": "/history", "component": "HistoryPage" },
+    { "path": "/strategies", "component": "StrategiesPage" }
+  ]
+}

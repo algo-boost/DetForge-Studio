@@ -115,6 +115,10 @@ def register_viz_mount(app) -> bool:
     return True
 
 
+def is_viz_mounted() -> bool:
+    return _viz_ready
+
+
 def get_coco_dataset_service():
     """惰性导入 COCO dataset_service（需已配置 coco_visualizer_root）。"""
     root = resolve_coco_visualizer_root()

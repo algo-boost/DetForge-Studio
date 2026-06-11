@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, toast } from '../api/client';
+import UnifyToolHost from '../components/UnifyToolHost';
 import PlatformPredictPanel from '../components/forge/PlatformPredictPanel';
 import SceneHubNav from '../components/SceneHubNav';
-import '../styles/viewer.css';
-
-const UNIFY_PREFIX = '/unify';
 
 function PredictTipsStrip() {
   return (
@@ -30,72 +28,6 @@ function PredictTipsStrip() {
         <h4>预测之后</h4>
         <p className="muted">结果写入 predict_result 表，可在 <Link to="/jobs">预测任务</Link> 查看进度，在 <Link to="/">查询页</Link> 二次筛选（默认即预测结果表）。</p>
       </div>
-    </div>
-  );
-}
-
-function DetUnifyQuickPanel() {
-  const [ready, setReady] = useState(false);
-  const [status, setStatus] = useState({ loading: true, mounted: false, available: false });
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/api/unify/status', { credentials: 'same-origin' })
-      .then((res) => res.json())
-      .then((res) => {
-        if (cancelled) return;
-        setStatus({
-          loading: false,
-          mounted: Boolean(res?.mounted),
-          available: Boolean(res?.available),
-        });
-      })
-      .catch(() => {
-        if (!cancelled) setStatus({ loading: false, mounted: false, available: false });
-      });
-    return () => { cancelled = true; };
-  }, []);
-
-  const canEmbed = status.mounted && status.available;
-
-  if (status.loading) {
-    return (
-      <div className="predict-quick-loading">
-        <div className="viewer-loading-spinner" aria-hidden />
-        <p>正在检查 DetUnify 环境…</p>
-      </div>
-    );
-  }
-
-  if (!canEmbed) {
-    return (
-      <div className="platform-surface-card predict-quick-unavailable">
-        <h4>临时上传对比不可用</h4>
-        <p className="muted">
-          {status.available
-            ? 'DetUnify 尚未挂载到 /unify，请重启 Flask 服务。'
-            : '未找到 DetUnify-Studio，请在设置中配置 detunify_studio_root。'}
-        </p>
-        <Link className="btn btn-sm btn-primary" to="/config?section=predict">打开设置</Link>
-      </div>
-    );
-  }
-
-  return (
-    <div className="predict-quick-frame">
-      {!ready && (
-        <div className="predict-quick-loading predict-quick-loading-overlay">
-          <div className="viewer-loading-spinner" aria-hidden />
-          <p>正在加载 DetUnify…</p>
-        </div>
-      )}
-      <iframe
-        className="predict-quick-iframe"
-        src={`${UNIFY_PREFIX}/`}
-        title="临时上传对比"
-        allow="clipboard-read; clipboard-write"
-        onLoad={() => setReady(true)}
-      />
     </div>
   );
 }
@@ -237,7 +169,7 @@ export default function OnlinePredictPage() {
           <p className="predict-workbench-quick-intro muted">
             快速上传模型与图片做即时对比（DetUnify），结果不落库。批量评测请用「批量预测」Tab。
           </p>
-          <DetUnifyQuickPanel />
+          <UnifyToolHost />
         </div>
       )}
     </div>

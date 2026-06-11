@@ -1,24 +1,31 @@
 import { Component, Suspense, lazy } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from './components/Layout';
+import TierRouteGuard from './components/TierRouteGuard';
 import { ToastHost } from './components/ToastHost';
 import { QueryJobsProvider } from './context/QueryJobsContext';
+import { UserPrefsProvider } from './context/UserPrefsContext';
 
-const QueryPage = lazy(() => import('./pages/QueryPage'));
-const QueryResultsPage = lazy(() => import('./pages/QueryResultsPage'));
+const QueryToolHost = lazy(() => import('./components/QueryToolHost'));
+const HomePage = lazy(() => import('./pages/HomePage'));
 const ConfigRoute = lazy(() => import('./components/ConfigRoute'));
-const AdminPage = lazy(() => import('./pages/AdminPage'));
 const DocsPage = lazy(() => import('./pages/DocsPage'));
-const HistoryPage = lazy(() => import('./pages/HistoryPage'));
 const ModelsPage = lazy(() => import('./pages/ModelsPage'));
 const JobsPage = lazy(() => import('./pages/JobsPage'));
 const TrainingPlatformPage = lazy(() => import('./pages/TrainingPlatformPage'));
 const ManualQcPage = lazy(() => import('./pages/ManualQcPage'));
 const CurationPage = lazy(() => import('./pages/CurationPage'));
 const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'));
+const WorkflowsRedirect = lazy(() => import('./pages/WorkflowsRedirect'));
 const ToolboxPage = lazy(() => import('./pages/ToolboxPage'));
 const DemoFlowPage = lazy(() => import('./pages/DemoFlowPage'));
-const ViewerPage = lazy(() => import('./pages/ViewerPage'));
+const FlowsCatalogPage = lazy(() => import('./pages/FlowsCatalogPage'));
+const FlowRunsPage = lazy(() => import('./pages/FlowRunsPage'));
+const FlowRunDetailPage = lazy(() => import('./pages/FlowRunDetailPage'));
+const FlowTaskDetailPage = lazy(() => import('./pages/FlowTaskDetailPage'));
+const FlowAssistantPage = lazy(() => import('./pages/FlowAssistantPage'));
+const KestraStudioPage = lazy(() => import('./pages/KestraStudioPage'));
+const ViewerPage = lazy(() => import('./components/VizToolHost'));
 const OnlinePredictPage = lazy(() => import('./pages/OnlinePredictPage'));
 
 class ErrorBoundary extends Component {
@@ -53,23 +60,34 @@ class ErrorBoundary extends Component {
 export default function App() {
   return (
     <BrowserRouter>
-      <QueryJobsProvider>
-        <ToastHost />
+      <UserPrefsProvider>
+        <QueryJobsProvider>
+          <ToastHost />
         <ErrorBoundary>
           <Suspense fallback={<div className="panel active" style={{ padding: 24 }}>加载中…</div>}>
             <Routes>
               <Route element={<Layout />}>
-              <Route index element={<QueryPage />} />
-              <Route path="query-results" element={<QueryResultsPage />} />
+              <Route element={<TierRouteGuard />}>
+              <Route index element={<HomePage />} />
+              <Route path="query" element={<QueryToolHost page="query" />} />
+              <Route path="query-results" element={<QueryToolHost page="query-results" />} />
               <Route path="config" element={<ConfigRoute />} />
-              <Route path="strategies" element={<AdminPage />} />
+              <Route path="strategies" element={<QueryToolHost page="strategies" />} />
               <Route path="admin" element={<Navigate to="/strategies" replace />} />
               <Route path="settings" element={<Navigate to="/config" replace />} />
-              <Route path="history" element={<HistoryPage />} />
+              <Route path="history" element={<QueryToolHost page="history" />} />
               <Route path="curation" element={<CurationPage />} />
-              <Route path="workflows" element={<WorkflowsPage />} />
+              <Route path="workflows" element={<WorkflowsRedirect />} />
               <Route path="toolbox" element={<ToolboxPage />} />
-              <Route path="demo" element={<DemoFlowPage />} />
+              <Route path="flows" element={<FlowsCatalogPage />} />
+              <Route path="flows/tasks/:flowId" element={<FlowTaskDetailPage />} />
+              <Route path="flows/assistant" element={<FlowAssistantPage />} />
+              <Route path="flows/runs/:runKey" element={<FlowRunDetailPage />} />
+              <Route path="flows/runs" element={<Navigate to="/flows?tab=history" replace />} />
+              <Route path="flows/demo" element={<DemoFlowPage />} />
+              <Route path="flows/kestra" element={<KestraStudioPage />} />
+              <Route path="flows/legacy" element={<WorkflowsPage />} />
+              <Route path="demo" element={<Navigate to="/flows/demo" replace />} />
               <Route path="models" element={<ModelsPage />} />
               <Route path="jobs" element={<JobsPage />} />
               <Route path="training" element={<TrainingPlatformPage />} />
@@ -81,10 +99,12 @@ export default function App() {
               <Route path="compare" element={<Navigate to="/online-predict" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
+            </Route>
             </Routes>
           </Suspense>
         </ErrorBoundary>
-      </QueryJobsProvider>
+        </QueryJobsProvider>
+      </UserPrefsProvider>
     </BrowserRouter>
   );
 }

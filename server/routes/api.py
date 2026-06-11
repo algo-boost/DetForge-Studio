@@ -307,68 +307,44 @@ def test_magic_fox_connection():
 
 
 def _run_query_sync(data):
-    from studio.query.query_runner import run_query_request
-    return run_query_request(
-        data,
-        get_db_client=get_db_client,
-        execute_python_filter=execute_python_filter,
-        build_query_task=build_query_task,
-        sample_size_from_env=sample_size_from_env,
-        parse_random_seed=parse_random_seed,
-        resolve_query_python=_resolve_query_python,
-    )
+    from tools.query.rest import handle_post_query
+    body, _status = handle_post_query(data)
+    return body
 
 
 @api_bp.route('/api/query', methods=['POST'])
 def query_database():
-    """执行 SQL 查询（同步，兼容旧客户端）"""
+    """执行 SQL 查询（同步，兼容旧客户端）→ query action=run"""
+    from tools.query.rest import handle_post_query
     try:
-        data = request.json
-        result = _run_query_sync(data)
-        status = result.pop('status_code', 200 if result.get('success') else 500)
-        return jsonify(result), status
+        body, status = handle_post_query(request.json)
+        return jsonify(body), status
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @api_bp.route('/api/query/jobs', methods=['POST'])
 def create_query_job():
-    """提交后台查询任务（可切换页面、可并发多条）。"""
-    try:
-        from studio.query import query_jobs
-        data = dict(request.json or {})
-        label = (data.pop('label', None) or data.pop('strategy_name', None) or '').strip()
-        if not str(data.get('sql', '')).strip():
-            return jsonify({'success': False, 'error': 'SQL 查询语句不能为空'}), 400
-        job = query_jobs.submit_query_job(data, label=label)
-        return jsonify({'success': True, 'query_job_id': job['id'], 'job': job})
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
+    """提交后台查询任务 → query action=job.submit"""
+    from tools.query.rest import handle_create_query_job
+    body, status = handle_create_query_job(request.json)
+    return jsonify(body), status
 
 
 @api_bp.route('/api/query/jobs', methods=['GET'])
 def list_query_jobs_route():
-    try:
-        from studio.query import query_jobs
-        limit = min(50, int(request.args.get('limit', 30)))
-        active_only = request.args.get('active_only', '').lower() in ('1', 'true', 'yes')
-        jobs = query_jobs.list_query_jobs(limit=limit, active_only=active_only)
-        return jsonify({'success': True, 'jobs': jobs})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    from tools.query.rest import handle_list_query_jobs
+    limit = min(50, int(request.args.get('limit', 30)))
+    active_only = request.args.get('active_only', '').lower() in ('1', 'true', 'yes')
+    body, status = handle_list_query_jobs(limit=limit, active_only=active_only)
+    return jsonify(body), status
 
 
 @api_bp.route('/api/query/jobs/<job_id>', methods=['GET'])
 def get_query_job_route(job_id):
-    try:
-        from studio.query import query_jobs
-        job = query_jobs.get_query_job(job_id)
-        if not job:
-            return jsonify({'success': False, 'error': '任务不存在'}), 404
-        return jsonify({'success': True, 'job': job})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    from tools.query.rest import handle_get_query_job
+    body, status = handle_get_query_job(job_id)
+    return jsonify(body), status
 
 
 @api_bp.route('/api/preview-filter', methods=['POST'])
@@ -759,17 +735,10 @@ def archive_results(task_id):
 
 @api_bp.route('/api/query/task/<task_id>', methods=['GET'])
 def get_query_task(task_id):
-    """恢复已保存的查询任务结果（返回查询页 / 历史跳转用）。"""
-    try:
-        from server.core import load_query_task_results
-        upload_folder = current_app.config['UPLOAD_FOLDER']
-        loaded = load_query_task_results(task_id, upload_folder)
-        if not loaded:
-            return jsonify({'success': False, 'error': '任务不存在或缺少 result.csv'}), 404
-        return jsonify({'success': True, **loaded})
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
+    """恢复已保存的查询任务结果 → query action=task.get"""
+    from tools.query.rest import handle_get_query_task
+    body, status = handle_get_query_task(task_id)
+    return jsonify(body), status
 
 
 @api_bp.route('/api/coco/<task_id>')
@@ -899,61 +868,29 @@ def list_pipeline_templates():
 
 @api_bp.route('/api/strategies/compile-pipeline', methods=['POST'])
 def compile_strategy_pipeline():
-    """预览 process_pipeline → process_data 编译结果。"""
-    try:
-        from studio.flow.process_pipeline import compile_process_pipeline
-        body = request.get_json(silent=True) or {}
-        pipeline = body.get('process_pipeline') or []
-        templates = _get_all_templates()
-        result = compile_process_pipeline(pipeline, templates)
-        return jsonify({'success': True, 'data': result})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    """预览 process_pipeline → process_data 编译结果 → query action=strategy.compile_pipeline"""
+    from tools.query.rest import handle_compile_strategy_pipeline
+    body, status = handle_compile_strategy_pipeline(request.get_json(silent=True))
+    return jsonify(body), status
 
 
 @api_bp.route('/api/strategies', methods=['GET'])
 def list_strategies():
-    try:
-        templates = _get_all_templates()
-        items = [normalize_strategy(s, templates) for s in _get_all_strategies().values()]
-        return jsonify({'success': True, 'data': items})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    from tools.query.rest import handle_list_strategies
+    body, status = handle_list_strategies()
+    return jsonify(body), status
 
 @api_bp.route('/api/strategies/<strategy_id>', methods=['GET'])
 def get_strategy(strategy_id):
-    try:
-        strategies = _get_all_strategies()
-        if strategy_id in strategies:
-            templates = _get_all_templates()
-            return jsonify({
-                'success': True,
-                'data': normalize_strategy(strategies[strategy_id], templates),
-            })
-        return jsonify({'success': False, 'error': '策略不存在'}), 404
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    from tools.query.rest import handle_get_strategy
+    body, status = handle_get_strategy(strategy_id)
+    return jsonify(body), status
 
 @api_bp.route('/api/strategies/<strategy_id>/variables', methods=['GET'])
 def get_strategy_variables(strategy_id):
-    """返回策略可用环境变量（系统 + 自定义 schema / 模板推断）。"""
-    try:
-        strategies = _get_all_strategies()
-        if strategy_id not in strategies:
-            return jsonify({'success': False, 'error': '策略不存在'}), 404
-        templates = _get_all_templates()
-        strategy = normalize_strategy(dict(strategies[strategy_id]), templates)
-        from studio.query.preset_env import apply_env_schema_defaults
-        from studio.query.python_preset_registry import active_presets_for_env_schema
-
-        vars_info = describe_strategy_variables(strategy, templates)
-        schema = vars_info.get('custom_vars') or []
-        vars_info['python_presets'] = active_presets_for_env_schema(strategy)
-        vars_info['process_pipeline'] = strategy.get('process_pipeline') or []
-        vars_info['env_defaults'] = apply_env_schema_defaults({}, schema)
-        return jsonify({'success': True, 'data': vars_info})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    from tools.query.rest import handle_get_strategy_variables
+    body, status = handle_get_strategy_variables(strategy_id)
+    return jsonify(body), status
 
 # ── 环境变量模版 ────────────────────────────────────────────────
 
@@ -1022,107 +959,23 @@ def suggest_env_profile_vars():
 
 @api_bp.route('/api/strategies', methods=['POST'])
 def save_strategy():
-    try:
-        data = request.json
-        sid = data.get('id', '').strip()
-        if not sid:
-            return jsonify({'success': False, 'error': 'id 不能为空'}), 400
-        data['updated_at'] = format_iso_now()
-        if 'created_at' not in data:
-            data['created_at'] = data['updated_at']
-        data = prepare_strategy(data)
-        templates = _get_all_templates()
-        data = normalize_strategy(data, templates)
-        if data.get('filter_mode') in ('flow', 'split', 'rules') and data.get('flow'):
-            flow_errors = validate_flow(data['flow'])
-            if flow_errors:
-                return jsonify({
-                    'success': False,
-                    'error': '工作流校验失败: ' + '; '.join(flow_errors[:5]),
-                }), 400
-            rules_flow = extract_rules_compile_flow(data['flow'])
-            compiled = compile_filter_rules(rules_flow, templates)
-            if compiled['valid']:
-                data['filter_rules_code'] = compiled['python_code']
-            # python_code 保留用户手写的 process_data，不再整段覆盖
-        data.pop('is_preset', None)
-        data.pop('_preset', None)
-        filepath = os.path.join(STRATEGIES_DIR, f'{sid}.json')
-        _save_json(filepath, data)
-        return jsonify({'success': True, 'id': sid})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    from tools.query.rest import handle_save_strategy
+    body, status = handle_save_strategy(request.json)
+    return jsonify(body), status
 
 @api_bp.route('/api/strategies/<strategy_id>', methods=['DELETE'])
 def delete_strategy(strategy_id):
-    try:
-        from studio.query.strategy_loader import delete_strategy_by_id
-
-        ok, err = delete_strategy_by_id(strategy_id)
-        if ok:
-            return jsonify({'success': True})
-        if err == '策略不存在':
-            return jsonify({'success': False, 'error': err}), 404
-        return jsonify({'success': False, 'error': err or '删除失败'}), 404
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    from tools.query.rest import handle_delete_strategy
+    body, status = handle_delete_strategy(strategy_id)
+    return jsonify(body), status
 
 # ── 策略执行引擎 ────────────────────────────────────────────────
 
 @api_bp.route('/api/strategies/execute', methods=['POST'])
 def execute_strategy():
-    try:
-        data = request.json or {}
-        strategy_id = data.get('strategy_id', '')
-
-        env_ctx = build_stage_context(
-            data,
-            start_time=data.get('start_time', ''),
-            end_time=data.get('end_time', ''),
-            sample_size=data.get('sample_size'),
-            random_seed=data.get('random_seed'),
-        )
-        if data.get('predict_job_id') or data.get('job_id'):
-            jid = data.get('predict_job_id') or data.get('job_id')
-            env_ctx['JOB_ID'] = str(int(jid))
-            env_ctx['PREDICT_JOB_ID'] = str(int(jid))
-            env_ctx['DATA_SOURCE'] = 'predict_result'
-
-        stage_spec = {'strategy_id': strategy_id}
-        if data.get('strategy_snapshot'):
-            stage_spec = {'snapshot': data['strategy_snapshot']}
-
-        result = execute_strategy_ref(
-            stage_spec,
-            context=env_ctx,
-            sample_size=data.get('sample_size'),
-            random_seed=data.get('random_seed'),
-            data_source=data.get('data_source'),
-            build_task=True,
-        )
-        if result is None:
-            return jsonify({'success': False, 'error': '策略不存在'}), 404
-
-        return jsonify({
-            'success': True,
-            'data': result.get('data', []),
-            'count': result.get('count', 0),
-            'task_id': result.get('task_id'),
-            'sample_size': result.get('sample_size'),
-            'random_seed': result.get('random_seed'),
-            'rows_before_sample': result.get('rows_before_sample'),
-            'post_sample_skipped': result.get('post_sample_skipped'),
-            'input_rows': result.get('input_rows'),
-            'input_cols': result.get('input_cols'),
-            'output_rows': result.get('rows_before_sample'),
-            'filter_mode': result.get('filter_mode', ''),
-            'console_output': result.get('console_output'),
-            'execution_time': result.get('execution_time'),
-        })
-    except ValueError as e:
-        return jsonify({'success': False, 'error': str(e)}), 404
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    from tools.query.rest import handle_execute_strategy
+    body, status = handle_execute_strategy(request.json)
+    return jsonify(body), status
 
 # ── Flow Studio API ─────────────────────────────────────────────
 

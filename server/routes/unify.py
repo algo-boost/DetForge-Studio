@@ -21,10 +21,5 @@ def ensure_unify_mounted(app):
 
 @unify_bp.route('/api/unify/status', methods=['GET'])
 def unify_status():
-    return jsonify({
-        'success': True,
-        'available': is_unify_available(),
-        'mounted': is_unify_mounted(),
-        'mount_prefix': UNIFY_MOUNT_PREFIX,
-        'viewer_path': '/online-predict',
-    })
+    from server.tool_integration import build_integration_payload, unify_integration_extra
+    return jsonify(build_integration_payload('unify', extra=unify_integration_extra()))

@@ -20,6 +20,7 @@ def serve_spa(path):
         path.startswith('api/')
         or path == 'viz' or path.startswith('viz/')
         or path == 'unify' or path.startswith('unify/')
+        or path == 'tools/query' or path.startswith('tools/query/')
     ):
         abort(404)
 

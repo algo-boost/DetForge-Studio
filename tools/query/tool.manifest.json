@@ -1,0 +1,49 @@
+{
+  "id": "query",
+  "version": "1.2.0",
+  "label": "数据查询",
+  "description": "查询域统一工具：执行(execute)、结果(task)、历史(history/job)、策略(strategy) — 单包可独立部署",
+  "kind": "hybrid",
+  "contract_version": "v1",
+    "entry": {
+    "invoke": "/v1/tools/query/invoke",
+    "capability": "tools.query.capability:QueryCapability",
+    "cli": "python3 -m tools.query.cli",
+    "blueprint": "tools/query/blueprint/app.py",
+    "ui": {
+      "mount": "/tools/query",
+      "package": "tools/query/ui",
+      "build": "bash tools/query/ui/build.sh",
+      "routes": ["/query", "/query-results", "/history", "/strategies"]
+    }
+  },
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "execute", "run", "preview",
+          "task.get",
+          "job.submit", "job.get", "job.list", "history.list",
+          "strategy.list", "strategy.get", "strategy.variables",
+          "strategy.validate", "strategy.save", "strategy.delete",
+          "strategy.execute", "strategy.compile_pipeline"
+        ]
+      },
+      "strategy_id": { "type": "string" },
+      "time_window": { "type": "object" },
+      "data_source": { "type": "string" },
+      "task_id": { "type": "string" },
+      "job_id": { "type": "string" },
+      "limit": { "type": "integer" },
+      "strategy": { "type": "object" },
+      "env": { "type": "object" }
+    }
+  },
+  "inputs": ["time_window", "upstream"],
+  "outputs": ["action", "task_id", "row_count", "count", "strategies", "strategy", "jobs", "job"],
+  "artifacts": ["csv"],
+  "skill_source": "tools/query/SKILL.md",
+  "tags": ["query", "core"]
+}

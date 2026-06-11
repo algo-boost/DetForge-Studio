@@ -1,0 +1,9 @@
+id: gateway_smoke
+namespace: iisp
+description: 最小端到端冒烟 — 调用 IISP Gateway
+
+tasks:
+  - id: ping_tools
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://host.docker.internal:5050/v1/tools"
+    method: GET

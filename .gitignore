@@ -83,6 +83,10 @@ packaging/dist/
 packaging/build/
 *.spec.bak
 
+# --- 一体化部署运行时（Kestra 二进制 / 生成配置 / pid）---
+deploy/vendor/
+deploy/runtime/
+
 # --- Cursor 本地状态（skills + 项目 rules 可提交）---
 .cursor/projects/
 .cursor/plans/

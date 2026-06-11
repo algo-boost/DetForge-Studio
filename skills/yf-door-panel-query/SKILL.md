@@ -20,9 +20,13 @@ description: 延锋门板平台数据查询。Use when 需要按策略从 vision
 ## CLI
 
 ```bash
-python -m studio.query.cli run
+echo '{"params":{"strategy_id":"daily_trawl","time_window":{"preset":"yesterday"}}}' \
+  | python3 -m tools.query.cli
+
+./scripts/iisp tool invoke query --param strategy_id=daily_trawl
+./scripts/iisp tool run query --param strategy_id=daily_trawl
 ```
 
 ## 实现
 
-`studio.query.capabilities:QueryCapability`
+`tools.query.capability:QueryCapability`（与 Gateway `query` 同源）

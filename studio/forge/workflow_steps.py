@@ -68,33 +68,8 @@ def _strategy_spec(strategy_id):
 
 
 def run_query_step(params, context):
-    strategy_id = params.get('strategy_id')
-    if not strategy_id:
-        raise ValueError('query 步骤缺少 strategy_id')
-    ds = params.get('data_source') or 'detail'
-    qctx = _build_query_context(params)
-    predict_job_id = params.get('predict_job_id')
-    if predict_job_id:
-        qctx['JOB_ID'] = str(predict_job_id)
-    strategies = get_all_strategies()
-    templates = get_all_templates()
-    result = execute_strategy_ref(
-        _strategy_spec(strategy_id),
-        context=qctx,
-        strategies=strategies,
-        templates=templates,
-        data_source=ds,
-        build_task=True,
-    )
-    count = int((result or {}).get('count') or 0)
-    if count <= 0 or not (result or {}).get('task_id'):
-        return {'skipped': True, 'reason': 'empty_result', 'row_count': 0, 'count': 0}
-    return {
-        'task_id': result['task_id'],
-        'row_count': count,
-        'count': count,
-        'data_source': ds,
-    }
+    from tools.query.service import dispatch
+    return dispatch(params, run_id=context.get('run_id'))
 
 
 def run_predict_step(params, context):

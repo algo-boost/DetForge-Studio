@@ -17,7 +17,7 @@ def _install_optional_auth(app):
     @app.before_request
     def _check_token():  # noqa: ANN202
         path = request.path or ''
-        if not path.startswith('/api/') and not path.startswith('/viz/api/'):
+        if not path.startswith('/api/') and not path.startswith('/viz/api/') and not path.startswith('/v1/'):
             return None
         try:
             from server.core import load_config

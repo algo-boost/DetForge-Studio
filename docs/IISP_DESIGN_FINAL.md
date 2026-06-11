@@ -37,8 +37,9 @@
 | [`SKILL_PLATFORM.md`](./SKILL_PLATFORM.md) | **Skill-first（L2 主路径）** |
 | [`SKILL_TO_TOOL.md`](./SKILL_TO_TOOL.md) | Skill → Tool 命令与 L1–L4 |
 | [`UI_REDESIGN_CHECKLIST.md`](./UI_REDESIGN_CHECKLIST.md) | 前端实施 |
-| [`AGENTS.md`](../AGENTS.md) | Agent 入口 |
-| [`.cursor/skills/`](../.cursor/skills/README.md) | **项目级 Skills** |
+| [`AGENTS.md`](../AGENTS.md) | Agent 入口（IDE 无关） |
+| [`agent/`](../agent/README.md) | **项目级 Skills + Rules 权威目录** |
+| [`.cursor/skills/`](../.cursor/skills/README.md) | Cursor 适配层（符号链接） |
 
 历史只读：[`ARCHITECTURE_DECOUPLED.md`](./ARCHITECTURE_DECOUPLED.md) · [`ARCHITECTURE_FINAL.md`](./ARCHITECTURE_FINAL.md) · [`ARCHITECTURE_GREENFIELD.md`](./ARCHITECTURE_GREENFIELD.md) · [`AGENT_VIBE_CODING.md`](./AGENT_VIBE_CODING.md)
 
@@ -55,7 +56,7 @@
 | 目标 | 实现 |
 |------|------|
 | 平台只做核心 | Gateway、Registry、Catalog Sync、Shell 壳、`lib/platform` |
-| 尽量成熟框架 | **Kestra**、Git、RQ/Celery、OpenAPI、n8n、OIDC、Cursor+MCP |
+| 尽量成熟框架 | **Kestra**、Git、RQ/Celery、OpenAPI、n8n、OIDC、**Agent + MCP** |
 | 彻底解耦 | 仅 `POST /v1/tools/{id}/invoke` + JSON/URI |
 | 扩展靠工具箱 | `tool.manifest.json` + Tool 包 / `.iisp-tool` |
 | 扩展靠工作流 | Catalog `pipelines/kestra/*.yaml` + Kestra Git sync |
@@ -75,7 +76,7 @@
 ```mermaid
 flowchart TB
   subgraph design [设计态 Agent 无 LLM 运行时]
-    Vibe[Vibe Coding / Cursor]
+    Vibe[Vibe Coding / Agent]
     Vibe -->|SKILL Tool YAML| GitPR[Git PR]
     GitPR -->|validate| CI[CI 门禁]
   end
@@ -117,7 +118,7 @@ flowchart TB
 | **Orchestration** | 调度、Pause、重试、Cron | **Kestra**（**非 IISP**） |
 | **Tool** | 单步业务 | 工具箱贡献者 |
 | **Control** | Gateway、UI、Sync、MCP | 平台组 |
-| **Agent** | 生成 Tool/YAML 草稿 | Cursor + Skills（**非运行时**） |
+| **Agent** | 生成 Tool/YAML 草稿 | **Agent + Skills**（**非运行时**；IDE 无关） |
 
 ---
 
@@ -151,8 +152,8 @@ flowchart TB
 | 观测 | **OTel** + Prometheus | — |
 | 表单 UI | **RJSF** | 手写 params 表单 |
 | 前端 | **Vite+React**、TanStack Query、cmdk | umi、Electron |
-| **Vibe 默认** | **Cursor + Skills + MCP** | 自研运行时 Agent |
-| Flow 草稿（可选） | Dify / Shell 助手 | 与 Cursor 同 schema |
+| **Vibe 默认** | **Agent + Skills + MCP** | 自研运行时 Agent |
+| Flow 草稿（可选） | Dify / Shell 助手 | 与 Agent 同 schema |
 
 ---
 
@@ -360,19 +361,20 @@ config.json
 
 ---
 
-# Part X — Cursor Skills 定稿
+# Part X — Agent Skills 定稿（IDE 无关）
 
-仓库内置（`.cursor/skills/`）：
+**权威目录**：[`agent/skills/`](../agent/skills/README.md) · 机器索引：`./scripts/iisp agent context --json`  
+Cursor 通过 [`.cursor/skills/`](../.cursor/skills/README.md) 符号链接加载，**不重复维护**。
 
 | Skill | 文件 | 触发 |
 |-------|------|------|
-| **iisp-skill-author** | [`.cursor/skills/iisp-skill-author/SKILL.md`](../.cursor/skills/iisp-skill-author/SKILL.md) | **L2**：只写 Platform Skill |
-| **iisp-skill-pack** | [`.cursor/skills/iisp-skill-pack/SKILL.md`](../.cursor/skills/iisp-skill-pack/SKILL.md) | Skill 封装为可加载 Tool |
-| **iisp-compose-flow** | [`.cursor/skills/iisp-compose-flow/SKILL.md`](../.cursor/skills/iisp-compose-flow/SKILL.md) | 编排、定时、组合流程 |
-| **iisp-create-tool** | [`.cursor/skills/iisp-create-tool/SKILL.md`](../.cursor/skills/iisp-create-tool/SKILL.md) | 工程兜底、复杂 Tool |
-| **iisp-review-pr** | [`.cursor/skills/iisp-review-pr/SKILL.md`](../.cursor/skills/iisp-review-pr/SKILL.md) | PR 前解耦审查 |
+| **iisp-skill-author** | [`agent/skills/iisp-skill-author/SKILL.md`](../agent/skills/iisp-skill-author/SKILL.md) | **L2**：只写 Platform Skill |
+| **iisp-skill-pack** | [`agent/skills/iisp-skill-pack/SKILL.md`](../agent/skills/iisp-skill-pack/SKILL.md) | Skill 封装为可加载 Tool |
+| **iisp-compose-flow** | [`agent/skills/iisp-compose-flow/SKILL.md`](../agent/skills/iisp-compose-flow/SKILL.md) | 编排、定时、组合流程 |
+| **iisp-create-tool** | [`agent/skills/iisp-create-tool/SKILL.md`](../agent/skills/iisp-create-tool/SKILL.md) | 工程兜底、复杂 Tool |
+| **iisp-review-pr** | [`agent/skills/iisp-review-pr/SKILL.md`](../agent/skills/iisp-review-pr/SKILL.md) | PR 前解耦审查 |
 
-贡献者入口：[`AGENTS.md`](../AGENTS.md)
+贡献者入口：[`AGENTS.md`](../AGENTS.md) · 接入说明：[`agent/README.md`](../agent/README.md)
 
 ---
 
@@ -391,7 +393,7 @@ config.json
 
 | 档位 | 编排 | 组件 | Agent/MCP |
 |------|------|------|-----------|
-| **Edge** | **Kestra**（单机，H2 或轻量 PG） | IISP、Kestra、MySQL、可选 Redis | 开发机 Cursor |
+| **Edge** | **Kestra**（单机） | IISP、Kestra、MySQL、可选 Redis | 开发机 Agent |
 | **Hub** | **Kestra**（PG、可选 HA） | + n8n/OIDC、Metabase | MCP 连 Hub dev 实例 |
 
 ---
@@ -399,7 +401,7 @@ config.json
 # Part XIII — 共建 L1–L4
 
 ```text
-L1  skills/<scene>/SKILL.md           Vibe / Cursor
+L1  skills/<scene>/SKILL.md           Vibe / Agent
 L2  tools/<id>/ + validate            Vibe → 主仓 PR
 L3  iisp-catalog/pipelines/*.yaml     Vibe → Catalog PR
 L4  releases.yaml + environments/     运维发布

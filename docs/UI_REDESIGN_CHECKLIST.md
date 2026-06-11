@@ -1,6 +1,6 @@
 # IISP UI 改造实施清单
 
-**版本**：v1.1  
+**版本**：v1.6  
 **标准**：[`DOCS_INDEX.md`](./DOCS_INDEX.md) · v2.2（Kestra · L1/L2）
 
 本文是**可执行 checklist**：按阶段 U1→U5 排列，含路由、组件、API、验收标准。  
@@ -45,14 +45,18 @@
 
 ### 1.3 新建文件
 
-| 文件 | 职责 |
-|------|------|
-| `frontend/src/pages/HomePage.jsx` | 工作台三栏布局 |
-| `frontend/src/components/home/TodoList.jsx` | 待办列表 |
-| `frontend/src/components/home/ActiveFlowsPanel.jsx` | 进行中 / waiting_human Flow |
-| `frontend/src/components/home/RecentQueriesPanel.jsx` | 最近查询（复用 QueryJobsContext） |
-| `frontend/src/components/home/QuickActions.jsx` | 快捷按钮：查询、同步 Catalog、跑 demo |
-| `frontend/src/hooks/useWorkbenchData.js` | 聚合拉取与轮询 |
+| 文件 | 职责 | 状态 |
+|------|------|------|
+| `frontend/src/pages/HomePage.jsx` | 工作台三栏布局 | ✅ |
+| `frontend/src/components/home/TodoList.jsx` | 待办列表 | ✅ |
+| `frontend/src/components/home/ActiveFlowsPanel.jsx` | 进行中 / waiting_human Flow | ✅ |
+| `frontend/src/components/home/RecentQueriesPanel.jsx` | 最近查询（复用 QueryJobsContext） | ✅ |
+| `frontend/src/components/home/QuickActions.jsx` | 快捷按钮 | ✅ |
+| `frontend/src/components/home/WorkbenchSummary.jsx` | 统计卡片行 | ✅ |
+| `frontend/src/components/home/HomeSection.jsx` | 栏目标题包装 | ✅ |
+| `frontend/src/hooks/useWorkbenchData.js` | 聚合拉取与轮询 | ✅ |
+| `frontend/src/hooks/useHumanGates.js` | 人工卡点聚合（Workflow + Flow） | ✅ |
+| `frontend/src/components/flows/HumanGatesPanel.jsx` | 卡点列表面板 | ✅ |
 
 ### 1.4 待办数据模型（前端统一）
 
@@ -81,10 +85,10 @@ type TodoItem = {
 
 **`/api/workbench/todos` 聚合来源（实现顺序）**
 
-- [ ] `forge_db`：`workflow_run.status = waiting_human`（现有 `WorkflowsPage` 已用）
-- [ ] `_demo_flow_runs` / 未来 flow run 持久化：`waiting_human`
-- [ ] manual_qc：未完成批次（若有 API，否则 U1.1 只做 Flow）
-- [ ] curation：待上传 COCO 批次（`forge_db` 或 curation API）
+- [x] `forge_db`：`workflow_run.status = waiting_human`（现有 `WorkflowsPage` 已用）
+- [x] `_demo_flow_runs` / 未来 flow run 持久化：`waiting_human`
+- [x] manual_qc：未完成批次（`list_manual_qc_pending_groups` → `/manual-qc`）
+- [x] curation：待上传 COCO 批次（`list_curation_action_batches` → `/curation?id=`）
 
 **建议实现位置**：`server/routes/workbench.py` + 在 `app.py` 注册 blueprint。
 
@@ -94,7 +98,7 @@ type TodoItem = {
 |------|------|
 | `QueryJobsContext` | `RecentQueriesPanel` 读 `jobs` |
 | `QueryJobsTray` | U1 完成后可改为调用同一数据源，或 Home 显示摘要、Tray 显示详情 |
-| `WorkflowsPage` 中 `waiting_human` 过滤逻辑 | 抽到 `hooks/useHumanGates.js` 供 Home + Flows 共用 |
+| `WorkflowsPage` 中 `waiting_human` 过滤逻辑 | 抽到 `hooks/useHumanGates.js` 供 Home + Flows 共用 ✅ |
 | `DemoFlowPage` → `StepTimeline` | 抽到 `components/flows/StepTimeline.jsx` |
 
 ### 1.7 Home 线框（结构）
@@ -112,11 +116,12 @@ type TodoItem = {
 
 ### 1.8 U1 验收标准
 
-- [ ] 登录后默认进入 `/` 工作台（或配置可改回 `/query`）
-- [ ] 存在 `waiting_human` 的 workflow run 时，待办列表可见且点击跳到 `/curation?…` 或 `/workflows?run=…`
-- [ ] 进行中的查询任务在「最近查询」实时更新（与 Tray 一致）
-- [ ] 空状态有引导文案（「暂无待办，去查询」）
-- [ ] 移动端 1280px 以下三栏变单栏堆叠
+- [x] 登录后默认进入 `/` 工作台（或配置可改回 `/query`）
+- [x] 存在 `waiting_human` 的 workflow run 时，待办列表可见且点击跳到业务页
+- [x] 进行中的查询任务在「最近查询」实时更新（与 Tray 一致）
+- [x] 空状态有引导文案（「暂无待办，去查询」）
+- [x] 移动端 1280px 以下三栏变单栏堆叠（`panel-grid-3`）
+- [x] `useHumanGates` 抽到 hooks 供 Flows 页共用
 
 ---
 
@@ -176,11 +181,12 @@ export const NAV_GROUPS = [
 
 ### 2.6 U2 验收标准
 
-- [ ] 侧栏仅显示 4 个分组标题 + 当前组子项（或顶栏选组）
-- [ ] 查询相关页顶栏仍有 `SceneHubNav`（query variant）
-- [ ] 质检页有 qc variant；预测页有 predict variant
-- [ ] 全局待办数显示在顶栏（读 U1 summary API）
-- [ ] 折叠侧栏行为与现有一致
+- [x] 侧栏仅显示 4 个分组标题 + 当前组子项（顶栏选组切换）
+- [x] 查询相关页顶栏仍有 `SceneHubNav`（query variant；`/query` 入口已修正）
+- [x] 质检页有 qc variant；预测页有 predict variant
+- [x] 全局待办数显示在顶栏（读 U1 summary API）
+- [x] 折叠侧栏行为与现有一致
+- [x] `config/nav.js` 单源 + L1/L2 `UserPrefsContext` 过滤
 
 ---
 
@@ -202,15 +208,17 @@ export const NAV_GROUPS = [
 
 ### 3.3 新建文件
 
-| 文件 | 职责 |
-|------|------|
-| `pages/FlowsCatalogPage.jsx` | 读 catalog pipelines + releases |
-| `pages/FlowRunsPage.jsx` | 运行列表 + 状态筛选 |
-| `pages/FlowRunDetailPage.jsx` | 详情 + StepTimeline + 继续 |
-| `components/flows/FlowCard.jsx` | 卡片：id、label、version、最近运行 |
-| `components/flows/StepTimeline.jsx` | 从 DemoFlowPage 抽出 |
-| `components/flows/FlowParamsForm.jsx` | 从 `params_schema` 生成表单（可复用 WorkflowParamsForm 逻辑） |
-| `components/flows/PipelineYamlDrawer.jsx` | 只读 YAML 抽屉 |
+| 文件 | 职责 | 状态 |
+|------|------|------|
+| `pages/FlowsCatalogPage.jsx` | 读 catalog pipelines + releases | ✅ |
+| `pages/FlowRunsPage.jsx` | 运行列表 + 状态筛选 | ✅ |
+| `pages/FlowRunDetailPage.jsx` | 详情 + StepTimeline + 继续 | ✅ |
+| `pages/WorkflowsRedirect.jsx` | `/workflows` 兼容重定向 | ✅ |
+| `components/flows/FlowCard.jsx` | 卡片：id、label、version、最近运行 | ✅ |
+| `components/flows/StepTimeline.jsx` | 从 DemoFlowPage 抽出 | ✅ |
+| `components/flows/FlowParamsForm.jsx` | 复用 WorkflowParamsForm | ✅ |
+| `components/flows/PipelineYamlDrawer.jsx` | 只读 YAML 抽屉 | ✅ |
+| `server/services/flows.py` | Catalog / Runs 聚合 API 逻辑 | ✅ |
 
 ### 3.4 API
 
@@ -236,11 +244,11 @@ export const NAV_GROUPS = [
 
 ### 3.6 U3 验收标准
 
-- [ ] `/flows` 列出 `catalog_cache/pipelines/` 下 Flow（至少 demo + legacy）
-- [ ] 可从 UI 触发 `welcome_demo` 并看到步骤时间线
-- [ ] `waiting_human` 在列表和详情高亮，可 resume
-- [ ] 可查看 Pipeline YAML（只读），无「保存到 DB 模板」主路径
-- [ ] 旧 `/workflows` 书签不 404
+- [x] `/flows` 列出 `catalog_cache/pipelines/` 下 Flow（至少 demo + legacy）
+- [x] 可从 UI 触发 `welcome_demo` 并看到步骤时间线
+- [x] `waiting_human` 在列表和详情高亮，可 resume
+- [x] 可查看 Pipeline YAML（只读），无「保存到 DB 模板」主路径
+- [x] 旧 `/workflows` 书签不 404（redirect → `/flows/runs`）
 
 ---
 
@@ -252,13 +260,13 @@ export const NAV_GROUPS = [
 
 ### 4.2 文件
 
-| 文件 | 改动 |
-|------|------|
-| `pages/ToolboxPage.jsx` | 拆 Tab：`browse` / `developer` |
-| `components/toolbox/ToolCard.jsx` | **新建** |
-| `components/toolbox/ToolDetailPanel.jsx` | **新建** |
-| `components/ui/StatusPill.jsx` | **新建**（从 WorkflowsPage 抽离） |
-| `styles/status.css` | **新建**：`.status-pill--running` 等 |
+| 文件 | 改动 | 状态 |
+|------|------|------|
+| `pages/ToolboxPage.jsx` | 拆 Tab：`browse` / `developer` | ✅ |
+| `components/toolbox/ToolCard.jsx` | **新建** | ✅ |
+| `components/toolbox/ToolDetailPanel.jsx` | **新建** | ✅ |
+| `components/ui/StatusPill.jsx` | **新建**（从 WorkflowsPage 抽离） | ✅ |
+| `styles/status.css` | **新建**：`.status-pill--running` 等 | ✅ |
 
 ### 4.3 StatusPill 统一映射
 
@@ -274,7 +282,7 @@ export const STATUS_MAP = {
 };
 ```
 
-**替换 inline 颜色的页面**：`DemoFlowPage`、`WorkflowsPage`、`JobsPage`、`HistoryPage`（逐项勾选）。
+**替换 inline 颜色的页面**：`StepTimeline` / Flow Runs ✅、`WorkflowsPage` ✅、`JobsList` ✅、Query Tray / Home 最近查询 ✅；`HistoryPage` 保留 SnapshotDot（无运行态字段）
 
 ### 4.4 Toolbox 用户层字段
 
@@ -282,15 +290,15 @@ export const STATUS_MAP = {
 |------|------|
 | 名称 | `manifest.label` |
 | 说明 | `manifest.description` |
-| 场景标签 | `manifest.tags` 或约定字段 |
-| 使用处 | 反向索引：扫描 pipelines 中 `tool:` 引用（API 可选） |
+| 场景标签 | `manifest.tags` 或 `kind` |
+| 使用次数 | `toolStats` API |
 
 ### 4.5 U4 验收标准
 
-- [ ] 工具箱默认 Tab 为卡片浏览，无 JSON 编辑器
-- [ ] 「开发者」Tab 含：JSON 试运行、Catalog sync log、Manifest 信息
-- [ ] Query / Flow / Job 列表使用同一 `StatusPill`
-- [ ] Catalog 同步按钮在 Platform 区仍可达（Toolbox 开发者 Tab 保留）
+- [x] 工具箱默认 Tab 为卡片浏览，无 JSON 编辑器
+- [x] 「开发者」Tab 含：JSON 试运行、Catalog sync log、Manifest 信息
+- [x] Query / Flow / Job 列表使用同一 `StatusPill`
+- [x] Catalog 同步按钮在 Platform 区仍可达（Toolbox 开发者 Tab 保留）
 
 ---
 
@@ -298,11 +306,11 @@ export const STATUS_MAP = {
 
 ### 5.1 tokens 抽取
 
-| 文件 | 动作 |
-|------|------|
-| `frontend/src/styles/tokens.css` | 从 `app.css` :root 抽出 |
-| `frontend/src/styles/app.css` | `@import './tokens.css'` |
-| `packages/detunify/.../tokens.css` | 文档注明与主壳对齐（可选 CI diff） |
+| 文件 | 动作 | 状态 |
+|------|------|------|
+| `frontend/src/styles/tokens.css` | 从 `app.css` :root 抽出 | ✅ |
+| `frontend/src/styles/app.css` | `@import './tokens.css'` | ✅ |
+| `packages/detunify/.../tokens.css` | 文档注明与主壳对齐（可选 CI diff） | ⬜ |
 
 ### 5.2 布局类（减少 inline style）
 
@@ -315,11 +323,11 @@ export const STATUS_MAP = {
 
 ### 5.3 Command Palette
 
-| 文件 | 职责 |
-|------|------|
-| `components/CommandPalette.jsx` | ⌘K / Ctrl+K |
-| `hooks/useCommandPalette.js` | 注册命令 |
-| `config/commands.js` | 静态命令：跳转、同步 Catalog、跑 demo |
+| 文件 | 职责 | 状态 |
+|------|------|------|
+| `components/CommandPalette.jsx` | ⌘K / Ctrl+K | ✅ |
+| `hooks/useCommandPalette.js` | 注册命令 | ✅ |
+| `config/commands.js` | 静态命令：跳转、同步 Catalog、跑 demo | ✅ |
 
 依赖：`cmdk` 或自研 100 行 modal（优先轻量自研）。
 
@@ -327,11 +335,13 @@ export const STATUS_MAP = {
 
 **依据**：[`PRODUCT_DESIGN.md`](./PRODUCT_DESIGN.md) §2 — 交付/客户质检 = L1；SA/算法/光学 = L2。
 
-| 文件 | 职责 |
-|------|------|
-| `context/UserPrefsContext.jsx` | `tier: operator \| configurer`；`persona: delivery \| customer_qc \| sa \| algo \| optical` |
-| `config/nav.js` | 按 `tier` 过滤侧栏；L1 **无** 策略/工具箱/Catalog |
-| 设置页 | 「默认首页」「岗位」（OIDC 接入后只读） |
+| 文件 | 职责 | 状态 |
+|------|------|------|
+| `context/UserPrefsContext.jsx` | `tier` · `persona` · `defaultHome` | ✅ |
+| `config/personas.js` | persona 定义与默认首页 | ✅ |
+| `config/nav.js` | 按 `tier` 过滤侧栏；L1 **无** 策略/工具箱/Catalog | ✅ |
+| `components/TierRouteGuard.jsx` | L1 路由重定向 | ✅ |
+| `components/settings/UserPrefsSettings.jsx` | 设置页界面与角色 | ✅ |
 
 **L1 侧栏（operator）**
 
@@ -357,17 +367,17 @@ export const STATUS_MAP = {
 
 ### 5.5 品牌统一
 
-- [ ] 侧栏 `DefectLoop Studio` → **IISP**（或双行：IISP / 副标题）
+- [x] 侧栏品牌：**IISP** / **工业检测解决方案平台**（`config/brand.js` · `studio/brand.py`）
 - [ ] `public/brand/` favicon 与文档一致
 - [ ] `USER_GUIDE.md` 截图说明更新（文档任务，非阻塞）
 
 ### 5.6 U5 验收标准
 
-- [ ] ⌘K 可搜索并跳转到主要页面
-- [ ] L1 账户 **看不见** 策略编辑、工具箱、Pipeline 编排入口
-- [ ] L2 账户可见完整四域；切换 persona 仅影响默认首页与快捷操作
-- [ ] 新页面使用 layout 类，无大块 inline style
-- [ ] `/viz`、`/online-predict` iframe 页保留「返回 IISP」顶栏
+- [x] ⌘K 可搜索并跳转到主要页面
+- [x] L1 账户 **看不见** 策略编辑、工具箱、Pipeline 编排入口
+- [x] L2 账户可见完整四域；切换 persona 仅影响默认首页与快捷操作
+- [x] 新页面使用 layout 类（`split-layout` · `tokens.css`）
+- [x] `/viz`、`/online-predict` iframe 页保留「返回 IISP」顶栏
 
 ---
 
@@ -437,5 +447,10 @@ Week 4:  U5 tokens + CommandPalette + 角色 + 文档截图
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| v1.2 | 2026-06-09 | U2 四层导航落地：nav.js、AppTopNav、UserPrefs L1/L2 |
+| v1.3 | 2026-06-09 | U1 组件拆分：home/* + useWorkbenchData |
+| v1.4 | 2026-06-09 | U1 收尾：useHumanGates + HumanGatesPanel，Flows 页共用 |
+| v1.5 | 2026-06-09 | U3 流水线：Catalog/Runs/Detail + flows API + 路由迁移 |
+| v1.6 | 2026-06-09 | U4 StatusPill 统一 + 工具箱 browse/developer 分层 |
 | v1.1 | 2026-06-09 | L1/L2 导航、Kestra Schedules |
 | v1.0 | 2026-06-09 | U1–U5 首版 |

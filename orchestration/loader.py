@@ -60,6 +60,37 @@ def validate_pipeline(defn: dict) -> list[str]:
     return errors
 
 
+def discover_kestra_flows() -> list[dict]:
+    """列出 Kestra Flow YAML（tasks 格式，不做 nodes 校验）。"""
+    root = os.path.join(APP_ROOT, 'iisp-catalog', 'pipelines', 'kestra')
+    if not os.path.isdir(root):
+        return []
+    found: list[dict] = []
+    for path in Path(root).glob('*.yaml'):
+        try:
+            data = load_pipeline_yaml(str(path))
+        except Exception as exc:
+            found.append({
+                'id': path.stem,
+                '_path': str(path),
+                '_valid': False,
+                '_errors': [str(exc)],
+            })
+            continue
+        if not data.get('tasks'):
+            continue
+        found.append({
+            'id': data.get('id') or path.stem,
+            'namespace': data.get('namespace') or 'iisp',
+            'description': data.get('description') or '',
+            'engine': 'kestra',
+            '_path': str(path),
+            '_valid': True,
+            '_errors': [],
+        })
+    return sorted(found, key=lambda x: str(x.get('id') or ''))
+
+
 def discover_pipelines() -> list[dict]:
     found = []
     for root in pipeline_search_dirs():

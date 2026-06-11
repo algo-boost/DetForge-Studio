@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, openSampleGallery, toast } from '../../api/client';
+import { usePolling } from '../../hooks/usePolling';
 import { showErrorModal } from '../../lib/feedbackModal';
 import { formatSampleGalleryError } from '../../lib/sampleGallery';
-import StatusPill from './jobs/StatusPill';
+import StatusPill from '../ui/StatusPill';
+import { STATUS_MAP } from '../ui/statusMap';
 
-export { STATUS_LABEL } from './jobs/jobUtils';
+/** status → 中文文案，派生自统一 STATUS_MAP，供 toast 等纯文本场景使用。 */
+export const STATUS_LABEL = Object.fromEntries(
+  Object.entries(STATUS_MAP).map(([k, v]) => [k, v.label]),
+);
 
 export function ProgressBar({ job }) {
   const total = Number(job.total) || 0;
@@ -140,19 +145,15 @@ export function JobDetail({ job }) {
   const isActive = job.status === 'running' || job.status === 'pending';
   const isDone = job.status === 'done';
 
-  const loadLogs = async () => {
+  const loadLogs = useCallback(async () => {
     try {
       const r = await api.forgeJobLog(job.id);
       if (r.success) setLogLines(r.lines || []);
     } catch { /* ignore */ }
-  };
+  }, [job.id]);
 
-  useEffect(() => {
-    loadLogs();
-    if (!isActive) return undefined;
-    const t = setInterval(loadLogs, 1500);
-    return () => clearInterval(t);
-  }, [job.id, isActive]);
+  useEffect(() => { loadLogs(); }, [loadLogs]);
+  usePolling(loadLogs, { interval: 1500, immediate: false, enabled: isActive });
 
   useEffect(() => {
     if (tab !== 'log' || !logWrapRef.current) return;

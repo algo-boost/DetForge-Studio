@@ -169,11 +169,15 @@ tools/<tool_id>/
 | step id | snake_case | `export_coco` |
 | Python 模块 | snake_case | `service.py` |
 
-### 4.6 测试
+### 4.6 测试（强制）
+
+**团队原则**：每实现一个功能，**必须与功能同一 PR** 交付单元测试。Skill：**iisp-unit-tests**；PR 审查：**iisp-review-pr** §3.0。
 
 - 每个 Tool 至少：`test_invoke` 冒烟（mock 外部 DB 可选）  
-- 不测试「 obvious 恒真」断言  
-- 运行：`python -m pytest tests/ -q`  
+- 每个新 API / Gateway 路由：Flask `test_client` 至少 happy path + 一处失败/边界  
+- Bug 修复：先写复现测试再改代码  
+- 不测试 obvious 恒真断言  
+- 运行：`python -m pytest tests/ -q`（或本次改动路径）  
 
 ---
 

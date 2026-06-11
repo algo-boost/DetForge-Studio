@@ -1,16 +1,10 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import StatusPill from './ui/StatusPill';
+import { QUERY_STATUS_MAP } from './ui/statusMap';
 import { useQueryJobs } from '../context/QueryJobsContext';
 
 const TERMINAL = new Set(['done', 'failed']);
-
-function statusLabel(status) {
-  if (status === 'pending') return '排队';
-  if (status === 'running') return '执行中';
-  if (status === 'done') return '完成';
-  if (status === 'failed') return '失败';
-  return status;
-}
 
 export default function QueryJobsTray({ onOpenResult }) {
   const { jobs, runningCount } = useQueryJobs();
@@ -40,7 +34,7 @@ export default function QueryJobsTray({ onOpenResult }) {
                 {active.map((j) => (
                   <li key={j.id} className="query-jobs-tray-item is-active">
                     <span className="query-jobs-tray-label">{j.label || '查询'}</span>
-                    <span className="query-jobs-tray-status">{statusLabel(j.status)}</span>
+                    <StatusPill status={j.status} map={QUERY_STATUS_MAP} size="sm" />
                   </li>
                 ))}
               </ul>
@@ -53,6 +47,7 @@ export default function QueryJobsTray({ onOpenResult }) {
                 {recent.map((j) => (
                   <li key={j.id} className={`query-jobs-tray-item status-${j.status}`}>
                     <span className="query-jobs-tray-label">{j.label || '查询'}</span>
+                    <StatusPill status={j.status} map={QUERY_STATUS_MAP} size="sm" />
                     <span className="query-jobs-tray-meta">
                       {j.status === 'done' ? `${j.count ?? 0} 条` : (j.error || '失败')}
                     </span>
@@ -74,7 +69,7 @@ export default function QueryJobsTray({ onOpenResult }) {
             </section>
           )}
           <footer className="query-jobs-tray-foot">
-            <Link to="/" className="btn btn-xs btn-ghost" onClick={() => setOpen(false)}>前往查询页</Link>
+            <Link to="/query" className="btn btn-xs btn-ghost" onClick={() => setOpen(false)}>前往查询页</Link>
           </footer>
         </div>
       )}

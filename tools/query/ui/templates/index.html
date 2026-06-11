@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据查询 · IISP Query</title>
+    {% set m = mount_prefix|default('') %}
+    <script>window.__QUERY_TOOL_MOUNT__ = {{ m|tojson }};</script>
+    {% if vite_assets %}
+        {% for css in vite_assets.css %}
+            <link rel="stylesheet" href="{{ m }}/static/dist/{{ css }}">
+        {% endfor %}
+    {% else %}
+        <style>
+          body { font-family: system-ui, sans-serif; padding: 2rem; max-width: 40rem; margin: 0 auto; color: #334155; }
+          code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
+        </style>
+    {% endif %}
+</head>
+<body>
+    <div id="root"></div>
+    {% if not vite_assets %}
+    <div id="query-tool-build-hint" style="padding:1rem 2rem;color:#64748b;font-size:14px;">
+      <p><strong>Query UI 尚未构建</strong></p>
+      <p>请运行：<code>cd tools/query/ui/frontend && npm install && npm run build</code></p>
+    </div>
+    {% endif %}
+    {% if vite_assets %}
+        <script type="module" src="{{ m }}/static/dist/{{ vite_assets.entry }}"></script>
+    {% endif %}
+</body>
+</html>

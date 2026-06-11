@@ -1,6 +1,6 @@
 # IISP 技术架构图集
 
-**版本**：v1.1  
+**版本**：v1.3  
 **日期**：2026-06-09  
 **标准**：[`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) **v2.2** · [`DOCS_INDEX.md`](./DOCS_INDEX.md)
 
@@ -17,7 +17,7 @@ C4Context
   Person(l1, "L1 交付/质检", "待办、查询场景、审图")
   Person(l2, "L2 SA/算法/光学", "策略、Kestra Flow、Tool 共建")
   Person(ops, "运维 SRE", "Kestra、Catalog sync")
-  Person(vibe, "Cursor 贡献者", "Skill/Tool/Pipeline PR")
+  Person(vibe, "Agent 贡献者", "Skill/Tool/Pipeline PR")
 
   System(iisp, "IISP Platform", "Tool Gateway + Shell + Catalog Client")
   System_Ext(kestra, "Kestra", "唯一编排 Edge+Hub")
@@ -26,13 +26,13 @@ C4Context
   System_Ext(vb, "vision_backend", "产线库")
   System_Ext(feishu, "飞书多维表格", "指标看板")
   System_Ext(n8n, "n8n", "通知旁路")
-  System_Ext(cursor, "Cursor + MCP", "设计态 Agent")
+  System_Ext(agent, "Coding Agent + MCP", "设计态 Cursor/Claude/Codex/OpenClaw")
 
   Rel(l1, iisp, "浏览器")
   Rel(l2, iisp, "浏览器")
   Rel(ops, iisp, "管理")
-  Rel(vibe, cursor, "Vibe Coding")
-  Rel(cursor, git, "PR")
+  Rel(vibe, agent, "Vibe Coding")
+  Rel(agent, git, "PR")
   Rel(iisp, git, "catalog sync")
   Rel(kestra, iisp, "HTTP invoke")
   Rel(iisp, vb, "查询")
@@ -49,7 +49,7 @@ C4Context
 flowchart TB
   subgraph clients [客户端]
     Browser[浏览器 React Shell]
-    CursorIDE[Cursor IDE]
+    AgentIDE[Coding Agent]
   end
 
   subgraph edge [Edge 节点]
@@ -78,7 +78,7 @@ flowchart TB
   Browser --> IISP_H
   Browser --> Viz
   Browser --> Unify
-  CursorIDE -->|MCP dev| IISP_H
+  AgentIDE -->|MCP dev| IISP_H
   Kestra_E -->|invoke| IISP_E
   Kestra_H -->|invoke| IISP_H
   IISP_E --> MySQL_E
@@ -97,7 +97,7 @@ flowchart TB
 ```mermaid
 flowchart TB
   subgraph L5 [L5 设计态]
-    Agent[Cursor Agent + Skills]
+    AgentNode[Agent + Skills agent/skills]
     MCP[MCP Server]
   end
 
@@ -130,8 +130,8 @@ flowchart TB
     FS[exports/artifacts]
   end
 
-  Agent --> MCP
-  Agent -->|PR| L4
+  AgentNode --> MCP
+  AgentNode -->|PR| L4
   L4 --> L3
   K_E --> GW
   K_H --> GW
@@ -198,7 +198,7 @@ flowchart LR
     NL[自然语言]
   end
 
-  subgraph cursor [Cursor]
+  subgraph ide [任意 Coding Agent]
     SK[iisp-skill-author / compose-flow]
     AG[Agent]
     NL --> AG
@@ -325,9 +325,151 @@ gantt
 
 ---
 
-## 11. 修订记录
+## 11. Deploy 模块依赖（原生一体包）
+
+> 详述：[`deploy/README-native.md`](../deploy/README-native.md) · 实现：`orchestration/native/` · CLI：`cli/deploy_cmds.py`
+
+### 11.1 分层与运行时
+
+```mermaid
+flowchart TB
+  subgraph entry [L0 入口 — 无业务逻辑]
+    SH_START[platform-start.sh]
+    SH_STOP[platform-stop.sh]
+    SH_STATUS[platform-status.sh]
+    SH_FETCH[fetch_kestra.sh]
+    SH_PACK[platform-pack.sh]
+    CLI_MAIN["python -m cli.main deploy"]
+    DEPLOY_CMDS[cli/deploy_cmds.py]
+  end
+
+  subgraph artifacts [L1 制品 deploy/]
+    ENV[native/env.defaults]
+    TPL[native/kestra-application.template.yml]
+    COMPOSE[docker-compose.kestra.yml]
+    SMOKE[scripts/kestra_*_smoke.sh]
+    VENDOR[vendor/ kestra + plugins]
+    RUNTIME[runtime/ pid · log · storage]
+    GEN_YML[runtime/kestra-application.yml]
+  end
+
+  subgraph native [L2 编排域 orchestration/native/]
+    PATHS[paths.py]
+    DEF[defaults.py]
+    MYSQL_SET[mysql_settings.py]
+    BOOT[bootstrap.py]
+    RENDER[config_render.py]
+    PROC[process_manager.py]
+  end
+
+  subgraph platform [L3 平台运行时 — 与部署启动解耦]
+    KC[orchestration/kestra_client.py]
+    RESUME[server/routes/orchestration.py]
+    WB[server/services/workbench.py]
+    APP[app.py IISP :5050]
+  end
+
+  subgraph catalog [L4 配置源]
+    FLOWS[iisp-catalog/pipelines/kestra/]
+  end
+
+  subgraph external [外部]
+    CFG[config.json + .config.key]
+    MY[(MySQL 同实例 kestra 库)]
+    JAVA[Java 21+]
+    DOCKER[Docker 可选]
+  end
+
+  SH_START & SH_STOP & SH_STATUS --> CLI_MAIN --> DEPLOY_CMDS
+  SH_FETCH --> DOCKER
+  SH_FETCH --> VENDOR
+  SH_PACK --> SH_FETCH
+
+  DEPLOY_CMDS --> BOOT & RENDER & PROC
+  BOOT --> MYSQL_SET
+  RENDER --> MYSQL_SET & DEF & TPL & PATHS
+  PROC --> DEF & PATHS & VENDOR & RUNTIME
+  DEF --> ENV
+  MYSQL_SET --> CFG
+  RENDER --> GEN_YML
+
+  PROC -->|subprocess| KESTRA[Kestra :8080]
+  PROC -->|subprocess| APP
+  BOOT --> MY
+  KESTRA --> GEN_YML & FLOWS & VENDOR
+  KESTRA -->|HTTP invoke| APP
+
+  KC -->|Resume / 查询 PAUSED| KESTRA
+  RESUME --> KC
+  WB --> KC
+
+  COMPOSE -.->|Docker 开发路径| KESTRA
+  SMOKE -.-> KESTRA & APP
+
+  JAVA --> KESTRA
+```
+
+**依赖原则**：
+
+| 规则 | 说明 |
+|------|------|
+| Shell 不堆业务 | `platform-*.sh` 仅转调 `iisp deploy` |
+| 部署 ≠ 运行时客户端 | `process_manager` 管启停；`kestra_client` 管 API（Resume/待办） |
+| MySQL 单一解析 | `mysql_settings.py` 读 `config.json`，bootstrap 与 render 共用 |
+| 制品与代码分离 | 模板/env 在 `deploy/native/`；逻辑在 `orchestration/native/` |
+
+### 11.2 `orchestration/native/` 模块内依赖
+
+```mermaid
+flowchart LR
+  subgraph libs [平台 lib]
+    STUDIO_PATHS[studio.paths APP_ROOT]
+    LOAD_CFG[server.core.load_config]
+  end
+
+  PATHS[paths.py] --> STUDIO_PATHS
+  DEF[defaults.py] --> PATHS
+  MYSQL[mysql_settings.py] --> LOAD_CFG
+  BOOT[bootstrap.py] --> MYSQL
+  RENDER[config_render.py] --> MYSQL & DEF & PATHS
+  PROC[process_manager.py] --> DEF & PATHS & STUDIO_PATHS
+
+  DEPLOY_CMDS[cli/deploy_cmds.py] --> BOOT & RENDER & PROC & DEF
+```
+
+### 11.3 两条部署路径对比
+
+```mermaid
+flowchart TB
+  subgraph native_path [原生一体包 推荐]
+    N1[iisp deploy start]
+    N2[MySQL kestra 库]
+    N3[vendor/kestra JAR]
+    N1 --> N2 & N3
+  end
+
+  subgraph docker_path [Docker Compose 本地开发]
+    D1[docker-compose.kestra.yml]
+    D2[内置 Postgres]
+    D3[kestra/kestra 镜像]
+    D1 --> D2 & D3
+  end
+
+  FLOWS[iisp-catalog/pipelines/kestra/]
+  IISP[IISP :5050 Gateway]
+
+  N3 --> FLOWS
+  D3 --> FLOWS
+  N3 & D3 -->|invoke| IISP
+```
+
+---
+
+## 12. 修订记录
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| v1.2 | 2026-06-09 | §11 Deploy 模块分层与依赖图（原生 + Docker 双路径） |
+| v1.3 | 2026-06-09 | 设计态 Agent 去 Cursor 化；C4/§6 改为任意 Coding Agent + `agent/` |
 | v1.1 | 2026-06-09 | Kestra 唯一、L1/L2 角色、移除 cron/Windmill 图 |
 | v1.0 | 2026-06-09 | 首版 |

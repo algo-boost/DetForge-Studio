@@ -1,7 +1,7 @@
 import { Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import { ProgressBar, JobDetail } from './JobWidgets';
-import StatusPill from './jobs/StatusPill';
+import StatusPill from '../ui/StatusPill';
 
 function JobEmptyActions() {
   return (

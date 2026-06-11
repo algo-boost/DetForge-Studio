@@ -9,6 +9,8 @@ _BUNDLE_TOOL_NAMES = {
     'detunify': 'DetUnify-Studio',
 }
 
+_QUERY_TOOL_UI_REL = os.path.join('tools', 'query', 'ui')
+
 # packages/ 下 git submodule 目录名（IISP 仓内集成）
 _PACKAGE_TOOL_DIRS = {
     'coco': 'coco-visualizer',
@@ -100,3 +102,9 @@ def default_detunify_studio_root() -> str:
         bundled_tool_dir(_BUNDLE_TOOL_NAMES['detunify']),
         os.path.normpath(os.path.join(APP_ROOT, '..', _BUNDLE_TOOL_NAMES['detunify'])),
     )
+
+
+def default_query_tool_ui_root() -> str:
+    """Query 工具 UI 包根（tools/query/ui）。"""
+    root = os.path.join(APP_ROOT, _QUERY_TOOL_UI_REL)
+    return os.path.normpath(root) if os.path.isdir(root) else ''

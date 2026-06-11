@@ -5,12 +5,13 @@ alwaysApply: true
 
 实现与文档以 **`docs/IISP_DESIGN_FINAL.md`** 为唯一架构定稿。
 
-## 三条铁律
+## 三条铁律 + 工程纪律
 
 1. **编排零自研 DAG** — **唯一编排器：Kestra**（Edge + Hub）
 2. **契约唯一** — 集成只通过 `POST /v1/tools/{id}/invoke` 与 Catalog Pipeline YAML
 3. **AI 只写文件** — 仅改允许路径；运行态无 LLM  
 4. **变更必记录** — 用户可见功能与契约/部署变更须同 PR 更新 [`docs/PLATFORM_CHANGELOG.md`](docs/PLATFORM_CHANGELOG.md)（Skill：**iisp-record-platform-change**）
+5. **功能必带测** — 运行时代码变更须同 PR 交付单元测试（Skill：**iisp-unit-tests**）；无测试不得合并
 
 ## 禁止（PR 应拒绝）
 
@@ -20,6 +21,7 @@ alwaysApply: true
 - 跳过 `iisp tool validate` / `iisp workflow validate`
 - 提交 `config.json`、密钥
 - **功能已改但未更新 `PLATFORM_CHANGELOG.md`（且无「无用户可见变更」说明）**
+- **新功能/逻辑变更无同 PR 单元测试**（见 **iisp-unit-tests**）
 
 ## 必读文档
 
@@ -30,7 +32,7 @@ alwaysApply: true
 | `docs/ARCHITECTURE_DIAGRAMS.md` | 架构图 |
 | `AGENTS.md` | Agent 贡献入口 |
 
-## 项目 Skills（`.cursor/skills/`）
+## 项目 Skills（`agent/skills/`）
 
 | Skill | 场景 |
 |-------|------|
@@ -39,7 +41,10 @@ alwaysApply: true
 | `iisp-compose-flow` | 新 Pipeline |
 | `iisp-review-pr` | PR 前审查 |
 | `iisp-record-platform-change` | **平台功能变更同步记录** |
+| `iisp-unit-tests` | **功能实现必写单元测试（同 PR）** |
 | `iisp-platform-core` | 仅平台组改 Core |
+
+Cursor 通过 `.cursor/skills/` 符号链接加载；任意 Agent 可读 `agent/skills/` 或运行 `iisp agent context --json`。
 
 ## 代码原则
 
@@ -50,6 +55,6 @@ alwaysApply: true
 项目已安装 [forrestchang/andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills)：
 
 - Rule：[`.cursor/rules/karpathy-guidelines.mdc`](karpathy-guidelines.mdc)（`alwaysApply: true`）
-- Skill：[`.cursor/skills/karpathy-guidelines/`](../skills/karpathy-guidelines/SKILL.md)
+- Skill：[`agent/skills/karpathy-guidelines/`](../../agent/skills/karpathy-guidelines/SKILL.md)
 
 冲突时：**IISP 架构/domain** 优先；**简洁/ surgical diff** 遵循 Karpathy。

@@ -1,0 +1,75 @@
+# IISP Agent Manifest（人类可读索引）
+# 动态完整列表请运行: ./scripts/iisp agent context --json
+
+version: "1.0"
+entrypoints:
+  agents_md: AGENTS.md
+  claude_md: CLAUDE.md
+  agent_readme: agent/README.md
+
+skills_root: agent/skills
+rules_root: agent/rules
+
+skills:
+  - id: iisp-vibe-guardrails
+    path: agent/skills/iisp-vibe-guardrails/SKILL.md
+    when: 任何 IISP 改动前
+  - id: iisp-skill-author
+    path: agent/skills/iisp-skill-author/SKILL.md
+    when: L2 写 Platform Skill
+  - id: iisp-skill-pack
+    path: agent/skills/iisp-skill-pack/SKILL.md
+    when: Skill 封装为 Tool
+  - id: iisp-compose-flow
+    path: agent/skills/iisp-compose-flow/SKILL.md
+    when: Kestra Flow / Pipeline
+  - id: iisp-create-tool
+    path: agent/skills/iisp-create-tool/SKILL.md
+    when: 工程兜底完整 Tool
+  - id: iisp-tool-package
+    path: agent/skills/iisp-tool-package/SKILL.md
+    when: 标准工具包
+  - id: iisp-record-platform-change
+    path: agent/skills/iisp-record-platform-change/SKILL.md
+    when: 平台功能变更
+  - id: iisp-review-pr
+    path: agent/skills/iisp-review-pr/SKILL.md
+    when: PR 前审查
+  - id: iisp-platform-core
+    path: agent/skills/iisp-platform-core/SKILL.md
+    when: 仅平台 Core
+  - id: iisp-secrets
+    path: agent/skills/iisp-secrets/SKILL.md
+    when: 密钥/Token
+  - id: iisp-unit-tests
+    path: agent/skills/iisp-unit-tests/SKILL.md
+    when: 功能实现必写测试
+
+rules:
+  - id: iisp-core
+    path: agent/rules/iisp-core.md
+    scope: global
+  - id: iisp-tools
+    path: agent/rules/iisp-tools.md
+    scope: tools/**, capabilities/**
+  - id: iisp-pipelines
+    path: agent/rules/iisp-pipelines.md
+    scope: iisp-catalog/pipelines/**
+
+cli:
+  agent_context: "./scripts/iisp agent context --json"
+  tool_validate: "./scripts/iisp tool validate"
+  workflow_validate: "./scripts/iisp workflow validate"
+
+mcp:
+  example: agent/mcp.json.example
+  server_planned: mcp/iisp_server.py
+
+ide_adapters:
+  cursor:
+    skills: .cursor/skills/  # symlink → agent/skills/
+    rules: .cursor/rules/*.mdc
+  claude_code:
+    entry: CLAUDE.md
+  generic:
+    entry: AGENTS.md

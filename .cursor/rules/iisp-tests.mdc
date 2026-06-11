@@ -1,0 +1,20 @@
+---
+description: 改动运行时代码时提醒：功能与单元测试必须同一 PR 交付。详见 Skill iisp-unit-tests。
+globs:
+  - server/**
+  - capabilities/**
+  - orchestration/**
+  - cli/**
+  - tools/**
+  - tests/**
+---
+
+# 单元测试（同 PR 强制）
+
+实现或修改本 glob 范围内逻辑时：
+
+1. **同一 PR** 新增/更新 `tests/test_*.py`（或 `tools/<id>/tests/`）
+2. 提交前：`python -m pytest <相关路径> -q`
+3. 完整条文：**iisp-unit-tests** Skill · [`docs/CODING_STANDARDS.md`](../../docs/CODING_STANDARDS.md) §4.6
+
+无测试的功能 PR → **iisp-review-pr** 不予通过。

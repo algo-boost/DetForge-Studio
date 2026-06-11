@@ -1097,6 +1097,7 @@ export default function QueryPage() {
             disabled={submitting || previewLoading}
             onClick={onExecute}
             data-testid="query-execute"
+            title="Ctrl + Enter 执行查询"
           >
             {submitting ? '提交中…' : runningCount > 0 ? `执行查询（${runningCount}）` : '执行查询'}
           </button>
@@ -1113,7 +1114,6 @@ export default function QueryPage() {
               </button>
             ))}
           </div>
-          <span className="kbd-hint">Ctrl + Enter 执行</span>
         </div>
       </div>
 
@@ -1159,7 +1159,7 @@ export default function QueryPage() {
                   {predictJobsLoading
                     ? '匹配中…'
                     : selectedPredictJob
-                      ? `${formatPredictJobLabel(selectedPredictJob)} · 无需时段`
+                      ? '无需时段'
                       : '自动匹配最近批次，可手动切换'}
                 </span>
               </div>
@@ -1254,14 +1254,14 @@ export default function QueryPage() {
                   id="pane-sql"
                   ref={editorWs.sqlPaneRef}
                 >
-                  <div className="editor-pane-header">
-                    <span className="ep-title">SQL 查询</span>
-                    <div className="ep-header-right">
-                      <span className="ep-hint">{sqlVarHint}</span>
+                  <div className="editor-pane-header editor-pane-header--sql">
+                    <div className="editor-pane-header-row">
+                      <span className="ep-title">SQL 查询</span>
                       <button type="button" className="ep-btn ep-icon" title={editorWs.fullscreenPane === 'sql' ? '退出全屏' : '全屏编辑'} onClick={() => editorWs.toggleFullscreen('sql')}>
                         <FullscreenIcon />
                       </button>
                     </div>
+                    <div className="ep-hint-bar" title={sqlVarHint}>{sqlVarHint}</div>
                   </div>
                   <div className="editor-wrap"><SqlEditor value={sql} onChange={setSql} /></div>
                 </div>

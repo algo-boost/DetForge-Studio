@@ -22,11 +22,8 @@ def ensure_viz_mounted(app):
 
 @viz_bp.route('/api/viz/status', methods=['GET'])
 def viz_status():
-    return jsonify({
-        'success': True,
-        'available': is_viz_available(),
-        'mount_prefix': VIZ_MOUNT_PREFIX,
-    })
+    from server.tool_integration import build_integration_payload, viz_integration_extra
+    return jsonify(build_integration_payload('viz', extra=viz_integration_extra()))
 
 
 @viz_bp.route('/api/viz/open', methods=['POST'])

@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: kestra
+      POSTGRES_USER: kestra
+      POSTGRES_PASSWORD: k3str4
+    volumes:
+      - kestra-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kestra -d kestra"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  kestra:
+    image: kestra/kestra:latest
+    pull_policy: if_not_present
+    user: root
+    stop_grace_period: 6m
+    command: server standalone
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - kestra-data:/app/storage
+      - kestra-tmp:/tmp/kestra-wd
+      - ../iisp-catalog/pipelines/kestra:/app/flows:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      ENV_IISP_BASE: "http://host.docker.internal:5050"
+      JAVA_OPTS: "-Xms512m -Xmx4096m -XX:MaxRAMPercentage=75.0"
+      KESTRA_CONFIGURATION: |
+        datasources:
+          postgres:
+            url: jdbc:postgresql://postgres:5432/kestra
+            driverClassName: org.postgresql.Driver
+            username: kestra
+            password: k3str4
+        kestra:
+          url: http://localhost:8080/
+          tutorialFlows:
+            enabled: false
+          server:
+            basic-auth:
+              username: admin@kestra.io
+              password: Admin1234
+          repository:
+            type: postgres
+          storage:
+            type: local
+            local:
+              base-path: "/app/storage"
+          queue:
+            type: postgres
+          tasks:
+            tmp-dir:
+              path: /tmp/kestra-wd/tmp
+        micronaut:
+          io:
+            watch:
+              enabled: false
+              paths:
+                - /app/flows
+
+volumes:
+  kestra-postgres:
+  kestra-data:
+  kestra-tmp:

@@ -1,0 +1,26 @@
+{
+  "id": "query-strategy",
+  "version": "1.0.1",
+  "label": "查询策略（兼容别名）",
+  "description": "已合并入 query；action 自动映射为 strategy.*。请迁移至 query 工具。",
+  "kind": "hybrid",
+  "contract_version": "v1",
+  "entry": {
+    "invoke": "/v1/tools/query-strategy/invoke",
+    "capability": "tools.query.compat:QueryStrategyAliasCapability",
+    "cli": "python3 -m tools.query.cli strategy list",
+    "blueprint": null
+  },
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string" },
+      "strategy_id": { "type": "string" }
+    }
+  },
+  "inputs": [],
+  "outputs": ["action", "count", "strategies", "strategy", "valid"],
+  "artifacts": [],
+  "skill_source": "tools/query/SKILL.md",
+  "tags": ["query", "deprecated"]
+}

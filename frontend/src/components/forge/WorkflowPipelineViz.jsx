@@ -1,10 +1,18 @@
 import { stepMeta } from '../../lib/workflowCatalog';
+import { formatDuration } from '../../lib/time';
+import { statusLabel, WORKFLOW_STEP_STATUS_MAP } from '../ui/statusMap';
 
 /**
  * 横向流程图：步骤节点 + 连线 + 可选运行状态。
- * steps: [{ id, kind, status? }]
+ * steps: [{ id, kind, status?, duration? }]
  */
-export default function WorkflowPipelineViz({ steps = [], compact = false, onSelectStep }) {
+export default function WorkflowPipelineViz({
+  steps = [],
+  compact = false,
+  onSelectStep,
+  selectedId = null,
+  statusMap = WORKFLOW_STEP_STATUS_MAP,
+}) {
   if (!steps.length) {
     return <p className="wf-viz-empty">暂无步骤</p>;
   }
@@ -26,7 +34,7 @@ export default function WorkflowPipelineViz({ steps = [], compact = false, onSel
             )}
             <button
               type="button"
-              className={`wf-viz-node wf-viz-node-${st || 'default'}${clickable ? ' is-clickable' : ''}`}
+              className={`wf-viz-node wf-viz-node-${st || 'default'}${clickable ? ' is-clickable' : ''}${selectedId === step.id ? ' is-selected' : ''}`}
               style={{ '--wf-node-color': meta.color }}
               onClick={clickable ? () => onSelectStep(step) : undefined}
               disabled={!clickable}
@@ -35,23 +43,18 @@ export default function WorkflowPipelineViz({ steps = [], compact = false, onSel
               <span className="wf-viz-node-icon" aria-hidden>{meta.icon}</span>
               <span className="wf-viz-node-label">{meta.label}</span>
               {!compact && <span className="wf-viz-node-id">{step.id}</span>}
-              {st && <span className={`wf-viz-node-status wf-viz-st-${st}`}>{statusLabel(st)}</span>}
+              {st && (
+                <span className={`wf-viz-node-status wf-viz-st-${st}`}>
+                  {statusLabel(st, statusMap)}
+                </span>
+              )}
+              {formatDuration(step.duration) && (
+                <span className="wf-viz-node-duration">{formatDuration(step.duration)}</span>
+              )}
             </button>
           </div>
         );
       })}
     </div>
   );
-}
-
-function statusLabel(st) {
-  const m = {
-    pending: '待执行',
-    running: '执行中',
-    done: '完成',
-    failed: '失败',
-    skipped: '跳过',
-    waiting_human: '待 COCO',
-  };
-  return m[st] || st;
 }

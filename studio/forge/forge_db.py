@@ -1333,6 +1333,30 @@ def manual_qc_workflow_counts():
     return out
 
 
+def list_manual_qc_pending_groups(limit=20):
+    """待核对/待确认按批次汇总（工作台待办）。"""
+    lim = max(1, min(int(limit or 20), 50))
+    rows = _client().fetchall(
+        f"""SELECT
+              COALESCE(NULLIF(TRIM(batch_id), ''), '—') AS batch_key,
+              MAX(batch_id) AS batch_id,
+              SUM(CASE WHEN workflow_status='intake' THEN 1 ELSE 0 END) AS intake_count,
+              SUM(CASE WHEN workflow_status='confirmed' THEN 1 ELSE 0 END) AS confirmed_count,
+              COUNT(*) AS total,
+              MIN(intake_at) AS first_at
+            FROM {_t('manual_qc')}
+            WHERE workflow_status IN ('intake', 'confirmed')
+            GROUP BY batch_key
+            ORDER BY first_at DESC
+            LIMIT %s""",
+        (lim,),
+    )
+    for r in rows:
+        if r.get('first_at') is not None:
+            r['first_at'] = str(r['first_at'])
+    return rows
+
+
 def count_manual_qc(batch_id=None, product_no=None, start=None, end=None,
                     categories=None, defect_types=None, match_status=None,
                     training_status=None, workflow_status=None):
@@ -1725,6 +1749,22 @@ def list_curation_batches(status=None, limit=100, offset=0):
     sql += " ORDER BY id DESC LIMIT %s OFFSET %s"
     args.extend([int(limit), int(offset)])
     return _client().fetchall(sql, tuple(args))
+
+
+CURATION_ACTION_STATUSES = ('created', 'exported', 'imported', 'archived', 'handoff_ready')
+
+
+def list_curation_action_batches(limit=20):
+    """未完成四步闭环的筛选批次（工作台待办）。"""
+    lim = max(1, min(int(limit or 20), 50))
+    placeholders = ','.join(['%s'] * len(CURATION_ACTION_STATUSES))
+    return _client().fetchall(
+        f"""SELECT * FROM {_t('curation_batch')}
+            WHERE status IN ({placeholders})
+            ORDER BY created_at DESC
+            LIMIT %s""",
+        (*CURATION_ACTION_STATUSES, lim),
+    )
 
 
 def count_curation_batches(status=None):

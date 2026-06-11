@@ -19,9 +19,12 @@
 | **用户分层** | **L1** 交付/客户质检（只用）· **L2** SA/算法/光学（配置）· [`PRODUCT_DESIGN.md`](./PRODUCT_DESIGN.md) §2 |
 | **前端** | React 19 + Vite 6 · 无 Electron/umi |
 | **配置** | Git `iisp-catalog` + Provider |
-| **设计态** | Cursor Skills + MCP（非运行时 LLM） |
+| **设计态** | **Agent Skills + MCP**（非运行时 LLM；IDE 无关，见 [`agent/`](../agent/README.md)） |
 | **变更记录** | [`PLATFORM_CHANGELOG.md`](./PLATFORM_CHANGELOG.md) · **iisp-record-platform-change** |
-| **编码行为** | [Karpathy guidelines](https://github.com/forrestchang/andrej-karpathy-skills) · `.cursor/rules/karpathy-guidelines.mdc` |
+| **工具 UI 集成** | embedded / remote / standalone · 摘要见 [`PLATFORM_CHANGELOG.md`](./PLATFORM_CHANGELOG.md) `[Unreleased]` · Query 细节 [`tools/query/ui/README.md`](../tools/query/ui/README.md) |
+| **Flow 界面配置** | Kestra 触发 / 通知设置 / 参数表单 · [`FLOW_UI_CONFIG_ROADMAP.md`](./FLOW_UI_CONFIG_ROADMAP.md) |
+| **编码行为** | [Karpathy guidelines](https://github.com/forrestchang/andrej-karpathy-skills) · [`agent/skills/karpathy-guidelines`](../agent/skills/karpathy-guidelines/SKILL.md) |
+| **实施清单** | [`IMPLEMENTATION_ROADMAP.md`](./IMPLEMENTATION_ROADMAP.md) |
 
 ---
 
@@ -34,7 +37,8 @@
 | [`IISP_DESIGN_FINAL.md`](./IISP_DESIGN_FINAL.md) | 全员 — **唯一架构权威** |
 | [`PRODUCT_DESIGN.md`](./PRODUCT_DESIGN.md) | 产品、L1/L2 角色、能力地图 |
 | [`CODING_STANDARDS.md`](./CODING_STANDARDS.md) | 开发、PR、技术选型 |
-| [`AGENTS.md`](../AGENTS.md) | Vibe / Cursor 贡献者 |
+| [`AGENTS.md`](../AGENTS.md) | Vibe / **任意 Agent** 贡献者 |
+| [`agent/README.md`](../agent/README.md) | IDE 接入（Cursor / Claude Code / Codex / OpenClaw） |
 
 ### 二级（专题）
 
@@ -48,6 +52,8 @@
 | [`IISP_PLATFORM.md`](./IISP_PLATFORM.md) | 部署、API 速查 |
 | [`UI_REDESIGN_CHECKLIST.md`](./UI_REDESIGN_CHECKLIST.md) | 前端 U1–U5 |
 | [`ARCHITECTURE_DIAGRAMS.md`](./ARCHITECTURE_DIAGRAMS.md) | 架构图集 |
+| [`IMPLEMENTATION_ROADMAP.md`](./IMPLEMENTATION_ROADMAP.md) | **可执行实施清单（单一待办入口）** |
+| [`FLOW_UI_CONFIG_ROADMAP.md`](./FLOW_UI_CONFIG_ROADMAP.md) | **Flow 界面配置（Kestra 触发 / 通知 / 参数）** |
 | [`PLATFORM_CHANGELOG.md`](./PLATFORM_CHANGELOG.md) | **平台功能变更记录（必维护）** |
 | [`PLATFORM_RISK_REGISTER.md`](./PLATFORM_RISK_REGISTER.md) | 风险登记 |
 
@@ -58,7 +64,8 @@
 | [`SKILL_TO_TOOL.md`](./SKILL_TO_TOOL.md) | init-from-skill、L1–L4 |
 | [`iisp-catalog/README.md`](../iisp-catalog/README.md) | Catalog 仓结构 |
 | [`mcp/README.md`](../mcp/README.md) | MCP 设计态 |
-| [`.cursor/skills/README.md`](../.cursor/skills/README.md) | 项目 Skills |
+| [`agent/skills/README.md`](../agent/skills/README.md) | 项目 Skills（权威） |
+| [`.cursor/skills/README.md`](../.cursor/skills/README.md) | Cursor 适配层 |
 
 ### 归档（勿作实现依据）
 
@@ -71,7 +78,9 @@
 
 ---
 
-## Cursor Skills 索引
+## Agent Skills 索引（`agent/skills/`）
+
+> Cursor 通过 `.cursor/skills/` 符号链接加载同一套 Skills。
 
 | Skill | 触发 |
 |-------|------|
@@ -82,6 +91,7 @@
 | **iisp-create-tool** | 工程兜底：完整 Tool |
 | **iisp-tool-package** | 标准工具包 |
 | **iisp-vibe-guardrails** | 任何改动前 |
+| **iisp-unit-tests** | **功能实现必写单元测试（同 PR）** |
 | **iisp-record-platform-change** | 平台功能变更 → changelog + 文档同步 |
 | **iisp-review-pr** | PR 前（含 changelog 检查） |
 | **iisp-platform-core** | 仅平台 Core |
@@ -95,4 +105,6 @@
 |------|------|
 | 2026-06-09 | 安装 Karpathy guidelines（`.cursor/rules/karpathy-guidelines.mdc`） |
 | 2026-06-09 | 新增 PLATFORM_CHANGELOG + iisp-record-platform-change 约束 |
-| 2026-06-09 | 创建索引；对齐 v2.2 |
+| 2026-06-09 | 新增 `agent/` IDE 无关包；`iisp agent context`；Skills 迁至 `agent/skills/` |
+| 2026-06-09 | PLATFORM_CHANGELOG 补充 M3 query + ToolHost 工具集成变更摘要 |
+| 2026-06-09 | 新增 FLOW_UI_CONFIG_ROADMAP（界面可配编排 F1–F5） |

@@ -8,12 +8,6 @@ def register_builtin_capabilities(registry: CapabilityRegistry) -> None:
     from studio.forge import workflow_steps as ws
 
     registry.register_function(
-        'query', '数据查询',
-        ws.run_query_step,
-        output_keys=['task_id', 'row_count', 'count', 'data_source'],
-        description='按策略查询平台数据并创建查询任务',
-    )
-    registry.register_function(
         'predict', '批量预测',
         ws.run_predict_step,
         output_keys=['job_id', 'total', 'done', 'status'],
@@ -58,6 +52,14 @@ def register_builtin_capabilities(registry: CapabilityRegistry) -> None:
     )
 
     from capabilities import demo_tools as dt
+    from capabilities import smoke_tools as st
+
+    registry.register_function(
+        'smoke-query', '冒烟 · 固定样本查询',
+        st.run_smoke_query,
+        output_keys=['task_id', 'row_count', 'count', 'data_source'],
+        description='M2 编排 e2e：写真实 task 目录，无需业务库',
+    )
 
     registry.register_function(
         'demo-query', '演示 · 模拟捞图查询',

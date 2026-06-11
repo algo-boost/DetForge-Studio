@@ -1,6 +1,4 @@
 import {
-  displayFieldValue,
-  fieldTypeNeedsOptions,
   formatFieldValueForEnv,
   normalizeFieldType,
   normalizeOptions,
@@ -22,19 +20,26 @@ export default function StrategyEnvFieldControl({
   const options = normalizeOptions(field?.options);
   const label = field?.label || field?.key;
   const testId = `${testIdPrefix}-${field.key}`;
+  const envRaw = readEnvValue(values, field.key);
 
   const commit = (raw) => {
-    const val = formatFieldValueForEnv(field, raw);
+    const val = formatFieldValueForEnv(type, raw);
     const key = String(field.key).toUpperCase();
     onChange(key, val);
   };
+
+  const inputValue = (() => {
+    if (envRaw == null || envRaw === '') return '';
+    if (type === 'multiselect' && Array.isArray(envRaw)) return envRaw.join(', ');
+    return String(envRaw);
+  })();
 
   if (type === 'select' && options.length > 0) {
     return (
       <label className={className}>
         <span className="strategy-env-field-label">{label}</span>
         <select
-          value={readEnvValue(values, field.key)}
+          value={inputValue}
           title={field.description || field.key}
           onChange={(e) => commit(e.target.value)}
           data-testid={testId}
@@ -49,7 +54,7 @@ export default function StrategyEnvFieldControl({
   }
 
   if (type === 'multiselect' && options.length > 0) {
-    const selected = new Set(parseMultiselectValue(readEnvValue(values, field.key)));
+    const selected = new Set(parseMultiselectValue(envRaw));
     const toggle = (value) => {
       const next = new Set(selected);
       if (next.has(value)) next.delete(value);
@@ -101,7 +106,7 @@ export default function StrategyEnvFieldControl({
           max={field.max}
           placeholder={field.placeholder ?? field.default ?? ''}
           title={field.description || field.key}
-          value={displayFieldValue(field, values)}
+          value={inputValue}
           onChange={(e) => commit(e.target.value)}
           data-testid={testId}
         />
@@ -118,7 +123,7 @@ export default function StrategyEnvFieldControl({
           step={60}
           placeholder={field.placeholder || 'YYYY-MM-DD HH:MM'}
           title={field.description || field.key}
-          value={displayFieldValue(field, values)}
+          value={inputValue}
           onChange={(e) => commit(e.target.value)}
           data-testid={testId}
         />
@@ -133,7 +138,7 @@ export default function StrategyEnvFieldControl({
         type="text"
         placeholder={field.placeholder ?? field.default ?? ''}
         title={field.description || field.key}
-        value={displayFieldValue(field, values)}
+        value={inputValue}
         onChange={(e) => commit(e.target.value)}
         data-testid={testId}
       />

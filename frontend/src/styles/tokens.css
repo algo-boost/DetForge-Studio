@@ -1,0 +1,44 @@
+/* IISP design tokens (U5) — shared with packages/detunify when aligned */
+
+:root {
+  --sidebar-w: 220px;
+  --topbar-h: 52px;
+  --bg: #f4f6f9;
+  --bg-subtle: #eef1f6;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --accent: #0c8ee6;
+  --accent-hover: #0874c4;
+  --accent-soft: #e8f4fd;
+  --accent-glow: rgba(12, 142, 230, 0.15);
+  --success: #059669;
+  --success-soft: #ecfdf5;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --warn: #d97706;
+  --sidebar-bg: #111827;
+  --sidebar-border: rgba(255,255,255,.06);
+  --sidebar-text: #9ca3af;
+  --sidebar-text-active: #f9fafb;
+  --editor-bg: #fafbfc;
+  --editor-gutter: #f1f5f9;
+  --editor-border: #e2e8f0;
+  --editor-header: #f8fafc;
+  --editor-text: #1e293b;
+  --editor-muted: #94a3b8;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-lg: 14px;
+  --shadow-sm: 0 1px 2px rgba(15,23,42,.04), 0 1px 3px rgba(15,23,42,.06);
+  --shadow-md: 0 4px 16px rgba(15,23,42,.08), 0 2px 6px rgba(15,23,42,.04);
+  --shadow-lg: 0 12px 40px rgba(15,23,42,.12);
+  --font: 'DM Sans', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  --ease: cubic-bezier(.4,0,.2,1);
+  --z-command-palette: 200;
+}

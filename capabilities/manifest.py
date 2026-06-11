@@ -14,6 +14,7 @@ VALID_KINDS = frozenset({'capability', 'cli', 'blueprint', 'hybrid'})
 
 def manifest_search_roots() -> list[str]:
     roots = [
+        os.path.join(APP_ROOT, 'tools'),
         os.path.join(APP_ROOT, 'packages'),
         os.path.join(APP_ROOT, 'studio'),
         APP_ROOT,
@@ -74,4 +75,5 @@ def manifest_to_spec(data: dict) -> dict[str, Any]:
         'entry': data.get('entry') or {},
         'skill_source': data.get('skill_source'),
         'manifest_path': data.get('_manifest_path'),
+        'tags': data.get('tags') or [],
     }

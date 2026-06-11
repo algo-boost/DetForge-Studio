@@ -12,6 +12,10 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from cli.deploy_cmds import register_deploy_subparser  # noqa: E402
+from cli.agent_cmds import register_agent_subparser  # noqa: E402
+from cli.flow_cmds import register_flow_subparser  # noqa: E402
+
 
 def cmd_catalog_sync(args):
     from orchestration.catalog_sync import sync_catalog
@@ -21,9 +25,10 @@ def cmd_catalog_sync(args):
 
 
 def cmd_workflow_validate(args):
-    from orchestration.loader import load_pipeline_yaml, validate_pipeline
+    from orchestration.loader import load_pipeline_yaml
+    from orchestration.pipeline_validate import validate_pipeline_any
     defn = load_pipeline_yaml(args.path)
-    errors = validate_pipeline(defn)
+    errors = validate_pipeline_any(defn, path=args.path)
     if errors:
         print('校验失败:')
         for e in errors:
@@ -93,42 +98,31 @@ def cmd_tool_init_from_skill(args):
     return 0 if out.get('success') else 1
 
 
-def _parse_flow_params(pairs):
-    params = {}
-    for p in pairs or []:
-        if '=' not in p:
-            continue
-        k, v = p.split('=', 1)
-        params[k.strip()] = v.strip()
-    return params
+def cmd_tool_invoke(args):
+    from cli.tool_invoke import cmd_tool_invoke as _invoke
+    return _invoke(args)
 
 
-def cmd_flow_list(args):
-    from orchestration.loader import discover_pipelines
-    for p in discover_pipelines():
-        flag = 'ok' if p.get('_valid') else 'bad'
-        path = p.get('_path') or '-'
-        print(f"{p.get('id') or '?'}\t{flag}\t{p.get('name') or ''}\t{path}")
-    return 0
+def cmd_tool_run(args):
+    from cli.tool_invoke import cmd_tool_run as _run
+    return _run(args)
 
 
-def cmd_flow_run(args):
-    from orchestration.flow_runner import find_pipeline, run_flow
+def cmd_skill_validate(args):
+    from cli.skill_pack import validate_skill
+    out = validate_skill(args.skill_path)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0 if out.get('success') else 1
 
-    try:
-        defn, path = find_pipeline(args.flow)
-    except FileNotFoundError as e:
-        print(str(e))
-        return 1
-    params = _parse_flow_params(args.param)
-    if args.reviewer and 'reviewer' not in params:
-        params['reviewer'] = args.reviewer
-    result = run_flow(defn, params, auto_resume=args.auto_resume)
-    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
-    if result.status == 'waiting_human':
-        print('\n⏸  流程在人工卡点暂停。加 --auto-resume 可自动跳过，或在 Web /demo 页点击继续。')
-        return 2
-    return 0 if result.status == 'done' else 1
+
+def cmd_skill_pack(args):
+    from cli.skill_pack import pack_skill, validate_skill
+    check = validate_skill(args.skill_path)
+    tool_id = check.get('name') or 'tool'
+    out_dir = args.out or str(_ROOT / 'tools' / tool_id)
+    out = pack_skill(args.skill_path, out_dir, install=args.install)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0 if out.get('success') else 1
 
 
 def main(argv=None):
@@ -162,17 +156,34 @@ def main(argv=None):
     p_tinit.add_argument('skill_path')
     p_tinit.add_argument('--out', required=True)
     p_tinit.set_defaults(func=cmd_tool_init_from_skill)
+    p_tinv = tool_sub.add_parser('invoke', help='in-process 调用工具（stdin JSON 或 --param）')
+    p_tinv.add_argument('tool_id')
+    p_tinv.add_argument('--param', action='append', help='params.key=value，可重复')
+    p_tinv.add_argument('--run-id', default='cli')
+    p_tinv.add_argument('--step-id', default='main')
+    p_tinv.set_defaults(func=cmd_tool_invoke)
+    p_trun = tool_sub.add_parser('run', help='子进程 CLI 调用（Manifest entry.cli）')
+    p_trun.add_argument('tool_id')
+    p_trun.add_argument('--param', action='append', help='params.key=value，可重复')
+    p_trun.add_argument('--run-id', default='cli')
+    p_trun.add_argument('--step-id', default='main')
+    p_trun.set_defaults(func=cmd_tool_run)
 
-    p_flow = sub.add_parser('flow', help='本地 Flow 运行（体验编排）')
-    flow_sub = p_flow.add_subparsers(dest='flow_cmd')
-    p_flist = flow_sub.add_parser('list', help='列出 Catalog Pipeline')
-    p_flist.set_defaults(func=cmd_flow_list)
-    p_frun = flow_sub.add_parser('run', help='运行 Pipeline YAML 或 flow id')
-    p_frun.add_argument('flow', help='YAML 路径或 flow id（如 welcome_demo）')
-    p_frun.add_argument('--param', action='append', help='参数 key=value，可重复')
-    p_frun.add_argument('--reviewer', default='', help='快捷设置 params.reviewer')
-    p_frun.add_argument('--auto-resume', action='store_true', help='自动跳过 gate-human 卡点')
-    p_frun.set_defaults(func=cmd_flow_run)
+    p_skill = sub.add_parser('skill', help='Platform Skill 校验与封装')
+    skill_sub = p_skill.add_subparsers(dest='skill_cmd')
+    p_sval = skill_sub.add_parser('validate', help='校验 SKILL.md')
+    p_sval.add_argument('skill_path')
+    p_sval.set_defaults(func=cmd_skill_validate)
+    p_spack = skill_sub.add_parser('pack', help='SKILL → Tool 包（validate + init + manifest v1）')
+    p_spack.add_argument('skill_path')
+    p_spack.add_argument('--out', default='', help='输出目录，默认 tools/<name>/')
+    p_spack.add_argument('--install', action='store_true', help='pack 后 reload Registry')
+    p_spack.set_defaults(func=cmd_skill_pack)
+
+    register_flow_subparser(sub)
+
+    register_deploy_subparser(sub)
+    register_agent_subparser(sub)
 
     args = parser.parse_args(argv)
     if not args.command:
@@ -190,10 +201,20 @@ def main(argv=None):
         return cmd_tool_list(args)
     if args.command == 'tool' and args.tool_cmd == 'init-from-skill':
         return cmd_tool_init_from_skill(args)
-    if args.command == 'flow' and args.flow_cmd == 'list':
-        return cmd_flow_list(args)
-    if args.command == 'flow' and args.flow_cmd == 'run':
-        return cmd_flow_run(args)
+    if args.command == 'tool' and args.tool_cmd == 'invoke':
+        return cmd_tool_invoke(args)
+    if args.command == 'tool' and args.tool_cmd == 'run':
+        return cmd_tool_run(args)
+    if args.command == 'skill' and args.skill_cmd == 'validate':
+        return cmd_skill_validate(args)
+    if args.command == 'skill' and args.skill_cmd == 'pack':
+        return cmd_skill_pack(args)
+    if args.command == 'flow' and getattr(args, 'func', None):
+        return args.func(args)
+    if args.command == 'deploy' and getattr(args, 'func', None):
+        return args.func(args)
+    if args.command == 'agent' and getattr(args, 'func', None):
+        return args.func(args)
     parser.print_help()
     return 1
 

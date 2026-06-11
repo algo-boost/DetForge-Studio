@@ -8,7 +8,7 @@
 > **安全 / Token**：[`docs/SECURITY.md`](docs/SECURITY.md)  
 > **产品设计**：[`docs/PRODUCT_DESIGN.md`](docs/PRODUCT_DESIGN.md)  
 > **架构图**：[`docs/ARCHITECTURE_DIAGRAMS.md`](docs/ARCHITECTURE_DIAGRAMS.md)  
-> **Vibe / Agent**：[`AGENTS.md`](AGENTS.md) · [`.cursor/skills/`](.cursor/skills/)  
+> **Vibe / Agent**：[`AGENTS.md`](AGENTS.md) · [`agent/`](agent/README.md)（IDE 无关；Cursor 见 `.cursor/skills/` 适配层）  
 > **平台速查**：[`docs/IISP_PLATFORM.md`](docs/IISP_PLATFORM.md)  
 > **UI 改造清单**：[`docs/UI_REDESIGN_CHECKLIST.md`](docs/UI_REDESIGN_CHECKLIST.md)  
 > **架构文档**：[`docs/ARCHITECTURE_GREENFIELD.md`](docs/ARCHITECTURE_GREENFIELD.md) · [`docs/ARCHITECTURE_DECOUPLED.md`](docs/ARCHITECTURE_DECOUPLED.md)  

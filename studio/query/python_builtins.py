@@ -293,7 +293,7 @@ def _df_to_view_payload(df, max_rows=None, max_cols=30):
     if truncated_cols:
         display_df = display_df.iloc[:, :max_cols]
 
-    html = display_df.to_html(index=False, border=0, escape=True)
+    html = display_df.to_html(index=False, border=0, escape=True, classes='df-view-table')
     stats = {
         'total_rows': total_rows,
         'total_cols': total_cols,

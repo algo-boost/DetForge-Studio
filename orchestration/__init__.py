@@ -1,1 +1,1 @@
-"""IISP 编排层：Catalog 同步、Pipeline 加载、Agent 编译。"""
+"""IISP 编排层：Catalog、Kestra Flow 加载、原生部署（orchestration/native/）、运行时客户端。"""

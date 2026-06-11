@@ -66,6 +66,50 @@ async function request(path, options = {}) {
   return data;
 }
 
+/**
+ * SSE 流式 POST：解析 `data: {json}\n\n` 事件，逐条交给 onEvent 回调。
+ * 与 request 共用 BASE / authHeaders / 网络错误提示，统一鉴权与错误处理。
+ * @param {string} path
+ * @param {object} [body]
+ * @param {{ signal?: AbortSignal, onEvent?: (ev: any) => void, headers?: object }} [opts]
+ */
+async function streamRequest(path, body = {}, { signal, onEvent, headers } = {}) {
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders(), ...(headers || {}) },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    throw formatFetchError(err, path);
+  }
+  if (!res.ok || !res.body) {
+    const err = new Error(`HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop() || '';
+    for (const part of parts) {
+      const line = part.replace(/^data:\s?/, '').trim();
+      if (!line) continue;
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; }
+      onEvent?.(ev);
+    }
+  }
+}
+
 async function importPlatformModelsFallback(body = {}) {
   const approachId = body.approach_id;
   if (!approachId) throw new Error('缺少 approach_id');
@@ -370,6 +414,33 @@ export const api = {
 
   flowDemoInfo: () => request('/api/flows/demo'),
   flowRun: (body) => request('/api/flows/run', { method: 'POST', body: JSON.stringify(body) }),
+  flowKestraExecute: (body) => request('/api/flows/kestra/execute', { method: 'POST', body: JSON.stringify(body) }),
+  flowKestraStudio: (params = '') => request(`/api/flows/kestra/studio${params}`),
+  flowList: () => request('/api/flows/list'),
+  flowReleases: () => request('/api/flows/releases'),
+  flowRunsList: (params = '') => request(`/api/flows/runs${params}`),
+  flowRunGet: (runKey) => request(`/api/flows/runs/${encodeURIComponent(runKey)}`),
+  flowRunResume: (runKey, body = {}) => request(`/api/flows/runs/${encodeURIComponent(runKey)}/resume`, {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  flowPipelineYaml: (flowId) => request(`/api/flows/pipelines/${encodeURIComponent(flowId)}/yaml`),
+  flowPipelineGraph: (flowId) => request(`/api/flows/pipelines/${encodeURIComponent(flowId)}/graph`),
+  flowAgentContext: (params = '') => request(`/api/flows/agent/context${params}`),
+  flowAgentCompose: (body) => request('/api/flows/agent/compose', { method: 'POST', body: JSON.stringify(body) }),
+  flowAgentComposeStream: (body, opts) => streamRequest('/api/flows/agent/compose/stream', body, opts),
+  flowAgentValidate: (body) => request('/api/flows/agent/validate', { method: 'POST', body: JSON.stringify(body) }),
+  flowAgentPreviewGraph: (body) => request('/api/flows/agent/preview-graph', { method: 'POST', body: JSON.stringify(body) }),
+  flowAgentSave: (body) => request('/api/flows/agent/save', { method: 'POST', body: JSON.stringify(body) }),
+
+  workbenchTodos: (params = '') => request(`/api/workbench/todos${params}`),
+  workbenchSummary: () => request('/api/workbench/summary'),
+  workbenchFlowRuns: (params = '') => request(`/api/workbench/flows/runs${params}`),
+  workbenchFlowList: () => request('/api/workbench/flows/list'),
+
+  orchestrationResume: (body) => request('/v1/orchestration/resume', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  orchestrationPaused: (params = '') => request(`/v1/orchestration/executions/paused${params}`),
 
   forgeSyncTestAuth: () => request('/api/forge/sync/test-auth', { method: 'POST' }),
   forgeSyncDiscover: (body) => request('/api/forge/sync/discover', { method: 'POST', body: JSON.stringify(body) }),
