@@ -1,10 +1,11 @@
-"""原生部署：Kestra / IISP 进程 pid 与健康检查。"""
+"""原生部署：Kestra / IISP 进程 pid 与健康检查（跨平台 macOS/Linux/Windows）。"""
 from __future__ import annotations
 
 import base64
 import os
 import signal
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -12,8 +13,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from orchestration.native.defaults import NativeDeployDefaults, load_defaults
+from orchestration.native.kestra_fetch import (
+    assets_present,
+    ensure_kestra_assets,
+    kestra_launch_argv,
+    plugins_dir_ready,
+)
 from orchestration.native.paths import (
     KESTRA_BIN,
+    KESTRA_JAR,
     LOG_IISP,
     LOG_KESTRA,
     PID_IISP,
@@ -24,9 +32,21 @@ from orchestration.native.paths import (
 )
 from studio.paths import APP_ROOT, CONFIG_FILE
 
+IS_WINDOWS = os.name == 'nt'
+
 
 class DeployError(Exception):
     pass
+
+
+def _detached_popen_kwargs() -> dict:
+    """让子进程脱离父进程独立后台运行（跨平台）。"""
+    if IS_WINDOWS:
+        flags = 0
+        flags |= getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+        flags |= getattr(subprocess, 'DETACHED_PROCESS', 0)
+        return {'creationflags': flags}
+    return {'start_new_session': True}
 
 
 @dataclass
@@ -39,6 +59,26 @@ class ServiceStatus:
 
 
 def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if IS_WINDOWS:
+        # Windows 上 os.kill(pid, 0) 会调用 TerminateProcess（危险），
+        # 改用 OpenProcess + GetExitCodeProcess 仅查询存活，不影响目标进程。
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
         return True
@@ -78,6 +118,17 @@ def wait_http_ok(url: str, *, attempts: int = 30, interval: float = 1.0, auth: t
     return False
 
 
+def _terminate(pid: int, *, force: bool) -> None:
+    if IS_WINDOWS:
+        # taskkill /T 连同子进程一起结束（Kestra 会派生 JVM 子进程）
+        args = ['taskkill', '/PID', str(pid), '/T']
+        if force:
+            args.append('/F')
+        subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
+
+
 def stop_service(name: str, pid_file: Path) -> None:
     pid = read_pid(pid_file)
     if pid is None:
@@ -85,13 +136,13 @@ def stop_service(name: str, pid_file: Path) -> None:
     if not _pid_alive(pid):
         pid_file.unlink(missing_ok=True)
         return
-    os.kill(pid, signal.SIGTERM)
+    _terminate(pid, force=False)
     for _ in range(30):
         if not _pid_alive(pid):
             break
         time.sleep(1)
     if _pid_alive(pid):
-        os.kill(pid, signal.SIGKILL)
+        _terminate(pid, force=True)
     pid_file.unlink(missing_ok=True)
 
 
@@ -109,15 +160,15 @@ def require_java() -> str:
         out = subprocess.check_output(['java', '-version'], stderr=subprocess.STDOUT, text=True)
         return out.splitlines()[0] if out else 'java'
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-        raise DeployError('需要 Java 21+（brew install openjdk@21）') from exc
+        hint = 'Temurin/OpenJDK 21 并加入 PATH' if IS_WINDOWS else 'brew install openjdk@21'
+        raise DeployError(f'需要 Java 21+（{hint}）') from exc
 
 
-def require_kestra_binary() -> Path:
-    if not KESTRA_BIN.is_file():
-        raise DeployError(f'Kestra 未安装: {KESTRA_BIN}（先运行 fetch_kestra.sh）')
-    if not os.access(KESTRA_BIN, os.X_OK):
-        KESTRA_BIN.chmod(0o755)
-    return KESTRA_BIN
+def require_kestra_assets() -> None:
+    if not assets_present():
+        raise DeployError(
+            f'Kestra 未安装: {KESTRA_JAR} 或 {KESTRA_BIN}（先运行 `iisp deploy fetch`）'
+        )
 
 
 def start_kestra(*, config_yml: Path, defaults: NativeDeployDefaults | None = None) -> int:
@@ -127,29 +178,29 @@ def start_kestra(*, config_yml: Path, defaults: NativeDeployDefaults | None = No
         pid = read_pid(PID_KESTRA)
         return pid or 0
 
-    bin_path = require_kestra_binary()
+    require_kestra_assets()
     env = os.environ.copy()
     env['JAVA_OPTS'] = opts.java_opts
     env['ENV_IISP_BASE'] = opts.env_iisp_base
 
+    argv = kestra_launch_argv() + [
+        'server', 'standalone',
+        '--config', str(config_yml),
+        f'--port={opts.kestra_port}',
+    ]
+    # 仅当 plugins 目录非空才传 --plugins（core 任务已内置于 kestra jar）
+    if plugins_dir_ready():
+        argv += ['--plugins', str(PLUGINS_DIR)]
+
     log_fd = open(LOG_KESTRA, 'a', encoding='utf-8')
     try:
         proc = subprocess.Popen(
-            [
-                str(bin_path),
-                'server',
-                'standalone',
-                '--config',
-                str(config_yml),
-                '--plugins',
-                str(PLUGINS_DIR),
-                f'--port={opts.kestra_port}',
-            ],
+            argv,
             cwd=str(VENDOR_ROOT),
             env=env,
             stdout=log_fd,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
+            **_detached_popen_kwargs(),
         )
     finally:
         log_fd.close()
@@ -176,11 +227,11 @@ def start_iisp(*, defaults: NativeDeployDefaults | None = None) -> int:
     log_fd = open(LOG_IISP, 'a', encoding='utf-8')
     try:
         proc = subprocess.Popen(
-            ['python3', 'app.py'],
+            [sys.executable, 'app.py'],
             cwd=str(APP_ROOT),
             stdout=log_fd,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
+            **_detached_popen_kwargs(),
         )
     finally:
         log_fd.close()

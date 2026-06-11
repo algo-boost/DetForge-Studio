@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
+import os
 import sys
 from pathlib import Path
 
 from orchestration.native.bootstrap import ensure_kestra_database
 from orchestration.native.config_render import render_kestra_application
 from orchestration.native.defaults import load_defaults
-from orchestration.native.paths import DEPLOY_ROOT, KESTRA_BIN
+from orchestration.native.kestra_fetch import (
+    assets_present,
+    ensure_kestra_assets,
+    kestra_launch_argv,
+)
+from orchestration.native.paths import KESTRA_BIN, KESTRA_JAR
 from orchestration.native.process_manager import (
     DeployError,
     collect_status,
@@ -20,6 +25,13 @@ from orchestration.native.process_manager import (
     stop_platform,
 )
 from studio.paths import APP_ROOT
+
+IS_WINDOWS = os.name == 'nt'
+STOP_HINT = (
+    'powershell deploy\\scripts\\platform-stop.ps1'
+    if IS_WINDOWS
+    else 'bash deploy/scripts/platform-stop.sh'
+)
 
 
 def cmd_deploy_bootstrap_db(args: argparse.Namespace) -> int:
@@ -48,10 +60,22 @@ def cmd_deploy_status(_args: argparse.Namespace) -> int:
             print(f"  {row.name}: pid {row.pid} 但 HTTP 未响应")
         else:
             print(f"  {row.name}: stopped")
-    if KESTRA_BIN.is_file():
+    if KESTRA_JAR.is_file():
+        print(f'  vendor: {KESTRA_JAR}')
+    elif KESTRA_BIN.is_file():
         print(f'  vendor: {KESTRA_BIN}')
     else:
-        print('  vendor: 未下载（运行 fetch_kestra.sh 或 platform-start.sh）')
+        print('  vendor: 未下载（运行 `iisp deploy fetch`）')
+    return 0
+
+
+def cmd_deploy_fetch(_args: argparse.Namespace) -> int:
+    try:
+        ensure_kestra_assets(load_defaults())
+    except Exception as exc:  # noqa: BLE001
+        print(f'ERROR: {exc}', file=sys.stderr)
+        return 1
+    print(f'OK Kestra 就绪：{" ".join(kestra_launch_argv())}')
     return 0
 
 
@@ -70,10 +94,9 @@ def _deploy_start(args: argparse.Namespace) -> int:
     print(f'==> Java: {require_java()}')
     require_config()
 
-    if not KESTRA_BIN.is_file():
-        fetch = DEPLOY_ROOT / 'scripts' / 'fetch_kestra.sh'
-        print('==> 首次运行：下载 Kestra…')
-        subprocess.check_call(['bash', str(fetch)])
+    if not assets_present():
+        print('==> 首次运行：获取 Kestra…')
+        ensure_kestra_assets(defaults)
 
     print(f'==> Bootstrap MySQL 库 `{defaults.kestra_mysql_database}`')
     ensure_kestra_database(defaults.kestra_mysql_database)
@@ -95,7 +118,7 @@ def _deploy_start(args: argparse.Namespace) -> int:
     print('==========================================')
     print(f'  IISP   {defaults.iisp_url}/')
     print(f'  Kestra {defaults.kestra_url}/  ({defaults.kestra_user})')
-    print('  停止   bash deploy/scripts/platform-stop.sh')
+    print(f'  停止   {STOP_HINT}')
     print('==========================================')
     return 0
 
@@ -118,6 +141,9 @@ def register_deploy_subparser(sub: argparse._SubParsersAction) -> None:
     p_render.add_argument('--deploy-root', default='')
     p_render.add_argument('--database', default='')
     p_render.set_defaults(func=cmd_deploy_render_config)
+
+    p_fetch = deploy_sub.add_parser('fetch', help='获取 Kestra 运行资产（跨平台）')
+    p_fetch.set_defaults(func=cmd_deploy_fetch)
 
     p_status = deploy_sub.add_parser('status', help='平台进程状态')
     p_status.set_defaults(func=cmd_deploy_status)

@@ -44,6 +44,8 @@ def render_kestra_application(
     out_path = runtime / 'kestra-application.yml'
     template = template_path.read_text(encoding='utf-8')
 
+    # 用正斜杠写入 YAML：Windows 的反斜杠在双引号标量里会被当作转义符
+    # 导致解析失败；Java/Kestra 在 Windows 上同样接受正斜杠路径。
     replacements = {
         '{{JDBC_URL}}': mysql.jdbc_url,
         '{{DB_USER}}': escape_yaml(mysql.user),
@@ -51,9 +53,9 @@ def render_kestra_application(
         '{{KESTRA_PORT}}': str(opts.kestra_port),
         '{{KESTRA_USER}}': escape_yaml(opts.kestra_user),
         '{{KESTRA_PASSWORD}}': escape_yaml(opts.kestra_password),
-        '{{STORAGE_PATH}}': str((runtime / 'storage').resolve()),
-        '{{TMP_PATH}}': str((runtime / 'tmp').resolve()),
-        '{{FLOWS_PATH}}': str(FLOWS_ROOT.resolve()),
+        '{{STORAGE_PATH}}': (runtime / 'storage').resolve().as_posix(),
+        '{{TMP_PATH}}': (runtime / 'tmp').resolve().as_posix(),
+        '{{FLOWS_PATH}}': FLOWS_ROOT.resolve().as_posix(),
     }
     content = template
     for key, val in replacements.items():
