@@ -26,7 +26,12 @@ def parse_kestra_inputs(flow: dict) -> dict[str, dict]:
         }
 
         default = item.get('defaults') if 'defaults' in item else item.get('default')
-        if ktype == 'JSON':
+        # 语义字段（策略 / 模型）优先按业务控件渲染，不受声明的标量类型影响
+        if iid == 'strategy_id':
+            field['type'] = 'strategy'
+        elif iid in ('model_id', 'train_id'):
+            field['type'] = 'model'
+        elif ktype == 'JSON':
             if isinstance(default, str):
                 try:
                     default = json.loads(default)
@@ -42,10 +47,6 @@ def parse_kestra_inputs(flow: dict) -> dict[str, dict]:
             field['type'] = 'number'
         elif ktype == 'BOOLEAN':
             field['type'] = 'boolean'
-        elif iid == 'strategy_id':
-            field['type'] = 'strategy'
-        elif iid in ('model_id', 'train_id'):
-            field['type'] = 'model'
         else:
             field['type'] = 'string'
 

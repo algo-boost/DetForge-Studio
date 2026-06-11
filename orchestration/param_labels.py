@@ -1,4 +1,4 @@
-"""编排参数中英文对照（表单可读性）。"""
+"""编排参数中英文对照（表单可读性）"""
 from __future__ import annotations
 
 # key -> (中文名, 说明)
@@ -14,8 +14,13 @@ PARAM_LABELS: dict[str, tuple[str, str]] = {
     'time_window': ('时间窗', '查询或捞图的时间范围'),
     'reviewer': ('复核人', '负责筛选复核的人员'),
     'intent_type': ('意图类型', '创建批次时的业务意图分类'),
-    'data_source': ('数据源', '查询使用的数据来源'),
-    'model_id': ('模型 ID', '预测使用的模型标识'),
+    'data_source': ('数据源', '查询使用的数据来源（detail / predict_result）'),
+    'model_id': ('模型 ID', '预测使用的模型标识（forge 注册表）'),
+    'train_id': ('训练模型 ID', '平台训练产出的模型标识'),
+    'threshold': ('置信度阈值', '预测保留框的最小置信度'),
+    'device': ('推理设备', '预测运行设备，如 cuda:0 / cpu'),
+    'recall_strategy_id': ('二次查询策略 ID', '在预测结果上二次筛选所用策略'),
+    'predict_job_id': ('预测作业 ID', '二次查询引用的预测作业，用于读取 predict_result'),
     'job_id': ('作业 ID', '异步预测作业标识'),
     'export_dir': ('导出目录', '出站包写入的目录路径'),
     'archive_dir': ('归档目录', '归档结果写入的目录'),
@@ -37,6 +42,9 @@ OUTPUT_LABELS: dict[str, tuple[str, str]] = {
     'export_dir': ('导出目录', '人工编辑 COCO 的出站目录'),
     'event': ('通知事件', '流程结束或卡点触发的通知'),
     'job_id': ('预测作业 ID', '批量预测异步作业标识'),
+    'total': ('预测总数', '预测作业的图片/样本总量'),
+    'done': ('已完成数', '预测作业已处理的数量'),
+    'status': ('状态', '工具执行状态'),
 }
 
 

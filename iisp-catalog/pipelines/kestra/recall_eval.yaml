@@ -1,0 +1,166 @@
+# 召回评测编排 — query → predict → 二次查询(predict_result)
+#
+# 流程一句话：按策略捞图 → 指定模型预测 → 在预测结果上二次筛选 → 通知
+# 数据接力：task_id → job_id → predict_result(JOB_ID)
+# 设计意图：把「单独执行」的 查询/预测 串成一条闭环，且策略/模型/阈值/设备
+#           全部提为 Flow inputs，运行时在 IISP /flows 表单里填写，无需改 YAML。
+# 触发：/flows 选 recall_eval，填 strategy_id / model_id / threshold 后「立即运行」。
+#
+# 范例注释规范：docs/FLOW_YAML_COMMENTS.md
+
+id: recall_eval
+namespace: iisp
+description: |
+  【召回评测编排 · 查询→预测→二次查询】
+  1) query 工具按 strategy_id 查业务库，返回 task_id / result.csv
+  2) predict 工具对 task_id 用指定 model_id 发起预测作业并等待完成，返回 job_id
+  3) 第二次 query 在 data_source=predict_result 上按 recall_strategy_id 二次筛选
+  4) notify 通知
+  运行参数全部来自 Flow inputs（策略 / 模型 / 阈值 / 设备 / 时间窗），
+  在 IISP /flows 运行表单填写即可，拓扑修改仍走 Git YAML。
+
+# === 运行参数（IISP /flows 表单按类型自动渲染：strategy 下拉 / model 下拉 / number / time_window） ===
+inputs:
+  - id: strategy_id
+    type: STRING
+    description: 捞图策略（第一次查询）
+    defaults: daily_trawl
+  - id: model_id
+    type: INT
+    description: 预测模型（forge 注册表 model_id）
+    required: true
+  - id: threshold
+    type: FLOAT
+    description: 预测置信度阈值
+    defaults: 0.3
+  - id: device
+    type: STRING
+    description: 推理设备（如 cuda:0 / cpu）
+    defaults: "cuda:0"
+  - id: time_window
+    type: JSON
+    description: 时间窗
+    defaults: '{"preset":"yesterday"}'
+  - id: recall_strategy_id
+    type: STRING
+    description: 二次查询策略（在预测结果上筛选）
+    defaults: daily_trawl
+  - id: reviewer
+    type: STRING
+    required: false
+
+tasks:
+  # 【步骤 query】工具 query — 按策略查业务库
+  # 入参：strategy_id、time_window ← inputs
+  # 出参：task_id → predict
+  - id: query
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ envs.iisp_base }}/v1/tools/query/invoke"
+    method: POST
+    contentType: application/json
+    body: |
+      {{ {
+        "run_id": execution.id,
+        "step_id": "query",
+        "params": {
+          "strategy_id": inputs.strategy_id,
+          "time_window": inputs.time_window,
+          "data_source": "detail"
+        },
+        "inputs": { "upstream": {} }
+      } | toJson }}
+
+  - id: query_result_log
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      [recall_eval] query status={{ fromJson(outputs.query.body).status }}
+      task_id={{ fromJson(outputs.query.body).outputs.task_id | default('n/a') }}
+      row_count={{ fromJson(outputs.query.body).outputs.row_count | default(fromJson(outputs.query.body).outputs.count | default(0)) }}
+
+  # 【分支 after_query】查询有结果才继续预测
+  - id: after_query
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ fromJson(outputs.query.body).status == 'done' }}"
+    then:
+      - id: main_pipeline
+        type: io.kestra.plugin.core.flow.Sequential
+        tasks:
+          # 【步骤 predict】工具 predict — 对 task_id 用指定模型预测
+          # 入参：task_id ← query.outputs.task_id；model_id / threshold / device ← inputs
+          # 出参：job_id → 二次查询 predict_result
+          - id: predict
+            type: io.kestra.plugin.core.http.Request
+            uri: "{{ envs.iisp_base }}/v1/tools/predict/invoke"
+            method: POST
+            contentType: application/json
+            options:
+              # 预测可能较久，放宽读超时（毫秒）
+              readIdleTimeout: PT2H
+            body: |
+              {{ {
+                "run_id": execution.id,
+                "step_id": "predict",
+                "params": {
+                  "task_id": fromJson(outputs.query.body).outputs.task_id,
+                  "model_id": inputs.model_id,
+                  "threshold": inputs.threshold,
+                  "device": inputs.device
+                },
+                "inputs": { "upstream": fromJson(outputs.query.body).outputs }
+              } | toJson }}
+
+          - id: predict_result_log
+            type: io.kestra.plugin.core.log.Log
+            message: |
+              [recall_eval] predict status={{ fromJson(outputs.predict.body).status }}
+              job_id={{ fromJson(outputs.predict.body).outputs.job_id | default('n/a') }}
+              done={{ fromJson(outputs.predict.body).outputs.done | default(0) }}/{{ fromJson(outputs.predict.body).outputs.total | default(0) }}
+
+          # 【步骤 recall_query】工具 query — 在预测结果上二次筛选
+          # 入参：recall_strategy_id ← inputs；predict_job_id ← predict.outputs.job_id
+          # 数据源：predict_result
+          - id: recall_query
+            type: io.kestra.plugin.core.http.Request
+            uri: "{{ envs.iisp_base }}/v1/tools/query/invoke"
+            method: POST
+            contentType: application/json
+            body: |
+              {{ {
+                "run_id": execution.id,
+                "step_id": "recall_query",
+                "params": {
+                  "strategy_id": inputs.recall_strategy_id,
+                  "data_source": "predict_result",
+                  "predict_job_id": fromJson(outputs.predict.body).outputs.job_id
+                },
+                "inputs": { "upstream": fromJson(outputs.predict.body).outputs }
+              } | toJson }}
+
+          - id: recall_result_log
+            type: io.kestra.plugin.core.log.Log
+            message: |
+              [recall_eval] recall_query status={{ fromJson(outputs.recall_query.body).status }}
+              task_id={{ fromJson(outputs.recall_query.body).outputs.task_id | default('n/a') }}
+              row_count={{ fromJson(outputs.recall_query.body).outputs.row_count | default(fromJson(outputs.recall_query.body).outputs.count | default(0)) }}
+
+          # 【步骤 notify】
+          - id: notify
+            type: io.kestra.plugin.core.http.Request
+            uri: "{{ envs.iisp_base }}/v1/tools/notify/invoke"
+            method: POST
+            contentType: application/json
+            body: |
+              {{ {
+                "run_id": execution.id,
+                "step_id": "notify",
+                "params": {
+                  "event": "workflow_done",
+                  "extra": { "message": "recall_eval 召回评测编排已完成" }
+                },
+                "inputs": { "upstream": fromJson(outputs.recall_query.body).outputs }
+              } | toJson }}
+
+    else:
+      - id: empty_result
+        type: io.kestra.plugin.core.log.Log
+        message: "查询无结果或 skipped — status={{ fromJson(outputs.query.body).status }} reason={{ fromJson(outputs.query.body).outputs.reason | default('empty') }}"

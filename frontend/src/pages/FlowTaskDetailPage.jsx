@@ -17,6 +17,7 @@ export default function FlowTaskDetailPage() {
   const [flow, setFlow] = useState(null);
   const [runs, setRuns] = useState([]);
   const [params, setParams] = useState({});
+  const [models, setModels] = useState([]);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -40,6 +41,22 @@ export default function FlowTaskDetailPage() {
   }, [flowId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Flow 含 model 类型参数时加载注册模型，供模型下拉选择
+  const needsModels = useMemo(
+    () => Object.values(flow?.params_schema || {}).some((s) => s?.type === 'model'),
+    [flow],
+  );
+  useEffect(() => {
+    if (!needsModels) return;
+    api.forgeModels(true).then((r) => {
+      const list = (r.data || r.models || []).map((m) => ({
+        id: m.id,
+        name: m.name || m.model_name || `#${m.id}`,
+      }));
+      setModels(list);
+    }).catch(() => setModels([]));
+  }, [needsModels]);
 
   const onRun = async () => {
     if (!flow?.runnable) return;
@@ -127,6 +144,7 @@ export default function FlowTaskDetailPage() {
                     schema={flow.params_schema || {}}
                     value={params}
                     onChange={setParams}
+                    models={models}
                   />
                   <button type="button" className="btn btn-sm btn-primary flows-run-btn" disabled={busy} onClick={onRun}>
                     立即运行

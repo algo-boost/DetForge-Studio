@@ -68,8 +68,51 @@ def _strategy_spec(strategy_id):
 
 
 def run_query_step(params, context):
-    from tools.query.service import dispatch
-    return dispatch(params, run_id=context.get('run_id'))
+    """执行查询步骤：按 strategy_id 落 task，空结果标记 skipped。
+
+    直接调用 execute_strategy_ref（查询执行的唯一真源），不再回到
+    tools.query.service.dispatch —— 后者 action=execute 会再调本函数，
+    形成无限递归（maximum recursion depth exceeded）。
+    """
+    strategy_id = params.get('strategy_id')
+    if not strategy_id and not params.get('strategy_snapshot'):
+        return {'skipped': True, 'reason': 'no_strategy_id'}
+
+    qctx = _build_query_context(params)
+    ds = params.get('data_source') or 'detail'
+    jid = params.get('predict_job_id') or params.get('job_id')
+    if jid:
+        qctx['JOB_ID'] = str(int(jid))
+        qctx['PREDICT_JOB_ID'] = str(int(jid))
+        ds = 'predict_result'
+
+    stage_spec = {'strategy_id': str(strategy_id)}
+    if params.get('strategy_snapshot'):
+        stage_spec = {'snapshot': params['strategy_snapshot']}
+
+    result = execute_strategy_ref(
+        stage_spec,
+        context=qctx,
+        sample_size=params.get('sample_size'),
+        random_seed=params.get('random_seed'),
+        data_source=ds,
+        build_task=True,
+    )
+    if result is None:
+        raise ValueError(f'策略不存在: {strategy_id}')
+
+    count = int(result.get('count') or 0)
+    task_id = result.get('task_id')
+    if not task_id or count == 0:
+        return {'skipped': True, 'reason': 'empty_result', 'count': count, 'row_count': count}
+    return {
+        'action': 'execute',
+        'strategy_id': strategy_id,
+        'task_id': task_id,
+        'count': count,
+        'row_count': count,
+        'data_source': result.get('data_source') or ds,
+    }
 
 
 def run_predict_step(params, context):
