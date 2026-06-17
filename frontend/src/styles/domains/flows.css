@@ -1,4 +1,45 @@
-/* ── Flows 页 U3 ── */
+/* ── Flows 场景页壳（U3） ── */
+.flows-scene {
+  padding: 0 0 32px;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.flows-scene.panel.active {
+  display: block;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.flows-scene > .scene-hub-nav {
+  margin: 16px 20px 12px;
+}
+
+.flows-scene--wide {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding-left: 24px;
+  padding-right: 24px;
+}
+
+.flows-scene--wide > .scene-hub-nav {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.flows-scene--compose {
+  max-width: none;
+}
+
+.flows-scene--compose > .scene-hub-nav {
+  margin-left: 20px;
+  margin-right: 20px;
+}
+
+/* ── Flows 页 U3（兼容旧类名） ── */
 .flows-page {
   padding: 24px;
   max-width: 960px;
@@ -8,6 +49,11 @@
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+.flows-scene--wide.flows-page,
+.flows-scene.flows-page {
+  padding-top: 0;
 }
 
 .panel.active.flows-page {
@@ -38,6 +84,53 @@
 .flows-section,
 .flows-gates-section {
   margin-bottom: 28px;
+}
+
+.flows-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.flows-section-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  margin-left: 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+
+.flows-mine-section {
+  margin-bottom: 32px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.flows-mine-empty {
+  padding: 20px 16px;
+}
+
+.flows-mine-table td {
+  vertical-align: top;
+}
+
+.flows-mine-schedule-on {
+  font-size: 12px;
+  color: #15803d;
+  font-weight: 500;
+}
+
+.flows-catalog-section {
+  margin-bottom: 16px;
 }
 
 .flows-section-title {
@@ -647,6 +740,45 @@
   background: rgba(59, 130, 246, 0.12);
   border-color: #93c5fd;
   color: #2563eb;
+}
+
+.flows-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(245, 158, 11, 0.2);
+  color: #b45309;
+}
+
+.flows-gates-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+}
+
+.flows-gates-banner-text {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.flows-history-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+}
+
+.flows-runs-filter-tabs {
+  margin-bottom: 16px;
 }
 
 .flows-runs-table {

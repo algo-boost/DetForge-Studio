@@ -637,6 +637,19 @@ def get_job(job_id):
     return row
 
 
+# 列表接口不读完整 params（含 items_meta 可达数 MB），避免 ORDER BY 触发 sort buffer 溢出。
+_JOB_LIST_COLUMNS = (
+    'id', 'job_type', 'name', 'status', 'priority', 'intra_concurrency',
+    'total', 'done', 'failed', 'error', 'worker_id', 'heartbeat',
+    'created_at', 'started_at', 'finished_at',
+)
+_JOB_LIST_PARAMS_SQL = """JSON_OBJECT(
+    'model_name', JSON_UNQUOTE(JSON_EXTRACT(params, '$.model_name')),
+    'predict_mode', JSON_UNQUOTE(JSON_EXTRACT(params, '$.predict_mode')),
+    'result', JSON_EXTRACT(params, '$.result')
+) AS params"""
+
+
 def list_jobs(status=None, job_type=None, limit=100, offset=0):
     where, args = [], []
     if status:
@@ -645,17 +658,25 @@ def list_jobs(status=None, job_type=None, limit=100, offset=0):
     if job_type:
         where.append("job_type=%s")
         args.append(job_type)
-    sql = f"SELECT * FROM {_t('job')}"
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY id DESC LIMIT %s"
-    args.append(int(limit))
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    id_sql = f"SELECT id FROM {_t('job')}{where_sql} ORDER BY id DESC LIMIT %s"
+    id_args = list(args) + [int(limit)]
     if offset:
-        sql += " OFFSET %s"
-        args.append(int(offset))
-    rows = _client().fetchall(sql, tuple(args))
+        id_sql += " OFFSET %s"
+        id_args.append(int(offset))
+    id_rows = _client().fetchall(id_sql, tuple(id_args))
+    if not id_rows:
+        return []
+    ids = [int(r['id']) for r in id_rows]
+    placeholders = ','.join(['%s'] * len(ids))
+    cols = ', '.join(_JOB_LIST_COLUMNS)
+    sql = (
+        f"SELECT {cols}, {_JOB_LIST_PARAMS_SQL} FROM {_t('job')} "
+        f"WHERE id IN ({placeholders}) ORDER BY id DESC"
+    )
+    rows = _client().fetchall(sql, tuple(ids))
     for r in rows:
-        r['params'] = _json_load(r.get('params'))
+        r['params'] = _json_load(r.get('params')) or {}
     return rows
 
 
@@ -807,19 +828,30 @@ def reset_running_job_items(job_id):
 
 
 def _jobs_with_remaining(statuses=('pending', 'running', 'paused')):
+    """列出仍有 pending/running 项的作业；不 SELECT params，避免大 JSON 触发 sort buffer 溢出。"""
     placeholders = ','.join(['%s'] * len(statuses))
-    rows = _client().fetchall(
-        f"""SELECT j.id, j.job_type, j.name, j.status, j.params, j.total, j.done, j.failed,
-                   (SELECT COUNT(*) FROM {_t('job_item')} ji
-                    WHERE ji.job_id = j.id AND ji.status IN ('pending','running')) AS remaining
-            FROM {_t('job')} j
+    id_rows = _client().fetchall(
+        f"""SELECT j.id FROM {_t('job')} j
             WHERE j.status IN ({placeholders})
-            HAVING remaining > 0
+              AND (SELECT COUNT(*) FROM {_t('job_item')} ji
+                   WHERE ji.job_id = j.id AND ji.status IN ('pending','running')) > 0
             ORDER BY j.id DESC""",
         tuple(statuses),
     )
+    if not id_rows:
+        return []
+    ids = [int(r['id']) for r in id_rows]
+    ph = ','.join(['%s'] * len(ids))
+    rows = _client().fetchall(
+        f"""SELECT j.id, j.job_type, j.name, j.status, j.total, j.done, j.failed,
+                   (SELECT COUNT(*) FROM {_t('job_item')} ji
+                    WHERE ji.job_id = j.id AND ji.status IN ('pending','running')) AS remaining
+            FROM {_t('job')} j
+            WHERE j.id IN ({ph})
+            ORDER BY j.id DESC""",
+        tuple(ids),
+    )
     for row in rows:
-        row['params'] = _json_load(row.get('params'))
         row['remaining'] = int(row.get('remaining') or 0)
     return rows
 
@@ -854,12 +886,36 @@ def isolate_incomplete_jobs_on_startup():
 
 
 def list_interrupted_jobs(limit=50):
-    rows = _jobs_with_remaining(statuses=('paused',))
+    """先按 id 取 paused 作业，再筛 interrupted 标记（避免 WHERE JSON_EXTRACT 全表 sort）。"""
+    lim = max(int(limit), 1)
+    scan = min(max(lim * 20, 100), 500)
+    id_rows = _client().fetchall(
+        f"""SELECT id FROM {_t('job')}
+            WHERE status = 'paused'
+            ORDER BY id DESC
+            LIMIT %s""",
+        (scan,),
+    )
+    if not id_rows:
+        return []
+    ids = [int(r['id']) for r in id_rows]
+    ph = ','.join(['%s'] * len(ids))
+    rows = _client().fetchall(
+        f"""SELECT j.id, j.job_type, j.name, j.status, j.total, j.done, j.failed,
+                   JSON_UNQUOTE(JSON_EXTRACT(j.params, '$.interrupted_at')) AS interrupted_at,
+                   JSON_UNQUOTE(JSON_EXTRACT(j.params, '$.interrupted_reason')) AS interrupted_reason,
+                   (SELECT COUNT(*) FROM {_t('job_item')} ji
+                    WHERE ji.job_id = j.id AND ji.status IN ('pending','running')) AS remaining
+            FROM {_t('job')} j
+            WHERE j.id IN ({ph})
+              AND JSON_EXTRACT(j.params, '$.interrupted_at') IS NOT NULL
+            ORDER BY j.id DESC""",
+        tuple(ids),
+    )
     out = []
     for row in rows:
-        params = row.get('params') or {}
-        if not params.get('interrupted_at'):
-            continue
+        if len(out) >= lim:
+            break
         out.append({
             'id': row['id'],
             'job_type': row.get('job_type'),
@@ -868,11 +924,9 @@ def list_interrupted_jobs(limit=50):
             'total': int(row.get('total') or 0),
             'done': int(row.get('done') or 0),
             'failed': int(row.get('failed') or 0),
-            'remaining': row['remaining'],
-            'interrupted_reason': params.get('interrupted_reason'),
+            'remaining': int(row.get('remaining') or 0),
+            'interrupted_reason': row.get('interrupted_reason'),
         })
-        if len(out) >= int(limit):
-            break
     return out
 
 
@@ -1942,12 +1996,11 @@ def replace_platform_train_models(project_id, rows):
 
 def create_replay_run(spec_json):
     client = _client()
-    client.execute(
+    return client.execute_returning_id(
         f"""INSERT INTO {_t('replay_run')} (status, stage, spec_json)
             VALUES ('pending', 'init', %s)""",
         (_json_dump(spec_json),),
     )
-    return client.last_insert_id()
 
 
 def get_replay_run(run_id):
@@ -2066,7 +2119,7 @@ def list_workflow_templates(enabled_only=False):
 
 def create_workflow_schedule(data):
     client = _client()
-    client.execute(
+    return client.execute_returning_id(
         f"""INSERT INTO {_t('workflow_schedule')}
             (template_id, name, cron_expr, timezone, params, notify_policy,
              enabled, mutex, next_run_at)
@@ -2083,7 +2136,6 @@ def create_workflow_schedule(data):
             data.get('next_run_at'),
         ),
     )
-    return client.last_insert_id()
 
 
 def get_workflow_schedule(schedule_id):
@@ -2117,12 +2169,32 @@ def update_workflow_schedule(schedule_id, **fields):
     )
 
 
-def list_workflow_schedules(enabled_only=False, limit=100):
+def find_workflow_schedule_by_template(template_id):
+    row = _client().fetchone(
+        f"""SELECT * FROM {_t('workflow_schedule')}
+            WHERE template_id=%s ORDER BY id DESC LIMIT 1""",
+        (str(template_id),),
+    )
+    if row:
+        row['params'] = _json_load(row.get('params'))
+        row['notify_policy'] = _json_load(row.get('notify_policy'))
+    return row
+
+
+def list_workflow_schedules(enabled_only=False, template_id=None, limit=100):
     sql = f"SELECT * FROM {_t('workflow_schedule')}"
+    clauses = []
+    args = []
     if enabled_only:
-        sql += " WHERE enabled=1"
-    sql += " ORDER BY id DESC LIMIT %s"
-    rows = _client().fetchall(sql, (int(limit),))
+        clauses.append('enabled=1')
+    if template_id:
+        clauses.append('template_id=%s')
+        args.append(str(template_id))
+    if clauses:
+        sql += ' WHERE ' + ' AND '.join(clauses)
+    sql += ' ORDER BY id DESC LIMIT %s'
+    args.append(int(limit))
+    rows = _client().fetchall(sql, tuple(args))
     for r in rows:
         r['params'] = _json_load(r.get('params'))
         r['notify_policy'] = _json_load(r.get('notify_policy'))
@@ -2144,7 +2216,7 @@ def list_due_workflow_schedules(now_str):
 
 def create_workflow_run(data):
     client = _client()
-    client.execute(
+    return client.execute_returning_id(
         f"""INSERT INTO {_t('workflow_run')}
             (template_id, schedule_id, name, params, context, status, created_by)
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
@@ -2158,7 +2230,6 @@ def create_workflow_run(data):
             data.get('created_by'),
         ),
     )
-    return client.last_insert_id()
 
 
 def get_workflow_run(run_id):
@@ -2303,7 +2374,7 @@ def find_workflow_runs_waiting_on_batch(batch_id):
 
 def insert_workflow_notification(data):
     client = _client()
-    client.execute(
+    return client.execute_returning_id(
         f"""INSERT INTO {_t('workflow_notification')}
             (run_id, schedule_id, channel, event, title, message, payload, status)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
@@ -2318,7 +2389,6 @@ def insert_workflow_notification(data):
             str(data.get('status') or 'sent'),
         ),
     )
-    return client.last_insert_id()
 
 
 def list_workflow_notifications(limit=50, run_id=None):
@@ -2341,7 +2411,7 @@ def list_workflow_notifications(limit=50, run_id=None):
 def insert_catalog_sync_log(summary: dict):
     """记录 Catalog 同步审计日志。"""
     client = _client()
-    client.execute(
+    return client.execute_returning_id(
         f"""INSERT INTO {_t('catalog_sync_log')}
             (repo, ref_name, commit_hash, prev_commit, strategies_files, pipelines_files, summary)
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
@@ -2355,7 +2425,6 @@ def insert_catalog_sync_log(summary: dict):
             _json_dump(summary),
         ),
     )
-    return client.last_insert_id()
 
 
 def list_catalog_sync_logs(limit=20):

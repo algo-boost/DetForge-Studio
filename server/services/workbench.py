@@ -33,7 +33,7 @@ def _workflow_todo(run: dict) -> dict:
         'status': 'waiting_human',
         'href': f'/flows/runs/workflow:{run_id}',
         'created_at': _iso(run.get('created_at') or run.get('started_at')),
-        'meta': {'run_id': run_id, 'template_id': template_id},
+        'meta': {'run_id': run_id, 'template_id': template_id, 'run_key': f'workflow:{run_id}'},
     }
 
 
@@ -48,26 +48,7 @@ def _demo_flow_todo(run_id: str, pending: dict) -> dict:
         'status': 'waiting_human',
         'href': f'/flows/runs/demo:{run_id}',
         'created_at': None,
-        'meta': {'run_id': run_id, 'flow_id': flow_id, 'pause_at': pending.get('pause_at')},
-    }
-
-
-def _kestra_todo(row: dict) -> dict:
-    flow_id = row.get('flow_id') or 'flow'
-    batch_id = row.get('batch_id')
-    href = row.get('ui_url') or f"/flows/runs/kestra:{row.get('execution_id')}"
-    subtitle = f"execution {row.get('execution_id')}"
-    if batch_id:
-        subtitle = f'batch {batch_id}'
-    return {
-        'id': f"kestra-{row.get('execution_id')}",
-        'kind': 'kestra_pause',
-        'title': f'{flow_id} · Kestra 待人工',
-        'subtitle': subtitle,
-        'status': 'waiting_human',
-        'href': href,
-        'created_at': row.get('started_at'),
-        'meta': row,
+        'meta': {'run_id': run_id, 'flow_id': flow_id, 'pause_at': pending.get('pause_at'), 'run_key': f'demo:{run_id}'},
     }
 
 
@@ -153,17 +134,6 @@ def collect_demo_flow_runs(*, status: str | None = None) -> list[dict]:
     return rows
 
 
-def collect_kestra_paused(*, limit: int = 20) -> list[dict]:
-    if not _kestra_enabled():
-        return []
-    try:
-        from orchestration import kestra_client as kc
-
-        return [kc.summarize_paused(ex) for ex in kc.list_paused_executions(limit=limit)]
-    except Exception:
-        return []
-
-
 def collect_manual_qc_pending(*, limit: int = 20) -> list[dict]:
     try:
         from studio.forge import forge_db
@@ -186,14 +156,6 @@ def collect_curation_pending(*, limit: int = 20) -> list[dict]:
         return []
 
 
-def _kestra_enabled() -> bool:
-    try:
-        from orchestration import kestra_client as kc
-        return kc.is_enabled()
-    except Exception:
-        return False
-
-
 def _sort_todos(todos: list[dict]) -> list[dict]:
     return sorted(
         todos,
@@ -209,8 +171,6 @@ def list_todos(limit: int = 50) -> list[dict]:
         todos.append(_workflow_todo(run))
     for row in collect_demo_flow_runs(status='waiting_human'):
         todos.append(_demo_flow_todo(row['run_id'], row['_pending']))
-    for row in collect_kestra_paused(limit=per_source):
-        todos.append(_kestra_todo(row))
     for group in collect_manual_qc_pending(limit=per_source):
         todos.append(_manual_qc_todo(group))
     for batch in collect_curation_pending(limit=per_source):
@@ -221,7 +181,6 @@ def list_todos(limit: int = 50) -> list[dict]:
 def build_summary() -> dict:
     waiting = collect_workflow_runs(status='waiting_human', limit=200)
     demo_waiting = collect_demo_flow_runs(status='waiting_human')
-    kestra_waiting = collect_kestra_paused(limit=200)
     mqc_pending = collect_manual_qc_pending(limit=200)
     curation_pending = collect_curation_pending(limit=200)
     running = collect_workflow_runs(status='running', limit=200)
@@ -235,16 +194,14 @@ def build_summary() -> dict:
     todo_count = (
         len(waiting)
         + len(demo_waiting)
-        + len(kestra_waiting)
         + len(mqc_pending)
         + len(curation_pending)
     )
     return {
         'todo_count': todo_count,
-        'waiting_human_count': len(waiting) + len(demo_waiting) + len(kestra_waiting),
+        'waiting_human_count': len(waiting) + len(demo_waiting),
         'manual_qc_batch_count': len(mqc_pending),
         'curation_batch_count': len(curation_pending),
         'running_flow_count': len(running),
         'active_query_count': active_queries,
-        'kestra_paused_count': len(kestra_waiting),
     }

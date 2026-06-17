@@ -17,12 +17,47 @@ from studio.query.strategy_loader import get_all_strategies, get_all_templates, 
 from studio.query.env_context import build_stage_context, describe_strategy_variables
 
 
+def eval_time_window_python(code, *, now=None):
+    """执行用户时间脚本：须定义 compute(now) -> {start_time,end_time}。"""
+    src = str(code or '').strip()
+    if not src:
+        raise ValueError('时间 Python 脚本为空')
+    now = now or now_local()
+    ns = {
+        'now': now,
+        'now_local': now_local,
+        'datetime': datetime,
+        'timedelta': timedelta,
+        'format_datetime': format_datetime,
+    }
+    exec(src, ns)  # noqa: S102 — 与策略 python_code 同级，仅设计态配置
+    fn = ns.get('compute')
+    if not callable(fn):
+        raise ValueError('时间脚本须定义 compute(now) 函数')
+    result = fn(now)
+    if not isinstance(result, dict):
+        raise ValueError('compute(now) 须返回 dict')
+    start = result.get('start_time') or result.get('START_TIME')
+    end = result.get('end_time') or result.get('END_TIME')
+    if not start or not end:
+        raise ValueError('compute(now) 须返回 start_time / end_time')
+    return str(start), str(end)
+
+
 def resolve_time_window(spec=None):
     """解析时间窗 → (start_time, end_time) 字符串。"""
     spec = spec or {}
+    mode = str(spec.get('mode') or '').strip().lower()
+    if mode == 'python':
+        return eval_time_window_python(spec.get('code') or spec.get('python') or '')
+    if mode == 'inherit':
+        preset = str(spec.get('preset') or 'yesterday').strip().lower()
+        return resolve_time_window({'preset': preset})
     if spec.get('start_time') and spec.get('end_time'):
         return str(spec['start_time']), str(spec['end_time'])
     preset = str(spec.get('preset') or spec.get('mode') or 'yesterday').strip().lower()
+    if preset == 'python':
+        return eval_time_window_python(spec.get('code') or spec.get('python') or '')
     now = now_local()
     fmt = '%Y-%m-%d %H:%M:%S'
     if preset in ('today', '当日'):
@@ -33,9 +68,16 @@ def resolve_time_window(spec=None):
         start = datetime.combine(y, datetime.min.time(), tzinfo=now.tzinfo)
         end = datetime.combine(y, datetime.max.time().replace(microsecond=0), tzinfo=now.tzinfo)
         return format_datetime(start, fmt), format_datetime(end, fmt)
-    if preset in ('last_7d', '7d', '近7天'):
+    if preset in ('last_7d', '7d', '7days', '近7天'):
         start = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
         return format_datetime(start, fmt), format_datetime(now, fmt)
+    if preset in ('last_30d', '30d', '30days', '近30天'):
+        start = (now - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return format_datetime(start, fmt), format_datetime(now, fmt)
+    if preset in ('custom',):
+        if spec.get('start_time') and spec.get('end_time'):
+            return str(spec['start_time']), str(spec['end_time'])
+        raise ValueError('custom 时间窗缺少 start_time / end_time')
     raise ValueError(f'未知时间 preset: {preset}')
 
 

@@ -1407,6 +1407,139 @@ def archive_handoff_list():
 
 # ── 工作流编排 ─────────────────────────────────────────────────────
 
+@forge_bp.route('/api/forge/workflows/run-env-templates', methods=['GET'])
+def run_env_templates_list():
+    try:
+        from studio.forge.run_env_templates import list_run_env_templates
+        include_script = request.args.get('include_script') == '1'
+        return jsonify({'success': True, 'data': list_run_env_templates(include_script=include_script)})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/run-env/preview', methods=['POST'])
+def run_env_preview():
+    try:
+        from studio.forge.run_env_resolver import preview_run_env
+        body = request.json or {}
+        result = preview_run_env(body)
+        return jsonify({'success': True, 'data': result})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/compose-flows', methods=['GET'])
+def compose_flows_list():
+    try:
+        from studio.forge.compose_flow import list_compose_flows
+        return jsonify({'success': True, 'data': list_compose_flows()})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/compose-flows/<path:flow_id>', methods=['GET'])
+def compose_flow_get(flow_id):
+    try:
+        from studio.forge.compose_flow import get_compose_flow
+        flow = get_compose_flow(flow_id)
+        if not flow:
+            return _err('流水线不存在', 404)
+        return jsonify({'success': True, 'data': flow})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/compose-flows', methods=['POST'])
+def compose_flows_save():
+    try:
+        from studio.forge.compose_flow import save_compose_flow, save_compose_flow_with_schedule
+        body = request.json or {}
+        step_instances = body.get('step_instances') or body.get('steps')
+        if not step_instances:
+            return _err('step_instances 必填', 400)
+        if body.get('schedule'):
+            flow = save_compose_flow_with_schedule(
+                body.get('flow_id') or body.get('name') or 'flow_draft',
+                name=body.get('name'),
+                description=body.get('description'),
+                step_instances=step_instances,
+                run_params_defaults=body.get('run_params_defaults') or body.get('run_params'),
+                schedule=body.get('schedule'),
+            )
+        else:
+            flow = save_compose_flow(
+                body.get('flow_id') or body.get('name') or 'flow_draft',
+                name=body.get('name'),
+                description=body.get('description'),
+                step_instances=step_instances,
+                run_params_defaults=body.get('run_params_defaults') or body.get('run_params'),
+            )
+        return jsonify({'success': True, 'data': flow})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/compose-flows/<path:flow_id>/schedule', methods=['GET'])
+def compose_flow_schedule_get(flow_id):
+    try:
+        from studio.forge.compose_flow import get_compose_schedule
+        sched = get_compose_schedule(flow_id)
+        return jsonify({'success': True, 'data': sched})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@forge_bp.route('/api/forge/workflows/compose-flows/<path:flow_id>/schedule', methods=['PUT'])
+def compose_flow_schedule_save(flow_id):
+    try:
+        from studio.forge.compose_flow import (
+            save_compose_flow,
+            upsert_compose_schedule,
+            get_compose_flow,
+        )
+        from studio.forge.run_env_resolver import normalize_run_params_defaults
+        body = request.json or {}
+        fid = body.get('flow_id') or flow_id
+        if body.get('step_instances'):
+            save_compose_flow(
+                fid,
+                name=body.get('name'),
+                description=body.get('description'),
+                step_instances=body['step_instances'],
+                run_params_defaults=body.get('run_params_defaults') or body.get('run_params'),
+            )
+        run_params = body.get('run_params') or body.get('run_params_defaults') or {}
+        if not run_params:
+            flow = get_compose_flow(fid)
+            if flow:
+                run_params = flow.get('run_params_defaults') or {}
+        if body.get('time_window'):
+            run_params = {**run_params, 'time_window': body['time_window']}
+        if body.get('env'):
+            run_params = {**run_params, 'env': body['env']}
+        run_params = normalize_run_params_defaults(run_params)
+        sched = upsert_compose_schedule(
+            fid,
+            cron_expr=body.get('cron_expr'),
+            name=body.get('name'),
+            params=run_params or None,
+            enabled=body.get('enabled', 1),
+            mutex=body.get('mutex', 1),
+            timezone=body.get('timezone') or 'Asia/Shanghai',
+        )
+        return jsonify({'success': True, 'data': sched})
+    except ValueError as e:
+        return _err(e, 400)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 @forge_bp.route('/api/forge/workflows/templates', methods=['GET'])
 def workflow_templates_list():
     try:
@@ -1453,25 +1586,48 @@ def workflow_runs_list():
 def workflow_runs_create():
     try:
         from studio.forge.workflow_engine import start_run, start_custom_run
+        from studio.forge.compose_flow import save_compose_flow, normalize_flow_id
         body = request.json or {}
-        definition = body.get('definition')
-        if definition:
-            run = start_custom_run(
-                definition,
-                params=body.get('params') or {},
+        run_params = body.get('params') or {}
+
+        step_instances = body.get('step_instances')
+        flow_id = body.get('flow_id') or body.get('template_id')
+        if step_instances and flow_id:
+            fid = normalize_flow_id(flow_id)
+            save_compose_flow(
+                fid,
+                name=body.get('name'),
+                step_instances=step_instances,
+                run_params_defaults=run_params,
+            )
+            run = start_run(
+                fid,
+                params=run_params,
                 name=body.get('name'),
                 created_by=body.get('created_by') or 'ui',
+            )
+        elif body.get('definition'):
+            run = start_custom_run(
+                body['definition'],
+                params=run_params,
+                name=body.get('name'),
+                created_by=body.get('created_by') or 'ui',
+                template_id=flow_id,
             )
         else:
             template_id = body.get('template_id')
             if not template_id:
-                return _err('template_id 或 definition 必填', 400)
+                return _err('template_id、flow_id+step_instances 或 definition 必填', 400)
             run = start_run(
                 template_id,
-                params=body.get('params') or {},
+                params=run_params,
                 name=body.get('name'),
                 created_by=body.get('created_by') or 'ui',
             )
+        from studio.forge.workflow_engine import ensure_run_advance
+        ensure_run_advance(run['id'])
+        from studio.forge import forge_db
+        run = forge_db.get_workflow_run(run['id'])
         return jsonify({'success': True, 'data': run})
     except ValueError as e:
         return _err(e, 400)
@@ -1510,6 +1666,7 @@ def workflow_schedules_list():
         ensure_default_schedules()
         data = forge_db.list_workflow_schedules(
             enabled_only=request.args.get('enabled') == '1',
+            template_id=request.args.get('template_id') or None,
         )
         return jsonify({'success': True, 'data': data})
     except Exception as e:  # noqa: BLE001

@@ -7,7 +7,7 @@ alwaysApply: true
 
 ## 三条铁律 + 工程纪律
 
-1. **编排零自研 DAG** — **唯一编排器：Kestra**（Edge + Hub）
+1. **编排主路径** — **组合编排 + `workflow_engine`**（`POST /api/forge/workflows/runs`）；Legacy Catalog Pipeline 只读/demo
 2. **契约唯一** — 集成只通过 `POST /v1/tools/{id}/invoke` 与 Catalog Pipeline YAML
 3. **AI 只写文件** — 仅改允许路径；运行态无 LLM  
 4. **变更必记录** — 用户可见功能与契约/部署变更须同 PR 更新 [`docs/PLATFORM_CHANGELOG.md`](docs/PLATFORM_CHANGELOG.md)（Skill：**iisp-record-platform-change**）
@@ -15,7 +15,8 @@ alwaysApply: true
 
 ## 禁止（PR 应拒绝）
 
-- 扩展 `workflow_engine` / `workflow_scheduler` 作主编排
+- 扩展 `workflow_engine` / `workflow_scheduler` 作 **Kestra 替代之外的第二套** 外部编排内核（当前已为主路径）
+- 引入 Kestra / JVM 编排依赖
 - Tool 之间 `import` 对方 `service.py`
 - 在 Gateway 写业务组合 if-else
 - 跳过 `iisp tool validate` / `iisp workflow validate`

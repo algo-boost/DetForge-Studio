@@ -18,6 +18,7 @@ _lock = threading.Lock()
 _jobs: dict[str, dict] = {}
 _executor: ThreadPoolExecutor | None = None
 _app = None
+_bootstrapped = False
 
 
 def _ensure_executor():
@@ -53,10 +54,13 @@ def _update(job_id: str, patch: dict) -> dict | None:
 
 
 def init_query_jobs(app) -> None:
-    """Flask 启动时注册 app 引用并加载近期任务。"""
-    global _app
+    """Flask 启动时注册 app 引用并加载近期任务（进程内仅执行一次）。"""
+    global _app, _bootstrapped
     _app = app
     os.makedirs(JOBS_DIR, exist_ok=True)
+    if _bootstrapped:
+        return
+    _bootstrapped = True
     loaded = []
     try:
         for fn in os.listdir(JOBS_DIR):
@@ -186,14 +190,36 @@ def _read_job_file(job_id: str) -> dict | None:
 
 
 def get_query_job(job_id: str) -> dict | None:
-    """优先读磁盘（服务重启后内存丢失时仍可查询状态）。"""
+    """读任务状态；内存与磁盘合并，优先较新的终态/进行中记录。"""
     disk = _read_job_file(job_id)
     with _lock:
-        if disk:
-            _jobs[job_id] = disk
-            return dict(disk)
-        job = _jobs.get(job_id)
-        return dict(job) if job else None
+        mem = _jobs.get(job_id)
+        job = _merge_job_record(mem, disk)
+        if job:
+            _jobs[job_id] = job
+            return dict(job)
+        return None
+
+
+def _job_recency(job: dict | None) -> float:
+    if not job:
+        return 0.0
+    for key in ('finished_at', 'started_at', 'created_at'):
+        val = job.get(key)
+        if val:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                continue
+    return 0.0
+
+
+def _merge_job_record(mem: dict | None, disk: dict | None) -> dict | None:
+    if mem and disk:
+        if _job_recency(mem) >= _job_recency(disk):
+            return dict(mem)
+        return dict(disk)
+    return dict(mem) if mem else (dict(disk) if disk else None)
 
 
 def list_query_jobs(*, limit: int = 30, active_only: bool = False) -> list[dict]:

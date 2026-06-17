@@ -8,6 +8,7 @@ from studio.export.viz_workspace import (
     COCO_SUBDIR,
     build_viz_workspace,
     clean_stale_coco_artifacts,
+    prepare_export_dir_for_viz,
     should_use_viz_workspace,
 )
 
@@ -97,6 +98,14 @@ class TestVizWorkspace(unittest.TestCase):
             os.path.normpath(viz['images'][0]['file_name']),
             os.path.normpath(self.img_path),
         )
+
+    def test_prepare_skips_rebuild_when_viz_coco_fresh(self):
+        self._write_main_coco()
+        path1, _ = prepare_export_dir_for_viz(self.export_dir)
+        mtime1 = os.path.getmtime(path1)
+        path2, _ = prepare_export_dir_for_viz(self.export_dir)
+        self.assertEqual(path1, path2)
+        self.assertEqual(os.path.getmtime(path2), mtime1)
 
 
 if __name__ == '__main__':

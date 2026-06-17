@@ -6,7 +6,7 @@ import os
 from typing import Any
 
 from orchestration.agent_context import build_agent_context
-from orchestration.loader import discover_kestra_flows, discover_pipelines
+from orchestration.loader import discover_pipelines
 from orchestration.pipeline_validate import validate_pipeline_path, validate_pipeline_text
 
 
@@ -92,14 +92,6 @@ def list_pipelines_for_agent(*, catalog: str = 'repo') -> dict[str, Any]:
                 'label': p.get('name') or p.get('id'),
                 'engine': 'legacy',
                 'valid': p.get('_valid'),
-            })
-        for f in discover_kestra_flows():
-            rows.append({
-                'id': f.get('id'),
-                'path': f.get('_path'),
-                'label': f.get('description') or f.get('id'),
-                'engine': 'kestra',
-                'valid': f.get('_valid'),
             })
     return {'pipelines': rows}
 

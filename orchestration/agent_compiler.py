@@ -43,7 +43,7 @@ def compile_agent_draft(text: str) -> dict:
         'yaml': raw_yaml,
         'pipeline': defn,
         'errors': errors,
-        'engine': 'kestra' if defn.get('tasks') else 'legacy',
+        'engine': 'legacy',
     }
     if defn.get('tasks'):
         result['definition'] = None

@@ -67,11 +67,13 @@ export default function EnvVarPanel({
   );
 }
 
-export function GlobalEnvEditor({ rows = [], onChange }) {
+export function GlobalEnvEditor({ rows = [], onChange, hint }) {
   return (
     <section className="env-var-panel env-var-global" data-testid="env-var-global">
       <h3 className="env-var-panel-title">全局环境变量</h3>
-      <p className="muted env-var-global-hint">Stage1 / Stage2 策略均可引用；键名建议使用大写，如 PRODUCT_LINE。</p>
+      <p className="muted env-var-global-hint">
+        {hint || 'Stage1 / Stage2 策略均可引用；键名建议使用大写，如 PRODUCT_LINE。'}
+      </p>
       <div className="env-var-kv-list">
         {rows.map((row, idx) => (
           <div key={row._id || idx} className="env-var-kv-row">

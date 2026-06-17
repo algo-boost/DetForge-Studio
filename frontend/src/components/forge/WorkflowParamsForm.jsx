@@ -101,6 +101,19 @@ export default function WorkflowParamsForm({ schema = {}, value = {}, onChange, 
           );
         }
 
+        if (type === 'boolean') {
+          return (
+            <label key={key} className="wf-param-row wf-param-row-check">
+              <input
+                type="checkbox"
+                checked={Boolean(val)}
+                onChange={(e) => set(key, e.target.checked)}
+              />
+              <span>{label}</span>
+            </label>
+          );
+        }
+
         return (
           <label key={key} className="wf-param-row">
             <span>{label}</span>

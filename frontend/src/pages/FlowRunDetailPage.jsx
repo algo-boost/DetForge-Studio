@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, toast } from '../api/client';
-import SceneHubNav from '../components/SceneHubNav';
 import FlowGraphPanel from '../components/flows/FlowGraphPanel';
 import FlowRunInputsSummary from '../components/flows/FlowRunInputsSummary';
+import FlowsSceneShell from '../components/flows/FlowsSceneShell';
 import StatusPill from '../components/ui/StatusPill';
 import { usePolling } from '../hooks/usePolling';
-import { flowRunPath, kestraStudioPath } from '../lib/flowsRun';
+import { flowRunPath } from '../lib/flowsRun';
 
 export default function FlowRunDetailPage() {
   const { runKey: encodedKey } = useParams();
@@ -82,17 +82,43 @@ export default function FlowRunDetailPage() {
   const isWaiting = detail?.status === 'waiting_human';
   const gateInstructions = detail?.gate_step?.human_action?.instructions
     || (detail?.source === 'demo' ? '演示人工卡点：点击「继续运行」' : null);
+  const isForgeWorkflow = detail?.source === 'workflow';
+  const showFlowTaskLink = Boolean(detail?.flow_id) && !isForgeWorkflow;
+  const workflowLinks = isForgeWorkflow
+    ? (detail?.steps || []).flatMap((s) => {
+        const out = s.output || s.io?.outputs || {};
+        const items = [];
+        if (out.task_id) {
+          items.push({
+            key: `${s.step_id}-task`,
+            label: `查询结果（${s.step_id}）`,
+            to: `/query-results?task=${encodeURIComponent(out.task_id)}`,
+          });
+        }
+        if (out.job_id) {
+          items.push({
+            key: `${s.step_id}-job`,
+            label: `预测任务 #${out.job_id}`,
+            to: `/jobs?id=${out.job_id}`,
+          });
+        }
+        return items;
+      })
+    : [];
 
   return (
-    <div className="panel active flows-page flows-page--wide">
-      <SceneHubNav variant="flows" />
+    <FlowsSceneShell layout="wide">
       <header className="flows-page-header">
         <div>
           <h1 className="flows-page-title">执行详情</h1>
           <p className="flows-page-desc">
             {detail?.flow_id && (
               <>
-                <Link to={`/flows/tasks/${encodeURIComponent(detail.flow_id)}`}>{detail.flow_id}</Link>
+                {showFlowTaskLink ? (
+                  <Link to={`/flows/tasks/${encodeURIComponent(detail.flow_id)}`}>{detail.flow_id}</Link>
+                ) : (
+                  <span>{detail.flow_id}</span>
+                )}
                 {' · '}
               </>
             )}
@@ -121,19 +147,21 @@ export default function FlowRunDetailPage() {
                     前往筛选归档
                   </Link>
                 )}
-                {detail.kestra_url && (
-                  <>
-                    <Link to={kestraStudioPath(detail.kestra_url)} className="btn btn-sm">
-                      Kestra 编排器
-                    </Link>
-                    <a href={detail.kestra_url} className="btn btn-sm" target="_blank" rel="noreferrer">
-                      新窗口
-                    </a>
-                  </>
-                )}
                 <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={onResume}>
                   继续运行
                 </button>
+              </div>
+            </section>
+          )}
+
+          {workflowLinks.length > 0 && (
+            <section className="flows-section">
+              <h2 className="flows-section-title">快捷跳转</h2>
+              <div className="flows-human-actions">
+                {workflowLinks.map((item) => (
+                  <Link key={item.key} to={item.to} className="btn btn-sm">{item.label}</Link>
+                ))}
+                <Link to="/flows/compose" className="btn btn-sm">返回组合编排</Link>
               </div>
             </section>
           )}
@@ -145,7 +173,7 @@ export default function FlowRunDetailPage() {
                   <h2 className="flows-section-title">流程与步骤</h2>
                   <p className="flows-section-hint">左侧流程图、右侧节点详情（含本次实际入参/出参）；点击节点切换。</p>
                 </div>
-                {detail.flow_id && (
+                {showFlowTaskLink && (
                   <Link to={`/flows/tasks/${encodeURIComponent(detail.flow_id)}`} className="btn btn-sm">
                     任务详情
                   </Link>
@@ -164,7 +192,7 @@ export default function FlowRunDetailPage() {
 
               <div className="flows-detail-panel flows-run-graph-panel">
                 <FlowGraphPanel
-                  flowId={detail.flow_id}
+                  flowId={detail.graph ? undefined : detail.flow_id}
                   graph={detail.graph}
                   mode="run"
                 />
@@ -224,6 +252,6 @@ export default function FlowRunDetailPage() {
           </details>
         </>
       )}
-    </div>
+    </FlowsSceneShell>
   );
 }

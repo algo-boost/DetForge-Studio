@@ -61,6 +61,7 @@ import {
   resolveSampleCodeForExecution,
   splitStrategyPython,
 } from '../lib/sampleSync';
+import { buildQueryComposeParams } from '../lib/composeModuleParams';
 
 function prepareImportedStrategy(raw) {
   const data = { ...raw };
@@ -94,11 +95,19 @@ function envTimeReady(env) {
   return Boolean(String(env?.START_TIME || '').trim() && String(env?.END_TIME || '').trim());
 }
 
-export default function QueryPage() {
+export default function QueryPage({
+  embedded = false,
+  composeParams = null,
+  onComposeParamsChange = null,
+  lockDataSource = null,
+  upstreamPredictJobBound = false,
+} = {}) {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const restored = useRef(false);
+  const composeRestored = useRef(false);
+  const composeSyncSkip = useRef(false);
   const initialQuery = resolveInitialQueryState();
   const [sql, setSql] = useState(initialQuery.sql);
   const [pythonCode, setPythonCode] = useState(() => localStorage.getItem('pc_python') || DEFAULT_PY);
@@ -179,6 +188,8 @@ export default function QueryPage() {
   }, [patchQueryEnv]);
 
   const resolveFilterRulesCode = useCallback(async () => {
+    const saved = savedFilterRulesCodeRef.current?.trim() || '';
+    if (!studio.rules.length && saved) return saved;
     if (studio.rules.length) {
       const compiled = await studio.compile();
       if (compiled?.trim()) return compiled;
@@ -189,7 +200,7 @@ export default function QueryPage() {
         } catch { /* ignore */ }
       }
     }
-    return savedFilterRulesCodeRef.current?.trim() || '';
+    return saved;
   }, [studio]);
 
   const ensureFilterRulesReady = useCallback(async () => {
@@ -259,13 +270,16 @@ export default function QueryPage() {
   }, []);
 
   useEffect(() => {
-    const p = setTimePreset('7days');
-    setQueryEnv({
-      START_TIME: formatEnvDateTime(p.start),
-      END_TIME: formatEnvDateTime(p.end),
-    });
+    if (!embedded) {
+      const p = setTimePreset('7days');
+      setQueryEnv({
+        START_TIME: formatEnvDateTime(p.start),
+        END_TIME: formatEnvDateTime(p.end),
+      });
+    }
     refreshPathChecks(true);
     reloadStrategies().then(() => {
+      if (embedded) return;
       const urlStrategy = searchParams.get('strategy');
       const urlDs = searchParams.get('data_source');
       if (urlDs === 'detail' || urlDs === 'predict_result') {
@@ -550,15 +564,16 @@ export default function QueryPage() {
         if (cfg.viz_available) {
           const mode = cfg.viz_open_mode || 'prompt';
           if (mode === 'auto' && count <= 50) {
-            await openSampleGalleryWhenReady(
-              () => api.vizOpen({ source: 'query_task', task_id: job.task_id, dataset_name: summary }),
-              '查询结果',
-              {
-                newWindow: viewerOpenNewWindowRef.current,
-                taskId: job.task_id,
-                returnTo: buildQueryResultsReturnPath(job.task_id),
+            await openSampleGalleryWhenReady(null, '查询结果', {
+              newWindow: viewerOpenNewWindowRef.current,
+              taskId: job.task_id,
+              returnTo: buildQueryResultsReturnPath(job.task_id),
+              openBody: {
+                source: 'query_task',
+                task_id: job.task_id,
+                dataset_name: summary,
               },
-            );
+            });
           }
         }
       } catch { /* optional */ }
@@ -703,10 +718,89 @@ export default function QueryPage() {
   }, [pendingAutoExecJobId, predictJobId, sql, dataSource]);
 
   useEffect(() => {
+    if (embedded) return undefined;
     const onKey = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); onExecute(); } };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
+
+  useEffect(() => {
+    if (!lockDataSource || dataSource === lockDataSource) return;
+    setDataSource(lockDataSource);
+  }, [lockDataSource, dataSource]);
+
+  useEffect(() => {
+    if (!embedded || composeRestored.current) return undefined;
+    if (!composeParams?._ui && !composeParams?.strategy_id) {
+      composeRestored.current = true;
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      composeSyncSkip.current = true;
+      const ui = composeParams._ui || {};
+      const sid = ui.strategyId || composeParams.strategy_id;
+      if (sid) await loadStrategy(sid);
+      if (cancelled) return;
+      if (lockDataSource) setDataSource(lockDataSource);
+      else if (ui.dataSource) setDataSource(ui.dataSource);
+      if (ui.sql) setSql(ui.sql);
+      if (ui.pythonCode != null) setPythonCode(ui.pythonCode);
+      if (ui.sampleCode != null) setSampleCode(ui.sampleCode);
+      if (ui.filterMode) setFilterMode(ui.filterMode);
+      if (ui.queryEnv && Object.keys(ui.queryEnv).length) setQueryEnv(ui.queryEnv);
+      if (ui.predictJobId) setPredictJobId(ui.predictJobId);
+      if (ui.queryUiMode) setQueryUiMode(ui.queryUiMode);
+      composeRestored.current = true;
+      queueMicrotask(() => { composeSyncSkip.current = false; });
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded, composeParams, lockDataSource]);
+
+  useEffect(() => {
+    if (!embedded || !onComposeParamsChange || !composeRestored.current) return undefined;
+    if (composeSyncSkip.current) return undefined;
+    const timer = setTimeout(() => {
+      onComposeParamsChange(buildQueryComposeParams({
+        strategyId: loadedPresetId,
+        sql,
+        pythonCode,
+        sampleCode,
+        filterMode,
+        flow: studio.flow,
+        dataSource: lockDataSource || dataSource,
+        queryEnv,
+        predictJobId,
+        sampleSize,
+        randomSeed,
+        uiBackendMode,
+        processPipeline,
+        queryUiMode,
+        existingParams: composeParams,
+      }));
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [
+    embedded,
+    onComposeParamsChange,
+    loadedPresetId,
+    sql,
+    pythonCode,
+    sampleCode,
+    filterMode,
+    studio.flow,
+    dataSource,
+    lockDataSource,
+    queryEnv,
+    predictJobId,
+    sampleSize,
+    randomSeed,
+    uiBackendMode,
+    processPipeline,
+    queryUiMode,
+    composeParams,
+  ]);
 
   async function loadStrategy(id) {
     if (!id) {
@@ -1048,7 +1142,7 @@ export default function QueryPage() {
     : replayStage === '2' ? '历史回跑 · Stage2 预测后筛选' : null;
 
   return (
-    <div className="panel active" id="panel-query">
+    <div className={`panel active${embedded ? ' query-page-embedded' : ''}`} id="panel-query">
       {replayStageLabel && (
         <div className="query-replay-banner" data-testid="query-replay-banner">
           {replayStageLabel} — 在此调整 SQL / 筛选规则；时段在工具栏，其余参数见策略可调参数
@@ -1056,9 +1150,9 @@ export default function QueryPage() {
       )}
       <div className="topbar">
         <div className="topbar-left-group">
-          <SceneHubNav variant="query" className="scene-hub-nav-inline" />
+          {!embedded && <SceneHubNav variant="query" className="scene-hub-nav-inline" />}
           <div>
-            <div className="topbar-title">数据查询</div>
+            <div className="topbar-title">{embedded ? '查询配置' : '数据查询'}</div>
             <div className="topbar-sub" id="query-mode-hint">{queryModeHint}</div>
           </div>
           <StrategyPicker
@@ -1091,6 +1185,7 @@ export default function QueryPage() {
               {previewLoading ? '预览中…' : '预览筛选'}
             </button>
           )}
+          {!embedded && (
           <button
             type="button"
             className={`btn btn-sm btn-primary${previewStale && studio.rules.length ? ' needs-preview' : ''}`}
@@ -1101,6 +1196,7 @@ export default function QueryPage() {
           >
             {submitting ? '提交中…' : runningCount > 0 ? `执行查询（${runningCount}）` : '执行查询'}
           </button>
+          )}
           <div className="query-ui-mode-switch" role="group" aria-label="查询页视图">
             {QUERY_UI_MODE_OPTIONS.map((opt) => (
               <button
@@ -1124,7 +1220,7 @@ export default function QueryPage() {
             id="query-setup"
           >
           <div className="controls-card">
-            {!shouldHideInCompact(compactHide, 'data_source', queryUiMode) && (
+            {!shouldHideInCompact(compactHide, 'data_source', queryUiMode) && !lockDataSource && (
             <div className="control-inline control-source">
               <label htmlFor="data-source">数据源</label>
               <select id="data-source" value={dataSource} onChange={(e) => onChangeDataSource(e.target.value)}>
@@ -1133,7 +1229,19 @@ export default function QueryPage() {
               </select>
             </div>
             )}
-            {!shouldHideInCompact(compactHide, 'predict_job', queryUiMode) && dataSource === 'predict_result' && (
+            {lockDataSource && (
+            <div className="control-inline control-source">
+              <label>数据源</label>
+              <span className="muted">预测结果表（编排绑定）</span>
+            </div>
+            )}
+            {upstreamPredictJobBound && dataSource === 'predict_result' && (
+              <div className="control-inline control-predict-job">
+                <label>预测批次</label>
+                <span className="muted compose-upstream-inline">自动接入上游批量预测的 job_id</span>
+              </div>
+            )}
+            {!upstreamPredictJobBound && !shouldHideInCompact(compactHide, 'predict_job', queryUiMode) && dataSource === 'predict_result' && (
               <div className="control-inline control-predict-job">
                 <label htmlFor="predict-job-id">预测批次</label>
                 <select

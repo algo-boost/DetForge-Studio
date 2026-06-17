@@ -19,9 +19,10 @@ const HUBS = {
     { to: '/models', label: '模型' },
   ],
   flows: [
-    { to: '/flows', label: '编排任务', end: true, matchQuery: { tab: null } },
+    { to: '/flows/compose', label: '组合编排', end: true, matchPath: '/flows/compose' },
+    { to: '/flows', label: '流水线目录', matchPath: '/flows', matchQuery: { tab: null } },
     { to: '/flows/assistant', label: '编排助手', matchPath: '/flows/assistant' },
-    { to: '/flows?tab=history', label: '执行历史', matchQuery: { tab: 'history' } },
+    { to: '/flows/runs', label: '执行历史', matchPath: '/flows/runs', matchHistoryTab: true },
   ],
   platform: [
     { to: '/toolbox', label: '工具箱', end: true },
@@ -60,9 +61,15 @@ export default function SceneHubNav({ variant, className = '' }) {
             if (item.matchPath) {
               active = location.pathname === item.matchPath;
             }
+            if (item.matchHistoryTab) {
+              const params = new URLSearchParams(location.search);
+              active = location.pathname === '/flows/runs'
+                || (location.pathname === '/flows' && params.get('tab') === 'history');
+            }
             if (item.matchQuery) {
               const params = new URLSearchParams(location.search);
-              const               onFlowsHub = location.pathname === '/flows'
+              const onFlowsHub = location.pathname === '/flows'
+                || location.pathname === '/flows/compose'
                 || location.pathname.startsWith('/flows/tasks/')
                 || location.pathname === '/flows/assistant';
               active = onFlowsHub && Object.entries(item.matchQuery).every(([key, val]) => {

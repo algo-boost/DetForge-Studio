@@ -73,6 +73,51 @@ class SchemaTests(unittest.TestCase):
         self.assertIn(('manual_qc', 'workflow_status'), cols)
         self.assertIn(('job_item', 'next_retry_at'), cols)
 
+    def test_list_jobs_uses_id_first_query(self):
+        """列表查询应先按 id 分页，避免 SELECT * 拉大 JSON params 导致 sort buffer 溢出。"""
+        mock_client = unittest.mock.MagicMock()
+        mock_client.fetchall.side_effect = [
+            [{'id': 11}, {'id': 10}],
+            [{
+                'id': 11, 'job_type': 'predict', 'name': 'batch · M1', 'status': 'done',
+                'priority': 100, 'intra_concurrency': 1, 'total': 10, 'done': 10, 'failed': 0,
+                'error': None, 'worker_id': None, 'heartbeat': None,
+                'created_at': None, 'started_at': None, 'finished_at': None,
+                'params': '{"model_name": "M1", "predict_mode": "batch"}',
+            }],
+        ]
+        with patch.object(forge_db, '_client', return_value=mock_client):
+            rows = forge_db.list_jobs(status='done', job_type='predict', limit=20)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['params']['model_name'], 'M1')
+        id_sql = mock_client.fetchall.call_args_list[0][0][0]
+        detail_sql = mock_client.fetchall.call_args_list[1][0][0]
+        self.assertIn('SELECT id FROM', id_sql)
+        self.assertNotIn('SELECT *', id_sql)
+        self.assertNotIn('SELECT *', detail_sql)
+        self.assertIn('JSON_EXTRACT', detail_sql)
+
+    def test_list_interrupted_jobs_uses_id_first_query(self):
+        mock_client = unittest.mock.MagicMock()
+        mock_client.fetchall.side_effect = [
+            [{'id': 7}],
+            [{
+                'id': 7, 'job_type': 'predict', 'name': 'batch', 'status': 'paused',
+                'total': 100, 'done': 40, 'failed': 0,
+                'interrupted_at': '1710000000', 'interrupted_reason': 'shutdown',
+                'remaining': 60,
+            }],
+        ]
+        with patch.object(forge_db, '_client', return_value=mock_client):
+            rows = forge_db.list_interrupted_jobs(limit=10)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['remaining'], 60)
+        id_sql = mock_client.fetchall.call_args_list[0][0][0]
+        detail_sql = mock_client.fetchall.call_args_list[1][0][0]
+        self.assertIn('SELECT id FROM', id_sql)
+        self.assertNotIn('JSON_EXTRACT', id_sql)
+        self.assertIn('WHERE j.id IN', detail_sql)
+
 
 # ── 路径安全 ───────────────────────────────────────────────────────
 
@@ -369,7 +414,7 @@ class FrameworkInferTests(unittest.TestCase):
         self.assertEqual(forge_service.infer_framework('dino'), ('dino', None))
         self.assertEqual(forge_service.infer_framework('rtdetr'), ('hq_det', 'rtdetr'))
         self.assertEqual(forge_service.infer_framework('unknown'), ('', None))
-        self.assertEqual(forge_service.infer_framework('DET0307'), ('', None))
+        self.assertEqual(forge_service.infer_framework('DET0307'), ('hq_det', None))
         self.assertEqual(forge_service.infer_framework('DETRTDETR'), ('hq_det', 'rtdetr'))
 
     @patch('studio.forge.forge_service.os.path.isfile', return_value=True)

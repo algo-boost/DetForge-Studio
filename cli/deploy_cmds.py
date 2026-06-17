@@ -4,24 +4,13 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from pathlib import Path
 
-from orchestration.native.bootstrap import ensure_kestra_database
-from orchestration.native.config_render import render_kestra_application
 from orchestration.native.defaults import load_defaults
-from orchestration.native.kestra_fetch import (
-    assets_present,
-    ensure_kestra_assets,
-    kestra_launch_argv,
-)
-from orchestration.native.paths import KESTRA_BIN, KESTRA_JAR
 from orchestration.native.process_manager import (
     DeployError,
     collect_status,
     require_config,
-    require_java,
     start_iisp,
-    start_kestra,
     stop_platform,
 )
 from studio.paths import APP_ROOT
@@ -34,23 +23,6 @@ STOP_HINT = (
 )
 
 
-def cmd_deploy_bootstrap_db(args: argparse.Namespace) -> int:
-    db = ensure_kestra_database(args.database or None)
-    print(f'OK database `{db}` ready')
-    return 0
-
-
-def cmd_deploy_render_config(args: argparse.Namespace) -> int:
-    defaults = load_defaults()
-    out = render_kestra_application(
-        deploy_root=Path(args.deploy_root) if args.deploy_root else None,
-        defaults=defaults,
-        kestra_database=args.database or None,
-    )
-    print(out)
-    return 0
-
-
 def cmd_deploy_status(_args: argparse.Namespace) -> int:
     defaults = load_defaults()
     for row in collect_status(defaults):
@@ -60,22 +32,6 @@ def cmd_deploy_status(_args: argparse.Namespace) -> int:
             print(f"  {row.name}: pid {row.pid} 但 HTTP 未响应")
         else:
             print(f"  {row.name}: stopped")
-    if KESTRA_JAR.is_file():
-        print(f'  vendor: {KESTRA_JAR}')
-    elif KESTRA_BIN.is_file():
-        print(f'  vendor: {KESTRA_BIN}')
-    else:
-        print('  vendor: 未下载（运行 `iisp deploy fetch`）')
-    return 0
-
-
-def cmd_deploy_fetch(_args: argparse.Namespace) -> int:
-    try:
-        ensure_kestra_assets(load_defaults())
-    except Exception as exc:  # noqa: BLE001
-        print(f'ERROR: {exc}', file=sys.stderr)
-        return 1
-    print(f'OK Kestra 就绪：{" ".join(kestra_launch_argv())}')
     return 0
 
 
@@ -87,27 +43,11 @@ def cmd_deploy_start(args: argparse.Namespace) -> int:
         return 1
 
 
-def _deploy_start(args: argparse.Namespace) -> int:
+def _deploy_start(_args: argparse.Namespace) -> int:
     defaults = load_defaults()
     print('==> IISP 平台启动（原生）')
     print(f'    APP_ROOT={APP_ROOT}')
-    print(f'==> Java: {require_java()}')
     require_config()
-
-    if not assets_present():
-        print('==> 首次运行：获取 Kestra…')
-        ensure_kestra_assets(defaults)
-
-    print(f'==> Bootstrap MySQL 库 `{defaults.kestra_mysql_database}`')
-    ensure_kestra_database(defaults.kestra_mysql_database)
-
-    print('==> 渲染 Kestra 配置')
-    config_yml = render_kestra_application(defaults=defaults, kestra_database=defaults.kestra_mysql_database)
-
-    print(f'==> 启动 Kestra :{defaults.kestra_port}')
-    kestra_pid = start_kestra(config_yml=config_yml, defaults=defaults)
-    if kestra_pid:
-        print(f'    OK Kestra UI {defaults.kestra_url} (pid {kestra_pid})')
 
     print(f'==> 启动 IISP :{defaults.iisp_port}')
     iisp_pid = start_iisp(defaults=defaults)
@@ -117,7 +57,6 @@ def _deploy_start(args: argparse.Namespace) -> int:
     print('')
     print('==========================================')
     print(f'  IISP   {defaults.iisp_url}/')
-    print(f'  Kestra {defaults.kestra_url}/  ({defaults.kestra_user})')
     print(f'  停止   {STOP_HINT}')
     print('==========================================')
     return 0
@@ -130,26 +69,14 @@ def cmd_deploy_stop(_args: argparse.Namespace) -> int:
 
 
 def register_deploy_subparser(sub: argparse._SubParsersAction) -> None:
-    deploy = sub.add_parser('deploy', help='原生一体部署（Kestra + IISP）')
+    deploy = sub.add_parser('deploy', help='原生 IISP 部署')
     deploy_sub = deploy.add_subparsers(dest='deploy_cmd')
-
-    p_boot = deploy_sub.add_parser('bootstrap-db', help='创建 Kestra MySQL 库')
-    p_boot.add_argument('--database', default='')
-    p_boot.set_defaults(func=cmd_deploy_bootstrap_db)
-
-    p_render = deploy_sub.add_parser('render-config', help='渲染 kestra-application.yml')
-    p_render.add_argument('--deploy-root', default='')
-    p_render.add_argument('--database', default='')
-    p_render.set_defaults(func=cmd_deploy_render_config)
-
-    p_fetch = deploy_sub.add_parser('fetch', help='获取 Kestra 运行资产（跨平台）')
-    p_fetch.set_defaults(func=cmd_deploy_fetch)
 
     p_status = deploy_sub.add_parser('status', help='平台进程状态')
     p_status.set_defaults(func=cmd_deploy_status)
 
-    p_start = deploy_sub.add_parser('start', help='启动 Kestra + IISP')
+    p_start = deploy_sub.add_parser('start', help='启动 IISP')
     p_start.set_defaults(func=cmd_deploy_start)
 
-    p_stop = deploy_sub.add_parser('stop', help='停止 Kestra + IISP')
+    p_stop = deploy_sub.add_parser('stop', help='停止 IISP')
     p_stop.set_defaults(func=cmd_deploy_stop)

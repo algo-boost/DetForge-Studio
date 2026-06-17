@@ -9,12 +9,6 @@ releases:
       - id: daily_ng_curation
         path: pipelines/legacy/daily_ng_curation.yaml
         version: "2"
-      - id: closed_loop_demo_smoke
-        path: pipelines/kestra/closed_loop_demo_smoke.yaml
-        version: "1"
-      - id: closed_loop_demo
-        path: pipelines/kestra/closed_loop_demo.yaml
-        version: "1"
       - id: welcome_demo
         path: pipelines/demo/welcome_flow.yaml
         version: "1"

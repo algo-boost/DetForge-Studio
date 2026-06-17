@@ -9,6 +9,7 @@ import uuid
 from studio.paths import PROJECT_ROOT
 
 _sessions = {}
+_task_open_cache: dict[str, dict] = {}
 _lock = threading.Lock()
 SESSION_TTL = 3600 * 4
 
@@ -38,11 +39,24 @@ def _resolve_viz_coco_and_image_dir(export_dir, *, selected_indices=None):
     return coco_path, export_dir
 
 
+def _task_cache_key(task_id, selected_indices=None) -> str:
+    if not selected_indices:
+        return str(task_id)
+    items = sorted({int(i) for i in selected_indices})
+    return f'{task_id}:{",".join(map(str, items))}'
+
+
 def open_from_task(task_id, dataset_name=None, selected_indices=None):
     """从查询 task_id 打开 COCO 看图会话。"""
     task_id = str(task_id or '').strip()
     if not task_id:
         raise ValueError('task_id 必填')
+    cache_key = _task_cache_key(task_id, selected_indices)
+    with _lock:
+        cached = _task_open_cache.get(cache_key)
+        if cached and cached.get('session_id') in _sessions:
+            return dict(cached)
+
     export_dir = _task_export_dir(task_id)
     if not os.path.isdir(export_dir):
         raise FileNotFoundError(f'导出目录不存在: {export_dir}')
@@ -61,7 +75,10 @@ def open_from_task(task_id, dataset_name=None, selected_indices=None):
         indices = set(int(i) for i in selected_indices)
         payload = _filter_payload_by_indices(payload, indices)
 
-    return _store_session(payload, source='query_task', task_id=task_id)
+    result = _store_session(payload, source='query_task', task_id=task_id)
+    with _lock:
+        _task_open_cache[cache_key] = dict(result)
+    return result
 
 
 def open_from_paths(coco_json_path, image_dir=None, dataset_name='dataset'):

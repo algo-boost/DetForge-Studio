@@ -1111,7 +1111,27 @@ def training_models_api():
             else:
                 bundle = platform_models.list_project_train_models(project_id)
                 if not bundle.get('models'):
-                    bundle = platform_models.sync_project_train_models(project_id, force=True)
+                    try:
+                        bundle = platform_models.sync_project_train_models(project_id, force=True)
+                    except Exception as sync_err:
+                        aid = approach_id or bundle.get('approach_id')
+                        vb = {'models': [], 'meta': {}}
+                        if aid:
+                            client = get_db_client()
+                            vb = fetch_training_models(client, config, approach_id=int(aid), limit=limit)
+                        models = (vb.get('models') or [])[:limit]
+                        meta = {
+                            **(vb.get('meta') or {}),
+                            'project_id': project_id,
+                            'approach_id': aid or bundle.get('approach_id'),
+                            'count': len(models),
+                            'sync_error': str(sync_err),
+                        }
+                        if models:
+                            meta['source'] = 'modeltrainconfig'
+                        else:
+                            meta['source'] = 'platform_cache'
+                        return jsonify({'success': True, 'models': models, 'meta': meta})
             models = (bundle.get('models') or [])[:limit]
             return jsonify({
                 'success': True,

@@ -10,29 +10,49 @@ from studio.query.strategy_executor import execute_strategy_ref
 from studio.query.strategy_loader import get_all_strategies, get_all_templates
 
 
+def _resolve_expr(expr, context):
+    if expr.startswith('params.'):
+        cur = context.get('params') or {}
+        for part in expr.split('.')[1:]:
+            if isinstance(cur, dict):
+                cur = cur.get(part)
+            else:
+                return None
+        return cur
+    if expr.startswith('steps.'):
+        rest = expr[len('steps.'):]
+        steps_ctx = context.get('steps') or {}
+        for step_id in sorted(steps_ctx.keys(), key=len, reverse=True):
+            if rest == step_id:
+                return steps_ctx.get(step_id)
+            prefix = f'{step_id}.'
+            if rest.startswith(prefix):
+                cur = steps_ctx.get(step_id)
+                for part in rest[len(prefix):].split('.'):
+                    if isinstance(cur, dict):
+                        cur = cur.get(part)
+                    else:
+                        return None
+                return cur
+        return None
+    return None
+
+
 def resolve_templates(value, context):
     """将 params 中的 {{params.x}} / {{steps.id.key}} 替换为实际值。"""
     if isinstance(value, str):
+        stripped = value.strip()
+        whole = re.fullmatch(r'\{\{([^}]+)\}\}', stripped)
+        if whole:
+            resolved = _resolve_expr(whole.group(1).strip(), context)
+            if resolved is not None:
+                return resolved
+
         def _repl(m):
-            expr = m.group(1).strip()
-            if expr.startswith('params.'):
-                cur = context.get('params') or {}
-                for part in expr.split('.')[1:]:
-                    if isinstance(cur, dict):
-                        cur = cur.get(part)
-                    else:
-                        return m.group(0)
-                return '' if cur is None else str(cur)
-            if expr.startswith('steps.'):
-                parts = expr.split('.')
-                cur = context.get('steps') or {}
-                for part in parts[1:]:
-                    if isinstance(cur, dict):
-                        cur = cur.get(part)
-                    else:
-                        return m.group(0)
-                return '' if cur is None else str(cur)
-            return m.group(0)
+            resolved = _resolve_expr(m.group(1).strip(), context)
+            if resolved is None:
+                return m.group(0)
+            return str(resolved)
 
         return re.sub(r'\{\{([^}]+)\}\}', _repl, value)
     if isinstance(value, dict):
@@ -42,7 +62,26 @@ def resolve_templates(value, context):
     return value
 
 
-def _build_query_context(params):
+def _merge_env_overrides(ctx, env):
+    """env 中非空值覆盖 ctx（策略环境变量最高优先级）。"""
+    if not isinstance(env, dict):
+        return ctx
+    out = dict(ctx)
+    for key, val in env.items():
+        if val is None:
+            continue
+        text = str(val).strip()
+        if not text:
+            continue
+        k = str(key).upper()
+        if k in ('START_TIME', 'END_TIME'):
+            out[k] = text
+        else:
+            out[key] = text
+    return out
+
+
+def _build_query_context(params, context=None):
     tw = params.get('time_window')
     if isinstance(tw, str):
         try:
@@ -57,9 +96,22 @@ def _build_query_context(params):
         'START_TIME': start,
         'END_TIME': end,
     }
-    env = params.get('env') or {}
-    if isinstance(env, dict):
-        ctx.update(env)
+    step_env = params.get('env') or {}
+    if isinstance(step_env, dict):
+        ctx = _merge_env_overrides(ctx, step_env)
+    global_env = (context or {}).get('resolved_env')
+    if global_env is None:
+        run_params = (context or {}).get('params') or {}
+        from studio.forge.run_env_resolver import resolve_run_params_env
+        global_env = resolve_run_params_env(
+            run_params,
+            ctx={
+                **(context or {}),
+                'run_id': (context or {}).get('run_id'),
+            },
+        )
+    if isinstance(global_env, dict):
+        ctx = _merge_env_overrides(ctx, global_env)
     return ctx
 
 
@@ -78,7 +130,7 @@ def run_query_step(params, context):
     if not strategy_id and not params.get('strategy_snapshot'):
         return {'skipped': True, 'reason': 'no_strategy_id'}
 
-    qctx = _build_query_context(params)
+    qctx = _build_query_context(params, context)
     ds = params.get('data_source') or 'detail'
     jid = params.get('predict_job_id') or params.get('job_id')
     if jid:

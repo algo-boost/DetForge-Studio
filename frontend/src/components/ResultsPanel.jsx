@@ -66,6 +66,21 @@ export function ResultsPanel({
       }
     } catch { /* ignore */ }
   }, [visible, rawData.length, pageLayout]);
+
+  useEffect(() => {
+    if (!taskId || !visible) return undefined;
+    const hrefs = ['/viz/', '/viz/static/vendor/plotly.min.js'];
+    const links = hrefs.map((href) => {
+      const link = document.createElement('link');
+      link.rel = 'prefetch';
+      link.as = href.endsWith('.js') ? 'script' : 'document';
+      link.href = href;
+      document.head.appendChild(link);
+      return link;
+    });
+    return () => links.forEach((link) => link.remove());
+  }, [taskId, visible]);
+
   const [activeIndex, setActiveIndex] = useState(0);
   const [viewerIdx, setViewerIdx] = useState(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -206,20 +221,20 @@ export function ResultsPanel({
     }
     if (viewerOpening) return;
     setViewerOpening(true);
-    toast('正在准备样本图库…', 'info');
     try {
       const indices = selected.size ? [...selected] : undefined;
-      await openSampleGalleryWhenReady(() => api.vizOpen({
-        source: 'query_task',
-        task_id: taskId,
-        selected_indices: indices,
-        dataset_name: executionDetail?.summary || `query-${taskId}`,
-      }), '查询结果', {
+      await openSampleGalleryWhenReady(null, '查询结果', {
         newWindow: viewerOpenNewWindow,
         taskId,
         returnTo: buildQueryResultsReturnPath(taskId),
+        openBody: {
+          source: 'query_task',
+          task_id: taskId,
+          selected_indices: indices,
+          dataset_name: executionDetail?.summary || `query-${taskId}`,
+        },
       });
-      toast(viewerOpenNewWindow ? '样本图库已在新窗口打开' : '样本图库已打开，可点击「返回查询结果」回到筛选结果', 'success');
+      toast(viewerOpenNewWindow ? '样本图库已在新窗口打开' : '正在打开样本图库…', viewerOpenNewWindow ? 'success' : 'info');
     } catch (e) {
       toast(e.message, 'error');
     } finally {

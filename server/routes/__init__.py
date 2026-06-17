@@ -10,7 +10,6 @@ from server.routes.query_ui import ensure_query_tool_mounted
 from server.routes.viz import viz_bp, ensure_viz_mounted
 from server.routes.unify import unify_bp, ensure_unify_mounted
 from server.routes.spa import spa_bp
-from server.routes.kestra_embed import kestra_embed_bp
 
 
 def register_routes(app):
@@ -27,5 +26,4 @@ def register_routes(app):
     ensure_query_tool_mounted(app)
     ensure_viz_mounted(app)
     ensure_unify_mounted(app)
-    app.register_blueprint(kestra_embed_bp)
     app.register_blueprint(spa_bp)

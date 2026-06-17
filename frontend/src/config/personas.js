@@ -22,7 +22,7 @@ export const PERSONAS = {
     id: 'sa',
     label: '解决方案',
     tier: USER_TIERS.CONFIGURER,
-    defaultHome: '/flows',
+    defaultHome: '/flows/compose',
   },
   algo: {
     id: 'algo',

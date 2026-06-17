@@ -22,16 +22,16 @@ from studio.paths import APP_ROOT
 
 _EXAMPLE_YAMLS = {
     'daily_ng_curation': os.path.join(
-        APP_ROOT, 'docs', 'examples', 'kestra', 'daily_ng_curation.yaml',
+        APP_ROOT, 'iisp-catalog', 'pipelines', 'legacy', 'daily_ng_curation.yaml',
     ),
-    'closed_loop_demo_smoke': os.path.join(
-        APP_ROOT, 'iisp-catalog', 'pipelines', 'kestra', 'closed_loop_demo_smoke.yaml',
+    'welcome_demo': os.path.join(
+        APP_ROOT, 'iisp-catalog', 'pipelines', 'demo', 'welcome_flow.yaml',
     ),
 }
 
 _TEMPLATE_HINTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r'捞图|daily|ng|curation|定时|归档', re.I), 'daily_ng_curation'),
-    (re.compile(r'smoke|demo|闭环|演示|样本', re.I), 'closed_loop_demo_smoke'),
+    (re.compile(r'smoke|demo|闭环|演示|样本|welcome', re.I), 'welcome_demo'),
 ]
 
 _PROVIDER_LABELS = {
@@ -152,25 +152,28 @@ def _llm_configured() -> bool:
     return bool(os.environ.get('IISP_FLOW_AGENT_API_URL') and os.environ.get('IISP_FLOW_AGENT_API_KEY'))
 
 
-def build_kestra_compose_prompt(tools: list[dict]) -> str:
+def build_flow_compose_prompt(tools: list[dict]) -> str:
     tool_lines = []
     for t in tools[:50]:
         tool_lines.append(f"- {t.get('id')}: {t.get('label')} — {(t.get('description') or '')[:100]}")
     tools_block = '\n'.join(tool_lines) or '- （暂无注册工具）'
     return (
-        '你是 IISP 编排助手，产出 Kestra Flow YAML（不是 legacy nodes 格式）。\n'
+        '你是 IISP 编排助手，产出 legacy Pipeline YAML（nodes/steps 格式，不是 tasks）。\n'
         '约束：\n'
-        '- 顶层：id, namespace, description, inputs（可选）, tasks\n'
-        '- 每步 HTTP 调 IISP：uri: "{{ envs.iisp_base }}/v1/tools/{tool_id}/invoke"\n'
-        '- 必须写中文注释（文件头 + 每步 【步骤 id】工具 xxx — 入参/出参）\n'
-        '- tool_id 只能来自下方清单，禁止编造\n'
-        '- 定时任务用 triggers.cron；time_window 等动态入参放在 inputs，运行时解析\n'
+        '- 顶层：id, name, description, params_schema（可选）, nodes 或 steps\n'
+        '- 每步：id, tool/kind, params；需要顺序依赖时用 requires\n'
+        '- 必须写中文注释（文件头 + 每步说明）\n'
+        '- tool/kind 只能来自下方清单，禁止编造\n'
         '可用工具：\n'
         f'{tools_block}\n'
-        '参考：iisp-catalog/pipelines/kestra/closed_loop_demo_smoke.yaml\n'
+        '参考：iisp-catalog/pipelines/demo/welcome_flow.yaml\n'
+        '复杂生产链推荐用户使用「组合编排」页（/flows/compose）。\n'
         '当用户描述的是编排需求时，只输出一个 ```yaml 代码块（可附一句话说明）。\n'
         '当用户只是寒暄或提问（非编排需求）时，简短回应并主动引导其描述要编排的流程。'
     )
+
+
+build_kestra_compose_prompt = build_flow_compose_prompt
 
 
 def _read_example_yaml(key: str) -> str:
@@ -367,20 +370,20 @@ _SAFE_ID = re.compile(r'^[a-z0-9][a-z0-9_.-]{1,63}$')
 
 
 def save_flow_yaml(yaml_text: str, *, overwrite: bool = False) -> dict[str, Any]:
-    """把助手生成的 Kestra Flow YAML 保存到 Catalog，使其可在 /flows 运行。"""
+    """把助手生成的 legacy Pipeline YAML 保存到 Catalog。"""
     if yaml is None:
         return {'success': False, 'error': '需要 PyYAML'}
     validation = validate_yaml_text(yaml_text)
     if not validation.get('valid'):
         return {'success': False, 'error': '校验未通过，请先修正', 'validation': validation}
-    if validation.get('engine') != 'kestra':
-        return {'success': False, 'error': '仅支持保存 Kestra Flow（含 tasks）', 'validation': validation}
+    if validation.get('engine') != 'legacy':
+        return {'success': False, 'error': '仅支持 legacy nodes/steps 格式；生产链请用组合编排', 'validation': validation}
 
     flow_id = str(validation.get('id') or '').strip()
     if not _SAFE_ID.match(flow_id):
         return {'success': False, 'error': f'非法 flow id: {flow_id!r}（仅小写字母/数字/_-.）'}
 
-    target_dir = os.path.join(APP_ROOT, 'iisp-catalog', 'pipelines', 'kestra')
+    target_dir = os.path.join(APP_ROOT, 'iisp-catalog', 'pipelines', 'legacy')
     os.makedirs(target_dir, exist_ok=True)
     target = os.path.join(target_dir, f'{flow_id}.yaml')
     existed = os.path.isfile(target)
@@ -412,10 +415,11 @@ def preview_graph_from_yaml(yaml_text: str) -> dict[str, Any]:
         return {'success': False, 'error': f'YAML 解析失败: {exc}', 'validation': validation}
     if not isinstance(defn, dict):
         return {'success': False, 'error': 'Flow 必须是 YAML 对象', 'validation': validation}
-    from orchestration.kestra_graph import build_flow_graph
+    from orchestration.flow_graph import build_flow_graph
 
-    engine = 'kestra' if defn.get('tasks') else 'legacy'
-    graph = build_flow_graph(defn, engine=engine, yaml_text=yaml_text)
+    if defn.get('tasks'):
+        return {'success': False, 'error': '不再支持 Kestra tasks 格式', 'validation': validation}
+    graph = build_flow_graph(defn, engine='legacy', yaml_text=yaml_text)
     return {
         'success': True,
         'validation': validation,

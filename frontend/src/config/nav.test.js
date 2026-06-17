@@ -6,7 +6,7 @@ describe('nav config', () => {
     expect(resolveNavGroupId('/')).toBe('workbench');
     expect(resolveNavGroupId('/query')).toBe('work');
     expect(resolveNavGroupId('/query-results')).toBe('work');
-    expect(resolveNavGroupId('/flows')).toBe('flows');
+    expect(resolveNavGroupId('/flows/compose')).toBe('flows');
     expect(resolveNavGroupId('/flows/runs')).toBe('flows');
     expect(resolveNavGroupId('/flows/kestra')).toBe('flows');
     expect(resolveNavGroupId('/toolbox')).toBe('platform');
@@ -25,7 +25,14 @@ describe('nav config', () => {
 
   it('L2 configurer includes flows and strategies', () => {
     const groups = navGroupsForTier(USER_TIERS.CONFIGURER);
-    expect(groups.find((g) => g.id === 'flows')).toBeTruthy();
+    const flows = groups.find((g) => g.id === 'flows');
+    expect(flows).toBeTruthy();
+    expect(flows.items.map((i) => i.label)).toEqual([
+      '组合编排',
+      '流水线目录',
+      '编排助手',
+      '执行历史',
+    ]);
     const work = groups.find((g) => g.id === 'work');
     expect(work.items.some((i) => i.label === '查询策略')).toBe(true);
   });

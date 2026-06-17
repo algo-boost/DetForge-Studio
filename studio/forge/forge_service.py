@@ -26,7 +26,8 @@ def infer_framework(model_type, source=''):
         for sub in HQ_SUB_TYPES:
             if sub in mt:
                 return 'hq_det', sub
-    return '', None
+        # Magic-Fox 部署编码如 DET0307、DET0303 — 无子类型后缀时仍走 hq_det
+        return 'hq_det', None
 
 
 # ── 模型导入 ───────────────────────────────────────────────────────

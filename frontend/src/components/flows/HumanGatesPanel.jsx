@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { TODO_STATUS_LABEL } from '../home/homeTypes';
 
-export default function HumanGatesPanel({ items = [], onResumeKestra, compact = false }) {
+export default function HumanGatesPanel({ items = [], onResume, compact = false }) {
   if (!items.length) {
     return (
       <div className="empty-state">
@@ -9,6 +9,10 @@ export default function HumanGatesPanel({ items = [], onResumeKestra, compact = 
       </div>
     );
   }
+
+  const canResume = (item) => (
+    item.kind === 'workflow_human_gate' || item.kind === 'flow_human_gate'
+  );
 
   return (
     <ul className={`panel home-list${compact ? ' home-list--compact' : ''}`}>
@@ -24,11 +28,11 @@ export default function HumanGatesPanel({ items = [], onResumeKestra, compact = 
                 {TODO_STATUS_LABEL[item.status] || item.status}
               </div>
             </Link>
-            {item.kind === 'kestra_pause' && onResumeKestra && (
+            {canResume(item) && onResume && (
               <button
                 type="button"
                 className="btn btn-sm btn-primary home-list-action"
-                onClick={() => onResumeKestra(item)}
+                onClick={() => onResume(item)}
               >
                 继续
               </button>

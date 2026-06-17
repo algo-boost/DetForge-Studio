@@ -85,7 +85,7 @@ export function Layout() {
   }, [sidebarCollapsed]);
 
   useEffect(() => {
-    if (pathname === '/viewer' || pathname === '/flows/kestra') {
+    if (pathname === '/viewer') {
       setSidebarCollapsed(true);
     }
   }, [pathname]);
@@ -105,8 +105,14 @@ export function Layout() {
     const warmViz = () => {
       fetch('/viz/', { credentials: 'same-origin' }).catch(() => {});
       fetch('/api/viz/status', { credentials: 'same-origin' }).catch(() => {});
-      fetch('/unify/', { credentials: 'same-origin' }).catch(() => {});
-      fetch('/api/unify/status', { credentials: 'same-origin' }).catch(() => {});
+      fetch('/api/unify/status', { credentials: 'same-origin' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data?.mounted) {
+            fetch('/unify/', { credentials: 'same-origin' }).catch(() => {});
+          }
+        })
+        .catch(() => {});
     };
     if (typeof requestIdleCallback === 'function') {
       requestIdleCallback(warmViz, { timeout: 4000 });

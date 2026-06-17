@@ -12,7 +12,6 @@ export function buildPredictJobSql(table, jobId) {
   return `SELECT * FROM ${t}`;
 }
 export const DEFAULT_PY = `def process_data(df):
-    df = apply_filter_rules(df)
     return df`;
 
 export const RULES_CODE_PLACEHOLDER = '# 添加规则后将自动生成 apply_filter_rules(df)';

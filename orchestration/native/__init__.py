@@ -1,1 +1,1 @@
-"""原生 Kestra 部署：MySQL 引导、配置渲染、进程管理（无 Docker）。"""
+"""原生 IISP 部署：进程 pid 与健康检查（跨平台 macOS/Linux/Windows）。"""

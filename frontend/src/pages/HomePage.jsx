@@ -1,7 +1,9 @@
 import { Link } from 'react-router-dom';
+import { useMemo } from 'react';
 import { useQueryJobs } from '../context/QueryJobsContext';
 import { useWorkbenchData } from '../hooks/useWorkbenchData';
-import ActiveFlowsPanel from '../components/home/ActiveFlowsPanel';
+import FlowRunsSnapshot from '../components/home/FlowRunsSnapshot';
+import { filterNonFlowTodos } from '../components/home/flowTodoFilter';
 import HomeSection from '../components/home/HomeSection';
 import QuickActions from '../components/home/QuickActions';
 import RecentQueriesPanel from '../components/home/RecentQueriesPanel';
@@ -13,17 +15,19 @@ export default function HomePage() {
   const {
     todos,
     summary,
-    flows,
+    gateItems,
     busy,
     syncCatalog,
-    resumeKestra,
+    resumeFlow,
   } = useWorkbenchData();
+
+  const nonFlowTodos = useMemo(() => filterNonFlowTodos(todos), [todos]);
 
   return (
     <div className="panel active home-page">
       <header className="page-header">
         <h1>工作台</h1>
-        <p>待办、进行中的 Flow 与最近查询</p>
+        <p>待办、流水线运行与最近查询</p>
       </header>
 
       <QuickActions busy={busy} onSyncCatalog={syncCatalog} />
@@ -31,10 +35,14 @@ export default function HomePage() {
 
       <div className="panel-grid-3">
         <HomeSection title="待办">
-          <TodoList items={todos} onResumeKestra={resumeKestra} />
+          <TodoList items={nonFlowTodos} onResume={resumeFlow} />
         </HomeSection>
-        <HomeSection title="Flow 卡点">
-          <ActiveFlowsPanel flows={flows} />
+        <HomeSection title="流水线运行">
+          <FlowRunsSnapshot
+            summary={summary}
+            gateItems={gateItems}
+            onResume={resumeFlow}
+          />
         </HomeSection>
         <HomeSection title="最近查询">
           <RecentQueriesPanel jobs={jobs} />

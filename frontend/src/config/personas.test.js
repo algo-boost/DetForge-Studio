@@ -16,7 +16,7 @@ describe('personas config', () => {
   });
 
   it('resolveDefaultHome returns persona landing', () => {
-    expect(resolveDefaultHome('sa', USER_TIERS.CONFIGURER)).toBe('/flows');
+    expect(resolveDefaultHome('sa', USER_TIERS.CONFIGURER)).toBe('/flows/compose');
     expect(resolveDefaultHome('algo', USER_TIERS.CONFIGURER)).toBe('/query');
     expect(resolveDefaultHome('delivery', USER_TIERS.OPERATOR)).toBe('/');
   });

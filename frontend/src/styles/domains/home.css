@@ -95,3 +95,37 @@
   flex-shrink: 0;
 }
 
+.home-summary-link {
+  text-decoration: none;
+  color: inherit;
+}
+
+.home-summary-link:hover .home-stat-card {
+  border-color: var(--accent);
+}
+
+.home-flows-snapshot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.home-flows-empty {
+  padding: 16px;
+  font-size: 13px;
+}
+
+.home-flows-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  font-size: 12px;
+  padding: 4px 2px 0;
+}
+
+.home-flows-more {
+  margin: 0;
+  font-size: 12px;
+  padding: 0 4px;
+}
+

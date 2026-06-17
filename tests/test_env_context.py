@@ -100,5 +100,34 @@ class EnvContextTests(unittest.TestCase):
         self.assertIn('MIN_SCORE', keys)
 
 
+class ResolveQueryPythonTests(unittest.TestCase):
+    def test_rules_mode_without_rules_allows_sql_only(self):
+        from server.core import _resolve_query_python
+
+        code = _resolve_query_python(
+            {
+                'filter_mode': 'flow',
+                'flow': {'version': 2, 'nodes': []},
+                'python_code': 'def process_data(df):\n    return df',
+            },
+            {},
+        )
+        self.assertIn('def process_data', code)
+        self.assertNotIn('apply_filter_rules', code)
+
+    def test_apply_filter_rules_without_rules_still_errors(self):
+        from server.core import _resolve_query_python
+
+        with self.assertRaises(ValueError):
+            _resolve_query_python(
+                {
+                    'filter_mode': 'flow',
+                    'flow': {'version': 2, 'nodes': []},
+                    'python_code': 'def process_data(df):\n    return apply_filter_rules(df)',
+                },
+                {},
+            )
+
+
 if __name__ == '__main__':
     unittest.main()

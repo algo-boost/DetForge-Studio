@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, toast } from '../../api/client';
 import { showErrorModal, showResultModal } from '../../lib/feedbackModal';
@@ -7,6 +7,7 @@ import {
   resolveLocalApproachId,
   resolveMagicFoxApproachId,
 } from '../../lib/approachIds';
+import { buildPredictComposeParams } from '../../lib/composeModuleParams';
 
 function ModelCheckRow({ checked, onToggle, title, meta, badge, disabled }) {
   return (
@@ -47,6 +48,10 @@ export default function PlatformPredictPanel({
   allowLocalDir = true,
   compactIntro = false,
   wideLayout = false,
+  composeMode = false,
+  composeParams = null,
+  onComposeParamsChange = null,
+  upstreamTaskBound = false,
 }) {
   const [datasetId, setDatasetId] = useState('');
   const [dataSourceType, setDataSourceType] = useState('sync');
@@ -71,6 +76,8 @@ export default function PlatformPredictPanel({
   const [intra, setIntra] = useState(1);
   const [namePrefix, setNamePrefix] = useState('');
   const [localApproachId, setLocalApproachId] = useState(null);
+  const composeRestoredRef = useRef(false);
+  const composeSyncSkipRef = useRef(false);
 
   const magicFoxApproachId = resolveMagicFoxApproachId(project);
 
@@ -230,6 +237,90 @@ export default function PlatformPredictPanel({
   const usingSyncDataset = dataSourceType === 'sync';
   const usingLocalDir = dataSourceType === 'dir';
   const usingQueryTask = dataSourceType === 'query';
+
+  useEffect(() => {
+    if (!upstreamTaskBound) return;
+    setDataSourceType('query');
+  }, [upstreamTaskBound]);
+
+  useEffect(() => {
+    if (!composeMode || composeRestoredRef.current) return;
+    const ui = composeParams?._ui;
+    if (!ui && !composeParams?.model_id && !composeParams?.train_id) {
+      composeRestoredRef.current = true;
+      return;
+    }
+    composeSyncSkipRef.current = true;
+    if (ui?.dataSourceType && !upstreamTaskBound) setDataSourceType(ui.dataSourceType);
+    if (ui?.datasetId) setDatasetId(String(ui.datasetId));
+    if (ui?.localDir) setLocalDir(ui.localDir);
+    if (ui?.queryTaskId) setQueryTaskId(ui.queryTaskId);
+    if (ui?.queryIndices) setQueryIndices(ui.queryIndices);
+    if (ui?.threshold != null) setThreshold(String(ui.threshold));
+    if (ui?.maxSize != null) setMaxSize(String(ui.maxSize));
+    if (ui?.device != null) setDevice(ui.device);
+    if (ui?.intra != null) setIntra(Number(ui.intra) || 1);
+    if (ui?.namePrefix != null) setNamePrefix(ui.namePrefix);
+    if (ui?.selectedDeploy) setSelectedDeploy(ui.selectedDeploy);
+    if (ui?.selectedTrain) setSelectedTrain(ui.selectedTrain);
+    if (ui?.selectedRegistry) setSelectedRegistry(ui.selectedRegistry);
+    if (ui?.modelTab) setModelTab(ui.modelTab);
+    else if (composeParams?.train_id) setModelTab('train');
+    else if (composeParams?.model_id) setModelTab('deploy');
+    composeRestoredRef.current = true;
+    queueMicrotask(() => { composeSyncSkipRef.current = false; });
+  }, [composeMode, composeParams, upstreamTaskBound]);
+
+  useEffect(() => {
+    if (!composeMode || !onComposeParamsChange || !composeRestoredRef.current) return undefined;
+    if (composeSyncSkipRef.current) return undefined;
+    const timer = setTimeout(() => {
+      onComposeParamsChange(buildPredictComposeParams({
+        deploySelections,
+        trainSelections,
+        registrySelections,
+        threshold,
+        maxSize,
+        device,
+        intra,
+        namePrefix,
+        dataSourceType: upstreamTaskBound ? 'query' : dataSourceType,
+        datasetId,
+        localDir,
+        queryTaskId,
+        queryIndices,
+        projectId: project?.id,
+        selectedDeploy,
+        selectedTrain,
+        selectedRegistry,
+        modelTab,
+      }, composeParams));
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [
+    composeMode,
+    onComposeParamsChange,
+    deploySelections,
+    trainSelections,
+    registrySelections,
+    threshold,
+    maxSize,
+    device,
+    intra,
+    namePrefix,
+    dataSourceType,
+    upstreamTaskBound,
+    datasetId,
+    localDir,
+    queryTaskId,
+    queryIndices,
+    project?.id,
+    selectedDeploy,
+    selectedTrain,
+    selectedRegistry,
+    modelTab,
+    composeParams,
+  ]);
 
   const submit = async () => {
     if (usingSyncDataset && !datasetId) {
@@ -404,7 +495,7 @@ export default function PlatformPredictPanel({
             </div>
           </div>
 
-          {allowLocalDir && (
+          {allowLocalDir && !upstreamTaskBound && (
             <div className="platform-model-tabs platform-data-source-tabs">
               {DATA_SOURCE_TABS.filter((t) => t.id !== 'dir' || allowLocalDir).map((t) => (
                 <button
@@ -451,26 +542,34 @@ export default function PlatformPredictPanel({
 
           {usingQueryTask && (
             <div className="forge-form-grid platform-predict-form">
-              <label className="forge-span2">
-                查询 task_id
-                <input
-                  value={queryTaskId}
-                  onChange={(e) => setQueryTaskId(e.target.value)}
-                  placeholder="查询页执行后自动填入，或手动粘贴"
-                  spellCheck={false}
-                />
-              </label>
-              <label>
-                图片范围
-                <input
-                  readOnly
-                  className={queryIndices?.length ? 'platform-input-ok' : ''}
-                  value={queryIndices?.length ? `已选 ${queryIndices.length} 条` : '全部结果'}
-                />
-              </label>
-              <p className="platform-step-hint hint forge-span2">
-                在 <Link to="/">查询页</Link> 执行筛选后，点击结果栏「预测」可自动带入 task_id；若勾选了部分图片则只预测选中项。
-              </p>
+              {upstreamTaskBound ? (
+                <p className="platform-step-hint muted forge-span2">
+                  数据来源：上游查询步骤的 task_id（运行编排时自动注入）
+                </p>
+              ) : (
+                <>
+                  <label className="forge-span2">
+                    查询 task_id
+                    <input
+                      value={queryTaskId}
+                      onChange={(e) => setQueryTaskId(e.target.value)}
+                      placeholder="查询页执行后自动填入，或手动粘贴"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label>
+                    图片范围
+                    <input
+                      readOnly
+                      className={queryIndices?.length ? 'platform-input-ok' : ''}
+                      value={queryIndices?.length ? `已选 ${queryIndices.length} 条` : '全部结果'}
+                    />
+                  </label>
+                  <p className="platform-step-hint hint forge-span2">
+                    在 <Link to="/">查询页</Link> 执行筛选后，点击结果栏「预测」可自动带入 task_id；若勾选了部分图片则只预测选中项。
+                  </p>
+                </>
+              )}
             </div>
           )}
 
@@ -712,6 +811,7 @@ export default function PlatformPredictPanel({
         </section>
       </div>
 
+      {!composeMode && (
       <div className="platform-predict-footer">
         <div className="platform-predict-footer-summary">
           {usingSyncDataset && selectedDs ? (
@@ -760,6 +860,7 @@ export default function PlatformPredictPanel({
           {busy ? '创建中…' : `创建预测任务（${totalSelected} 个模型）`}
         </button>
       </div>
+      )}
     </div>
   );
 }

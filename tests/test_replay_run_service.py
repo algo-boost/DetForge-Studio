@@ -18,6 +18,15 @@ class TimeWindowTests(unittest.TestCase):
         self.assertTrue(start < end)
         self.assertIn(':', start)
 
+    def test_python_script(self):
+        code = (
+            'def compute(now):\n'
+            '    return {"start_time": "2026-01-01 00:00:00", "end_time": "2026-01-02 00:00:00"}\n'
+        )
+        start, end = replay_run_service.resolve_time_window({'mode': 'python', 'code': code})
+        self.assertEqual(start, '2026-01-01 00:00:00')
+        self.assertEqual(end, '2026-01-02 00:00:00')
+
 
 if __name__ == '__main__':
     unittest.main()

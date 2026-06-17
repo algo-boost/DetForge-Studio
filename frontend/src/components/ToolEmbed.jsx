@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import EmbedBackBar from './EmbedBackBar';
 import { getToolIntegrationSpec } from '../config/toolIntegration';
@@ -51,10 +51,67 @@ export default function ToolEmbed({
   }, [base, segment, location.search, routeMode, buildSrc]);
 
   const [iframeReady, setIframeReady] = useState(false);
+  const iframeRef = useRef(null);
 
   useEffect(() => {
     setIframeReady(false);
   }, [iframeSrc]);
+
+  useEffect(() => {
+    if (preparing) return undefined;
+
+    const iframe = iframeRef.current;
+    if (!iframe) return undefined;
+
+    if (toolId !== 'viz') {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let timer;
+    let attempts = 0;
+
+    const markReady = () => {
+      if (!cancelled) setIframeReady(true);
+    };
+
+    const pollContent = () => {
+      if (cancelled) return;
+      attempts += 1;
+      try {
+        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+        const root = doc?.getElementById('root');
+        if (root?.childElementCount > 0) {
+          markReady();
+          return;
+        }
+      } catch {
+        markReady();
+        return;
+      }
+      if (attempts >= 120) {
+        markReady();
+        return;
+      }
+      timer = setTimeout(pollContent, 500);
+    };
+
+    const onLoad = () => {
+      clearTimeout(timer);
+      timer = setTimeout(pollContent, 150);
+    };
+
+    iframe.addEventListener('load', onLoad);
+    if (iframe.contentDocument?.readyState === 'complete') {
+      onLoad();
+    }
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      iframe.removeEventListener('load', onLoad);
+    };
+  }, [iframeSrc, preparing, toolId]);
 
   const returnTo = returnToProp ?? (location.pathname + location.search);
   const iframeTitle = title || spec.title;
@@ -76,11 +133,12 @@ export default function ToolEmbed({
         )}
         <iframe
           key={iframeSrc}
+          ref={iframeRef}
           className={iframeClassName}
           src={iframeSrc}
           title={iframeTitle}
           allow="clipboard-read; clipboard-write"
-          onLoad={() => setIframeReady(true)}
+          onLoad={toolId === 'viz' ? undefined : () => setIframeReady(true)}
         />
       </div>
     </div>

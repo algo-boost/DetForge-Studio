@@ -14,7 +14,47 @@
 
 ## [Unreleased]
 
-（暂无）
+### Changed
+
+- **流水线 · 整体布局（L2）**：侧栏与页内 Hub 统一为「组合编排 / 流水线目录 / 编排助手 / 执行历史」四项；新增 `FlowsSceneShell` 统一流水线场景页壳；组合编排页改为三栏布局（左模块库、中步骤链、右运行设定与定时）；流水线目录标题与 Tab 文案收敛；执行历史链接 `flow_*` 直达组合编排并带 `?flow=` 参数。
+- **组合编排 · 交互优化（L2）**：步骤链支持手风琴/全部展开/全部收起；右栏「运行设定」可隐藏以扩大编辑区；运行参数与定时文案简化，脚本与预览收入「高级选项」。
+- **流水线目录 · 我的流水线（L2）**：目录页「流水线」Tab 合并展示「我的流水线」与「Catalog 模板」；支持从目录打开已保存 `flow_*`；页头新增「新建流水线」入口；组合编排工具栏增加「目录」快捷链接。
+- **执行历史 · 统一入口（L2）**：新增 `FlowRunsHistoryPanel` 聚合待人工卡点、状态筛选与运行列表；`/flows?tab=history` 为唯一主入口（`/flows/runs` 保留重定向并传递查询参数）；工作台「Flow 卡点」改为「流水线运行」快照并链至执行历史；待办列表不再重复展示流水线人工卡点；摘要卡片「待人工 / 运行中」可点击跳转。
+
+### Removed
+
+- **Kestra 编排全移除**：删除 Kestra JVM 服务、Hub 客户端、`/flows/kestra` Studio、`/api/flows/kestra/*`、`/kestra-embed` 代理及 `iisp-catalog/pipelines/kestra/`；`deploy start` 仅启动 IISP；主编排路径为 **组合编排 + workflow_engine**；Legacy Catalog Pipeline 与 demo Flow 保留；编排助手改为产出 legacy nodes YAML。
+
+### Added
+
+- **流水线 · 组合编排 MVP**：新增 `/flows/compose` 主入口，固定「查询 → 预测」两步；每步复用与查询页/预测页相同的策略、时间窗、模型等表单控件；`task_id` 由引擎从上一步自动注入。运行走现有 `POST /api/forge/workflows/runs` + `workflow_engine`。
+- **流水线导航**：侧栏「组合编排」为流水线默认项；原 Kestra Flow 目录收为「高级编排（Kestra）」，Kestra Studio / 编排助手 / 执行历史保留。
+
+### Fixed
+
+- **组合编排 · 执行详情**：修复 forge 自研 workflow（`custom_*` 模板）在 `/flows/runs/workflow:*` 详情页报「Flow 未找到」、流程图无法展示的问题（`get_flow_graph` / `get_flow_run` 回退读取 `workflow_template` 表并合并步骤状态）；pending 实例打开详情时自动尝试继续推进。
+- **组合编排 · 运行卡住 pending**：修复 `create_workflow_run` 误调不存在的 `MySQLClient.last_insert_id()` 导致 INSERT 后抛 500、step_run 未创建、引擎线程未启动的问题（改用 `execute_returning_id`）；打开详情时自动补建缺失 step 并继续推进。
+- **组合编排 · 任务详情**：修复 `/flows/tasks/custom_*` 因不在 Kestra Catalog 而永久「加载中」；`custom_*` 模板纳入 Flow 列表只读展示，并引导至组合编排页。
+- **组合编排 · 模块组件化**：查询/预测/预测结果查询/筛选创建·导出·导入·归档/人工卡点/通知等步骤统一注册为可组合模块；组合编排页支持从模块库添加、排序、移除，自动绑定上游 task_id / job_id / batch_id；创建 run 后自动 repair 并推进，修复长期「排队」。
+- **组合编排 · 完整业务 UI**：每步嵌入与业务页相同的配置界面——查询步为完整 QueryPage（策略/SQL/规则/Python/环境参数/预览）；预测步为 PlatformPredictPanel（项目/模型/阈值/设备）；筛选创建等为与筛选页一致的多段配置卡片；配置序列化为 workflow params（含 `strategy_snapshot`），不再使用简化 schema 表单。
+- **组合编排 · 滚动与上游接入**：修复组合编排页无法向下滚动的问题；每步顶部展示「自动接入上游」条（task_id / job_id / batch_id）；预测步与预测结果查询步在存在上游时隐藏手动填写入口，运行时由引擎注入。
+- **组合编排 · 流水线持久化**：保存可复用 `flow_id`（如 `flow_daily_fp`）；步骤 ID 统一为 `{flow_id}.s01` 格式；支持加载已保存流水线；`query → predict → query_predict → …` 链路上游自动绑定；修复 `{{params.time_window}}` 对象模板解析。
+- **组合编排 · 定时调度**：组合编排页内可直接配置 cron 定时（preset + 自定义）；保存调度时同步流水线定义与运行级 env 设定；支持启用/停用、查看下次运行时间、立即触发；API：`GET/PUT /api/forge/workflows/compose-flows/{flow_id}/schedule`。
+- **组合编排 · 运行级 env 模板推导**：页头「运行级设定」改为选择推导模板（快捷时段 / 相对偏移 / 固定绝对时段）并填写入参；每次运行 / 定时触发时执行内置脚本生成全局 env（含 START_TIME、END_TIME），注入全部查询步（**最高优先级**）；支持额外静态 env 覆盖同名键；旧 `time_window` 配置自动迁移为 `env_spec`；定时仅更新 cron 时保留已有 run params；API：`GET /api/forge/workflows/run-env-templates`、`POST /api/forge/workflows/run-env/preview`；与流水线一并保存为 `run_params_defaults.env_spec` + `env`。
+
+- **数据查询 · 预测结果**：修复预测作业列表 API（`GET /api/forge/jobs?job_type=predict&status=done`）在 `job.params` 含大量 `items_meta` 时 MySQL sort buffer 溢出导致 500，进而无法加载预测批次与结果表的问题（`forge_db.list_jobs` 改为先按 id 分页再取精简字段）。
+- **数据查询 · 执行失败**：默认 Python 不再强制调用 `apply_filter_rules`；规则模式未配置规则时允许仅执行 SQL；策略 `filter_rules_code` 在规则 UI 未加载时仍可回退使用。
+- **样本图库**：补齐 `flask-cors` 依赖（COCOVisualizer 挂载所需），修复 `/viz` 未挂载导致无法打开样本图库的问题。
+- **样本图库 · 黑屏**：构建 `packages/coco-visualizer/frontend` Vite 产物；修复兜底模板中 React vendor 脚本未带 `/viz` 前缀及 API 路径未加挂载前缀的问题。
+- **数据查询 · 提交提示**：修复提交查询后「提示」弹窗正文为空（`showInfoModal` 等误用字符串参数）。
+- **数据查询 · 误报中断**：修复每次轮询/提交触发 `create_app()` 重复执行 `init_query_jobs`，将进行中的查询误标为「服务已重启，任务已中断」的问题。
+- **样本图库 · 打开慢 / 黑屏**：查询结果页点击「打开样本图库」先跳转 `/viewer` 再在页内异步准备（不再长时间阻塞在查询页）；iframe 等待 React 挂载后再隐藏加载层；复用同任务 viz session 与 `.coco` 缓存跳过重建；COCO 已有宽高时跳过 Pillow 逐张探测。
+- **中断作业弹窗**：修复 `GET /api/lifecycle/interrupted-jobs` 在 job.params 过大时 MySQL sort buffer 溢出导致 500（`list_interrupted_jobs` 改为先查 id 再取字段）。
+- **控制台 404**：Layout 预热仅在 DetUnify 已挂载时请求 `/unify/`，未配置时不再误报 404。
+- **在线预测**：补齐 `requests` 依赖；Magic-Fox 部署编码 `DET0307` 等可正确识别为 `hq_det`；训练模型列表在平台同步失败时回退本地 `modeltrainconfig`。
+- **流水线 / 编排助手**：补齐 `PyYAML` 依赖，修复 Flow 图与编排助手 API 因缺少 yaml 模块返回 500。
+- **Kestra 嵌入**：IISP 启动时注入 `KESTRA_URL`（与 `deploy/native/env.defaults` 端口一致）；未设环境变量时 `kestra_client` 回退读取默认 8090，修复 embed 代理连错 8080 导致「Kestra 不可达」。
+- **Kestra Flow 404**：`deploy start` 与执行前自动将 `iisp-catalog/pipelines/kestra/*.yaml` 导入 Hub（MySQL repository 下目录 watch 不可靠）；修复 `closed_loop_demo_smoke` 等 Flow「Requested Flow is not found」。
 
 ## [1.3.0] — 2026-06-11
 

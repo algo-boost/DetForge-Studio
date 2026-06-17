@@ -15,7 +15,7 @@ export default function QuickActions({ busy, onSyncCatalog }) {
             同步 Catalog
           </button>
           <Link to="/flows/demo" className="btn">编排演示</Link>
-          <Link to="/flows" className="btn">流水线</Link>
+          <Link to="/flows/compose" className="btn">流水线</Link>
         </>
       )}
       {!isConfigurer && (

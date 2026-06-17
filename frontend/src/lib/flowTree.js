@@ -1,114 +1,121 @@
-/** Flow IR v2 — 树形工作流工具 */
-const FlowTree = (() => {
-    const IR_VERSION = 2;
-    const CONTAINERS = new Set(['control.if', 'control.loop']);
-    const BRANCHES = {
-        'control.if': ['then', 'else'],
-        'control.loop': ['body'],
-    };
+/** Flow IR 规范化（对齐 studio/flow/flow_schema.py） */
 
-    function isContainer(node) {
-        return node && CONTAINERS.has(node.type);
+const CONTAINER_TYPES = new Set(['control.if', 'control.loop']);
+const CONTAINER_BRANCHES = {
+  'control.if': ['then', 'else'],
+  'control.loop': ['body'],
+};
+
+function ensureContainer(node) {
+  const t = node.type;
+  if (t === 'control.if') {
+    node.then = node.then || [];
+    node.else = node.else || [];
+  } else if (t === 'control.loop') {
+    node.body = node.body || [];
+    node.params = node.params || {};
+    if ((node.params.loop_mode || 'rules') === 'rules') {
+      node.params.rules = node.params.rules || [];
     }
+  }
+}
 
-    function branchKeys(node) {
-        return BRANCHES[node?.type] || [];
+function prepareNode(node) {
+  if (!node || !node.type) return node;
+  const out = { ...node };
+  out.id = out.id || '';
+  out.params = out.params || {};
+  if (CONTAINER_TYPES.has(out.type)) {
+    ensureContainer(out);
+    for (const branch of CONTAINER_BRANCHES[out.type]) {
+      out[branch] = (out[branch] || []).map((child) => prepareNode({ ...child }));
     }
+  }
+  return out;
+}
 
-    function prepareNode(node) {
-        if (!node?.type) return node;
-        node.params = node.params || {};
-        if (node.type === 'control.if') {
-            node.then = node.then || [];
-            node.else = node.else || [];
-        }
-        if (node.type === 'control.loop') {
-            node.body = node.body || [];
-            if (node.params.loop_mode === 'rules' && !Array.isArray(node.params.rules)) {
-                node.params.rules = [];
-            }
-        }
-        branchKeys(node).forEach(b => (node[b] || []).forEach(prepareNode));
-        return node;
+function prepareFlow(flow) {
+  const f = flow || {};
+  const nodes = (f.nodes || []).map((n) => prepareNode({ ...n }));
+  return { version: 2, nodes };
+}
+
+function isRulesLoop(node) {
+  if (node?.type !== 'control.loop') return false;
+  if ((node.params?.loop_mode || 'rules') !== 'rules') return false;
+  const body = node.body || [];
+  const rules = node.params?.rules;
+  return body.some((n) => n.type === 'builtin.filter_df_by_ext')
+    || body.some((n) => n.type === 'builtin.remove_empty_ext_rows')
+    || (Array.isArray(rules) && rules.length > 0);
+}
+
+function findRulesLoopNode(flow) {
+  const nodes = flow?.nodes || (prepareFlow(flow).nodes || []);
+  return nodes.find(isRulesLoop) || null;
+}
+
+const REMOVE_EMPTY_TYPE = 'builtin.remove_empty_ext_rows';
+
+/** 在规则循环 body 中增删「移除空框行」节点 */
+function syncRulesLoopRemoveEmpty(flow, enabled) {
+  const f = prepareFlow(flow || { version: 2, nodes: [] });
+  const loop = (f.nodes || []).find(isRulesLoop) || null;
+  if (!loop) return f;
+  const body = [...(loop.body || [])];
+  const without = body.filter((n) => n.type !== REMOVE_EMPTY_TYPE);
+  if (enabled) {
+    const hasFilter = without.some((n) => n.type === 'builtin.filter_df_by_ext');
+    if (!hasFilter) {
+      without.unshift({
+        id: 'f_filter',
+        type: 'builtin.filter_df_by_ext',
+        params: { bind_loop_rule: 'loop_rule' },
+      });
     }
+    without.push({ id: 'f_remove_empty', type: REMOVE_EMPTY_TYPE, params: {} });
+  }
+  loop.body = without;
+  return f;
+}
 
-    function prepareFlow(flow) {
-        const f = flow?.nodes ? JSON.parse(JSON.stringify(flow)) : { version: IR_VERSION, nodes: [] };
-        f.version = IR_VERSION;
-        f.nodes = (f.nodes || []).map(n => prepareNode(n));
-        return f;
-    }
+/** 从策略字段 / flow / 编译代码推断是否启用移除空框行 */
+function inferRemoveEmptyRows(flow, filterRulesCode, explicit) {
+  if (explicit === true || explicit === false) return explicit;
+  if (flowHasRemoveEmptyRows(flow)) return true;
+  if (/remove_empty_ext_rows\s*\(/.test(String(filterRulesCode || ''))) return true;
+  return true;
+}
 
-    function resolve(flow, path) {
-        if (!path?.length) return null;
-        const root = flow.nodes.find(n => n.id === path[0]);
-        if (!root) return null;
-        if (path.length === 1) {
-            return { node: root, list: flow.nodes, index: flow.nodes.findIndex(n => n.id === path[0]), parent: null, branch: null };
-        }
-        let cur = root;
-        let list = flow.nodes;
-        let parent = null;
-        let branch = null;
-        for (let i = 1; i < path.length; i += 2) {
-            branch = path[i];
-            const cid = path[i + 1];
-            parent = cur;
-            list = cur[branch] || [];
-            cur = list.find(n => n.id === cid);
-            if (!cur) return null;
-            if (i + 2 >= path.length) {
-                return { node: cur, parent, branch, list, index: list.findIndex(n => n.id === cid) };
-            }
-        }
-        return null;
-    }
+function walkNodes(node, visit) {
+  if (!node?.type) return;
+  visit(node);
+  if (!CONTAINER_TYPES.has(node.type)) return;
+  for (const branch of CONTAINER_BRANCHES[node.type]) {
+    for (const child of node[branch] || []) walkNodes(child, visit);
+  }
+}
 
-    function addNode(flow, createNode, opts = {}) {
-        const node = createNode();
-        if (!node) return null;
-        if (opts.containerPath?.length && opts.branch) {
-            const ctx = resolve(flow, opts.containerPath);
-            if (!ctx?.node || !branchKeys(ctx.node).includes(opts.branch)) return null;
-            ctx.node[opts.branch] = ctx.node[opts.branch] || [];
-            ctx.node[opts.branch].push(node);
-            return [...opts.containerPath, opts.branch, node.id];
-        }
-        const idx = opts.atIndex ?? flow.nodes.length;
-        flow.nodes.splice(idx, 0, node);
-        return [node.id];
-    }
+/** 是否包含「移除空框行」节点（通常在 control.loop.body 内，不在 flow 顶层） */
+function flowHasRemoveEmptyRows(flow) {
+  const f = prepareFlow(flow);
+  let found = false;
+  for (const root of f.nodes || []) {
+    walkNodes(root, (n) => {
+      if (n.type === 'builtin.remove_empty_ext_rows') found = true;
+    });
+  }
+  return found;
+}
 
-    function removeAt(flow, path) {
-        const ctx = resolve(flow, path);
-        if (!ctx) return [];
-        ctx.list.splice(ctx.index, 1);
-        const parentPath = path.length > 1 ? path.slice(0, -2) : [];
-        return parentPath.length ? parentPath : (flow.nodes[0] ? [flow.nodes[0].id] : []);
-    }
-
-    function moveAt(flow, path, dir) {
-        const ctx = resolve(flow, path);
-        if (!ctx) return path;
-        const j = ctx.index + dir;
-        if (j < 0 || j >= ctx.list.length) return path;
-        [ctx.list[ctx.index], ctx.list[j]] = [ctx.list[j], ctx.list[ctx.index]];
-        return path;
-    }
-
-    function countNodes(flow) {
-        let n = 0;
-        function walk(nodes) {
-            (nodes || []).forEach(node => {
-                n++;
-                branchKeys(node).forEach(b => walk(node[b]));
-            });
-        }
-        walk(flow.nodes);
-        return n;
-    }
-
-    return { IR_VERSION, isContainer, branchKeys, prepareFlow, prepareNode, resolve, addNode, removeAt, moveAt, countNodes };
-})();
+const FlowTree = {
+  prepareFlow,
+  prepareNode,
+  isRulesLoop,
+  findRulesLoopNode,
+  flowHasRemoveEmptyRows,
+  syncRulesLoopRemoveEmpty,
+  inferRemoveEmptyRows,
+};
 
 export default FlowTree;

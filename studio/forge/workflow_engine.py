@@ -17,6 +17,7 @@ from studio.forge.workflow_graph import (
 from studio.forge.workflow_notify import emit_event
 from studio.forge.workflow_steps import STEP_HANDLERS, resolve_templates
 from studio.forge.workflow_templates import ensure_builtin_templates
+from studio.forge.run_env_resolver import enrich_run_params_for_engine
 from studio.timezone_util import format_now
 
 logger = logging.getLogger('detforge.workflow.engine')
@@ -246,17 +247,30 @@ def _advance_thread(run_id):
         logger.debug('workflow advance thread failed', exc_info=True)
 
 
-def start_custom_run(definition, params=None, *, name=None, created_by=None, app=None, save_template=True):
-    """用自定义 definition（graph 或 steps）启动运行。"""
+def start_custom_run(
+    definition,
+    params=None,
+    *,
+    name=None,
+    created_by=None,
+    app=None,
+    save_template=True,
+    template_id=None,
+):
+    """用自定义 definition 启动运行；template_id 指定时使用稳定 flow_id。"""
     import uuid
 
     norm = normalize_definition(definition)
     if not norm.get('steps'):
         raise ValueError('definition 无有效步骤')
-    template_id = f"custom_{uuid.uuid4().hex[:10]}"
+    if template_id:
+        from studio.forge.compose_flow import normalize_flow_id
+        tid = normalize_flow_id(template_id)
+    else:
+        tid = f"custom_{uuid.uuid4().hex[:10]}"
     if save_template:
         forge_db.upsert_workflow_template({
-            'id': template_id,
+            'id': tid,
             'name': name or '自定义编排',
             'description': '流程设计器创建',
             'definition': norm,
@@ -264,12 +278,64 @@ def start_custom_run(definition, params=None, *, name=None, created_by=None, app
             'enabled': 1,
         })
     return start_run(
-        template_id,
+        tid,
         params=params,
         name=name,
         created_by=created_by,
         app=app,
     )
+
+
+def _repair_step_runs(run_id, template=None):
+    """补建缺失的 step_run（旧版 last_insert_id 失败导致 run 无步骤）。"""
+    if forge_db.list_workflow_step_runs(run_id):
+        return False
+    run = forge_db.get_workflow_run(run_id)
+    if not run:
+        return False
+    if template is None:
+        template = forge_db.get_workflow_template(run['template_id'])
+    if not template:
+        return False
+    try:
+        _, steps = graph_for_template(template.get('definition') or {})
+    except ValueError:
+        return False
+    if not steps:
+        return False
+    forge_db.insert_workflow_step_runs(run_id, steps)
+    logger.info('工作流 #%s 已补建 %s 个 step_run', run_id, len(steps))
+    return True
+
+
+def ensure_run_advance(run_id, *, app=None):
+    """若 run 仍为 pending 且无活跃推进线程，则后台继续 advance（用于恢复卡住实例）。"""
+    run = forge_db.get_workflow_run(run_id)
+    if not run or run['status'] not in ('pending', 'running'):
+        return
+    template = forge_db.get_workflow_template(run['template_id'])
+    _repair_step_runs(run_id, template)
+    if run['status'] != 'pending':
+        return
+    with _thread_lock:
+        t = _active_threads.get(run_id)
+        if t and t.is_alive():
+            return
+    if app is None:
+        try:
+            from flask import current_app
+            app = current_app._get_current_object()
+        except RuntimeError:
+            return
+    thread = threading.Thread(
+        target=_run_pipeline_thread,
+        args=(run_id, app),
+        daemon=True,
+        name=f'workflow-kick-{run_id}',
+    )
+    with _thread_lock:
+        _active_threads[run_id] = thread
+    thread.start()
 
 
 def start_run(template_id, params=None, *, name=None, schedule_id=None, created_by=None, app=None):
@@ -282,18 +348,33 @@ def start_run(template_id, params=None, *, name=None, schedule_id=None, created_
     if not template or not template.get('enabled'):
         raise ValueError(f'工作流模板不存在或已禁用: {template_id}')
 
-    params = dict(params or {})
+    params = enrich_run_params_for_engine(params)
+    from studio.forge.run_env_resolver import resolve_run_params_env
+    resolved_env = resolve_run_params_env(
+        params,
+        ctx={
+            'template_id': template_id,
+            'schedule_id': schedule_id,
+            'trigger': 'schedule' if schedule_id else 'manual',
+        },
+    )
     run_name = name or f"{template.get('name') or template_id}"
     run_id = forge_db.create_workflow_run({
         'template_id': template_id,
         'schedule_id': schedule_id,
         'name': run_name,
         'params': params,
+        'context': {'params': params, 'resolved_env': resolved_env, 'steps': {}},
         'created_by': created_by,
     })
 
     _, steps = graph_for_template(template.get('definition') or {})
     forge_db.insert_workflow_step_runs(run_id, steps)
+    if steps and not forge_db.list_workflow_step_runs(run_id):
+        forge_db.update_workflow_run(
+            run_id, status='failed', error='step_run 创建失败', finished_at=_now(),
+        )
+        raise RuntimeError(f'工作流 #{run_id} step_run 未写入数据库')
 
     if app is None:
         from flask import current_app
@@ -382,8 +463,12 @@ def get_run_detail(run_id):
     run = forge_db.get_workflow_run(run_id)
     if not run:
         raise ValueError('运行实例不存在')
-    steps = forge_db.list_workflow_step_runs(run_id)
     template = forge_db.get_workflow_template(run['template_id'])
+    steps = forge_db.list_workflow_step_runs(run_id)
+    if run.get('status') == 'pending' and not steps:
+        if _repair_step_runs(run_id, template):
+            steps = forge_db.list_workflow_step_runs(run_id)
+            ensure_run_advance(run_id)
     notifications = forge_db.list_workflow_notifications(limit=30, run_id=run_id)
     graph = None
     try:

@@ -7,7 +7,6 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': { target: 'http://127.0.0.1:5050', changeOrigin: true },
-      '/kestra-embed': { target: 'http://127.0.0.1:5050', changeOrigin: true },
       '/tools/query': { target: 'http://127.0.0.1:5050', changeOrigin: true },
       '/viz': { target: 'http://127.0.0.1:5050', changeOrigin: true },
     },

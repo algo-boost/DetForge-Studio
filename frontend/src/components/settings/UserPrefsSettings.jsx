@@ -12,7 +12,7 @@ export default function UserPrefsSettings() {
     resetDefaultHome,
   } = useUserPrefs();
 
-  const suggestedHome = tier === USER_TIERS.OPERATOR ? '/' : '/flows';
+  const suggestedHome = tier === USER_TIERS.OPERATOR ? '/' : '/flows/compose';
 
   const homeOptions = [];
   for (const group of navGroupsForTier(tier)) {

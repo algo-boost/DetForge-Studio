@@ -5,7 +5,7 @@ import { useHumanGates } from './useHumanGates';
 const POLL_MS = 8000;
 
 /**
- * 工作台数据：待办、摘要、Flow 卡点；含 Catalog 同步与 Kestra Resume。
+ * 工作台数据：待办、摘要、Flow 卡点；含 Catalog 同步与 Resume。
  */
 export function useWorkbenchData({ pollInterval = POLL_MS } = {}) {
   const [todos, setTodos] = useState([]);
@@ -13,7 +13,8 @@ export function useWorkbenchData({ pollInterval = POLL_MS } = {}) {
   const [busy, setBusy] = useState(false);
 
   const {
-    flowGates: flows,
+    items: gateItems,
+    count: gateCount,
     reload: reloadGates,
   } = useHumanGates({ pollInterval, enabled: true });
 
@@ -55,14 +56,15 @@ export function useWorkbenchData({ pollInterval = POLL_MS } = {}) {
     }
   }, [load]);
 
-  const resumeKestra = useCallback(async (item) => {
-    const executionId = item?.meta?.execution_id;
-    if (!executionId) return;
+  const resumeFlow = useCallback(async (item) => {
+    const runKey = item?.meta?.run_key
+      || (item?.href?.includes('/flows/runs/') ? decodeURIComponent(item.href.split('/flows/runs/')[1] || '') : '');
+    if (!runKey) return;
     setBusy(true);
     try {
-      const r = await api.orchestrationResume({ execution_id: executionId });
+      const r = await api.orchestrationResume({ run_key: runKey });
       if (r.success) {
-        toast('已通知 Kestra 继续执行', 'success');
+        toast('已继续执行', 'success');
         await load();
       } else {
         toast(r.error || 'Resume 失败', 'error');
@@ -77,10 +79,11 @@ export function useWorkbenchData({ pollInterval = POLL_MS } = {}) {
   return {
     todos,
     summary,
-    flows,
+    gateItems,
+    gateCount,
     busy,
     reload: load,
     syncCatalog,
-    resumeKestra,
+    resumeFlow,
   };
 }

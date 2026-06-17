@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { TODO_STATUS_LABEL } from './homeTypes';
 
-export default function TodoList({ items = [], onResumeKestra }) {
+export default function TodoList({ items = [], onResume }) {
   if (!items.length) {
     return (
       <div className="panel empty-state">
@@ -11,12 +11,16 @@ export default function TodoList({ items = [], onResumeKestra }) {
         {' '}
         或
         {' '}
-        <Link to="/flows/demo">编排演示</Link>
+        <Link to="/flows/compose">组合编排</Link>
         {' '}
         开始。
       </div>
     );
   }
+
+  const canResume = (item) => (
+    item.kind === 'workflow_human_gate' || item.kind === 'flow_human_gate'
+  );
 
   return (
     <ul className="panel home-list">
@@ -32,11 +36,11 @@ export default function TodoList({ items = [], onResumeKestra }) {
                 {TODO_STATUS_LABEL[item.status] || item.status}
               </div>
             </Link>
-            {item.kind === 'kestra_pause' && onResumeKestra && (
+            {canResume(item) && onResume && (
               <button
                 type="button"
                 className="btn btn-sm btn-primary home-list-action"
-                onClick={() => onResumeKestra(item)}
+                onClick={() => onResume(item)}
               >
                 继续
               </button>

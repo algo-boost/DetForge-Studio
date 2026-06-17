@@ -45,10 +45,13 @@ export const NAV_GROUPS = [
   {
     id: 'flows',
     label: '流水线',
-    defaultPath: '/flows',
+    defaultPath: '/flows/compose',
     hub: 'flows',
     items: [
-      { to: '/flows', label: '编排', end: true, icon: 'strategy', tiers: ['configurer'] },
+      { to: '/flows/compose', label: '组合编排', end: true, icon: 'strategy', tiers: ['configurer'] },
+      { to: '/flows', label: '流水线目录', icon: 'strategy', tiers: ['configurer'] },
+      { to: '/flows/assistant', label: '编排助手', icon: 'strategy', tiers: ['configurer'] },
+      { to: '/flows/runs', label: '执行历史', icon: 'history', tiers: ['configurer'] },
     ],
   },
   {

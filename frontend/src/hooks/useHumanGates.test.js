@@ -38,14 +38,13 @@ describe('useHumanGates utils', () => {
     expect(item.kind).toBe('workflow_human_gate');
   });
 
-  it('flowRunToGateItem maps kestra source', () => {
+  it('flowRunToGateItem maps workflow source', () => {
     const item = flowRunToGateItem({
-      source: 'kestra',
-      run_id: 'exec-1',
-      flow_id: 'daily_ng',
-      batch_id: '42',
+      source: 'workflow',
+      run_id: '9',
+      flow_id: 'flow_daily',
     });
-    expect(item.kind).toBe('kestra_pause');
-    expect(item.subtitle).toBe('batch 42');
+    expect(item.kind).toBe('workflow_human_gate');
+    expect(item.href).toBe('/flows/runs/workflow:9');
   });
 });

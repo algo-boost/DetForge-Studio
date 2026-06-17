@@ -389,6 +389,16 @@ export const api = {
 
   forgeWorkflowTemplates: () => request('/api/forge/workflows/templates'),
   forgeWorkflowTemplate: (id) => request(`/api/forge/workflows/templates/${encodeURIComponent(id)}`),
+  forgeComposeFlows: () => request('/api/forge/workflows/compose-flows'),
+  forgeComposeFlowGet: (id) => request(`/api/forge/workflows/compose-flows/${encodeURIComponent(id)}`),
+  forgeComposeFlowSave: (body) => request('/api/forge/workflows/compose-flows', { method: 'POST', body: JSON.stringify(body) }),
+  forgeRunEnvTemplates: (params = '') => request(`/api/forge/workflows/run-env-templates${params}`),
+  forgeRunEnvPreview: (body) => request('/api/forge/workflows/run-env/preview', { method: 'POST', body: JSON.stringify(body) }),
+  forgeComposeFlowScheduleGet: (id) => request(`/api/forge/workflows/compose-flows/${encodeURIComponent(id)}/schedule`),
+  forgeComposeFlowScheduleSave: (id, body) => request(
+    `/api/forge/workflows/compose-flows/${encodeURIComponent(id)}/schedule`,
+    { method: 'PUT', body: JSON.stringify(body) },
+  ),
   forgeWorkflowRuns: (params = '') => request(`/api/forge/workflows/runs${params}`),
   forgeWorkflowRunCreate: (body) => request('/api/forge/workflows/runs', { method: 'POST', body: JSON.stringify(body) }),
   forgeWorkflowRun: (id) => request(`/api/forge/workflows/runs/${id}`),
@@ -414,8 +424,6 @@ export const api = {
 
   flowDemoInfo: () => request('/api/flows/demo'),
   flowRun: (body) => request('/api/flows/run', { method: 'POST', body: JSON.stringify(body) }),
-  flowKestraExecute: (body) => request('/api/flows/kestra/execute', { method: 'POST', body: JSON.stringify(body) }),
-  flowKestraStudio: (params = '') => request(`/api/flows/kestra/studio${params}`),
   flowList: () => request('/api/flows/list'),
   flowReleases: () => request('/api/flows/releases'),
   flowRunsList: (params = '') => request(`/api/flows/runs${params}`),
@@ -502,14 +510,51 @@ export function openSampleGallery(record, options = {}) {
   }
 }
 
-/** 准备样本图库会话后直接跳转看图页 */
+const VIZ_OPEN_BODY_KEY = 'pc_viz_open_body';
+
+/** 先进入 /viewer 再在页内准备（避免长时间卡在查询页）。 */
+export function openSampleGalleryDeferred(openBody, options = {}) {
+  const { taskId, returnTo, newWindow } = options;
+  if (!openBody?.task_id && !openBody?.source) {
+    throw new Error('openBody 缺少 task_id');
+  }
+  if (newWindow) return null;
+  try {
+    sessionStorage.setItem(VIZ_OPEN_BODY_KEY, JSON.stringify(openBody));
+  } catch {
+    return null;
+  }
+  const prepPath = appendViewerNavParams('/viewer?preparing=1', { taskId: taskId || openBody.task_id, returnTo });
+  if (!appNavigate(prepPath)) window.location.assign(prepPath);
+  return { deferred: true };
+}
+
+/** 准备样本图库会话后直接跳转看图页（默认 task 查询走 deferred 快速路径）。 */
 export async function openSampleGalleryWhenReady(prepare, context = '', options = {}) {
   const status = await api.vizStatus().catch(() => ({ available: false }));
   if (status && status.available === false) {
     throw new Error(formatSampleGalleryError('样本图库不可用', context));
   }
+  const { taskId, returnTo, newWindow, openBody, defer = true } = options;
+
+  if (defer && !newWindow && (openBody || taskId)) {
+    let body = openBody;
+    if (!body && taskId) {
+      body = { source: 'query_task', task_id: taskId };
+    }
+    if (body && openSampleGalleryDeferred(body, { taskId, returnTo, newWindow })) {
+      return { deferred: true };
+    }
+  }
+
   try {
-    const record = await prepare();
+    let body = openBody;
+    if (!body && taskId) {
+      body = { source: 'query_task', task_id: taskId };
+    }
+    const record = typeof prepare === 'function'
+      ? await prepare()
+      : await api.vizOpen(body);
     if (!record?.success && record?.error) {
       throw new Error(record.error);
     }
@@ -519,6 +564,8 @@ export async function openSampleGalleryWhenReady(prepare, context = '', options 
     throw new Error(formatSampleGalleryError(err, context));
   }
 }
+
+export { VIZ_OPEN_BODY_KEY };
 
 export function formatSqlTime(dtLocal, end = false) {
   if (!dtLocal) return '';

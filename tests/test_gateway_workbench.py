@@ -71,8 +71,8 @@ def test_workbench_summary(app_client):
     assert 'active_query_count' in summary
 
 
-def test_discover_kestra_flows():
-    from orchestration.loader import discover_kestra_flows
-    flows = discover_kestra_flows()
-    ids = {f['id'] for f in flows}
-    assert 'daily_ng_curation' in ids
+def test_discover_legacy_pipelines():
+    from orchestration.loader import discover_pipelines
+    flows = discover_pipelines()
+    ids = {f.get('id') for f in flows}
+    assert 'welcome_demo' in ids or 'daily_ng_curation' in ids

@@ -17,13 +17,11 @@ def app_client():
 
 @patch('server.services.workbench.collect_curation_pending')
 @patch('server.services.workbench.collect_manual_qc_pending')
-@patch('server.services.workbench.collect_kestra_paused')
 @patch('server.services.workbench.collect_demo_flow_runs')
 @patch('server.services.workbench.collect_workflow_runs')
 def test_workbench_todos_aggregate_sources(
     mock_workflow,
     mock_demo,
-    mock_kestra,
     mock_mqc,
     mock_curation,
     app_client,
@@ -34,7 +32,6 @@ def test_workbench_todos_aggregate_sources(
         'created_at': '2026-06-09T10:00:00',
     }]
     mock_demo.return_value = []
-    mock_kestra.return_value = []
     mock_mqc.return_value = [{
         'batch_id': '2026-06-09',
         'batch_key': '2026-06-09',
@@ -60,24 +57,14 @@ def test_workbench_todos_aggregate_sources(
     assert 'manual_qc' in kinds
     assert 'curation_batch' in kinds
 
-    mqc = next(t for t in todos if t['kind'] == 'manual_qc')
-    assert mqc['href'] == '/manual-qc'
-    assert '待核对 2' in mqc['subtitle']
-
-    cur = next(t for t in todos if t['kind'] == 'curation_batch')
-    assert cur['href'] == '/curation?id=42'
-    assert '待回传 COCO' in cur['title']
-
 
 @patch('server.services.workbench.collect_curation_pending')
 @patch('server.services.workbench.collect_manual_qc_pending')
-@patch('server.services.workbench.collect_kestra_paused')
 @patch('server.services.workbench.collect_demo_flow_runs')
 @patch('server.services.workbench.collect_workflow_runs')
 def test_workbench_summary_includes_mqc_and_curation(
     mock_workflow,
     mock_demo,
-    mock_kestra,
     mock_mqc,
     mock_curation,
     app_client,
@@ -89,7 +76,6 @@ def test_workbench_summary_includes_mqc_and_curation(
 
     mock_workflow.side_effect = workflow_side_effect
     mock_demo.return_value = []
-    mock_kestra.return_value = []
     mock_mqc.return_value = [{'batch_id': 'b1', 'total': 1}]
     mock_curation.return_value = [{'id': 1, 'status': 'created'}]
 

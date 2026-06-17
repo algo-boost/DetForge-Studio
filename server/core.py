@@ -425,6 +425,12 @@ class MySQLClient:
                     cur.execute(sql, args or ())
                     return cur.lastrowid
 
+    def last_insert_id(self):
+        """兼容旧调用：请改用 execute_returning_id（同一连接内取 lastrowid）。"""
+        raise AttributeError(
+            'MySQLClient.last_insert_id 已移除；INSERT 请使用 execute_returning_id(sql, args)',
+        )
+
     def executemany(self, sql, args_list):
         """批量写；args_list 为空时直接返回 0。"""
         args_list = list(args_list or [])
@@ -722,15 +728,18 @@ def _resolve_query_python(data, templates):
         return combine_execution_python('', sample_code, process_code)
 
     if filter_rules_code or sample_code:
-        return combine_execution_python(filter_rules_code, sample_code, '')
+        return combine_execution_python(filter_rules_code, sample_code, process_code)
 
     if filter_mode in ('flow', 'split', 'rules'):
         compiled = _compile_rules_from_flow(flow, templates)
         if compiled:
-            return combine_execution_python(compiled, sample_code, '')
-        raise ValueError('筛选规则为空，请添加至少一条规则或切换到「代码」模式')
+            return combine_execution_python(compiled, sample_code, process_code)
+        if process_code:
+            return combine_execution_python('', sample_code, process_code)
+        # 规则模式但未配置规则：允许仅执行 SQL（与「代码」模式空 process 等价）
+        return combine_execution_python('', sample_code, '')
 
-    return ''
+    return combine_execution_python('', sample_code, process_code) if process_code else ''
 
 
 def _resolve_filter_rules_code(data, templates):

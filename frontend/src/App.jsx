@@ -20,11 +20,11 @@ const WorkflowsRedirect = lazy(() => import('./pages/WorkflowsRedirect'));
 const ToolboxPage = lazy(() => import('./pages/ToolboxPage'));
 const DemoFlowPage = lazy(() => import('./pages/DemoFlowPage'));
 const FlowsCatalogPage = lazy(() => import('./pages/FlowsCatalogPage'));
-const FlowRunsPage = lazy(() => import('./pages/FlowRunsPage'));
+const ComposePipelinePage = lazy(() => import('./pages/ComposePipelinePage'));
+const FlowRunsRedirect = lazy(() => import('./pages/FlowRunsRedirect'));
 const FlowRunDetailPage = lazy(() => import('./pages/FlowRunDetailPage'));
 const FlowTaskDetailPage = lazy(() => import('./pages/FlowTaskDetailPage'));
 const FlowAssistantPage = lazy(() => import('./pages/FlowAssistantPage'));
-const KestraStudioPage = lazy(() => import('./pages/KestraStudioPage'));
 const ViewerPage = lazy(() => import('./components/VizToolHost'));
 const OnlinePredictPage = lazy(() => import('./pages/OnlinePredictPage'));
 
@@ -79,13 +79,13 @@ export default function App() {
               <Route path="curation" element={<CurationPage />} />
               <Route path="workflows" element={<WorkflowsRedirect />} />
               <Route path="toolbox" element={<ToolboxPage />} />
+              <Route path="flows/compose" element={<ComposePipelinePage />} />
               <Route path="flows" element={<FlowsCatalogPage />} />
               <Route path="flows/tasks/:flowId" element={<FlowTaskDetailPage />} />
               <Route path="flows/assistant" element={<FlowAssistantPage />} />
               <Route path="flows/runs/:runKey" element={<FlowRunDetailPage />} />
-              <Route path="flows/runs" element={<Navigate to="/flows?tab=history" replace />} />
+              <Route path="flows/runs" element={<FlowRunsRedirect />} />
               <Route path="flows/demo" element={<DemoFlowPage />} />
-              <Route path="flows/kestra" element={<KestraStudioPage />} />
               <Route path="flows/legacy" element={<WorkflowsPage />} />
               <Route path="demo" element={<Navigate to="/flows/demo" replace />} />
               <Route path="models" element={<ModelsPage />} />

@@ -128,6 +128,28 @@ def _reset_viz_coco_dir(export_dir: str) -> None:
         shutil.rmtree(viz_path, ignore_errors=True)
 
 
+def _viz_coco_up_to_date(export_dir: str, *, selected_indices=None) -> bool:
+    """`.coco` 已存在且比任务主 COCO / CSV 新时跳过重建。"""
+    if selected_indices:
+        return False
+    export_dir = os.path.abspath(export_dir)
+    viz_path = _viz_coco_path(export_dir)
+    task_coco = os.path.join(export_dir, TASK_COCO_NAME)
+    if not os.path.isfile(viz_path) or not os.path.isfile(task_coco):
+        return False
+    try:
+        viz_m = os.path.getmtime(viz_path)
+        if os.path.getmtime(task_coco) > viz_m:
+            return False
+        for name in ('result.csv', 'query_meta.json'):
+            dep = os.path.join(export_dir, name)
+            if os.path.isfile(dep) and os.path.getmtime(dep) > viz_m:
+                return False
+        return True
+    except OSError:
+        return False
+
+
 def prepare_export_dir_for_viz(export_dir: str, *, selected_indices=None) -> tuple[str, str]:
     """
     打开样本图库前的准备（不改变 COCOVisualizer API）。
@@ -142,6 +164,9 @@ def prepare_export_dir_for_viz(export_dir: str, *, selected_indices=None) -> tup
     task_coco_path = os.path.join(export_dir, TASK_COCO_NAME)
     if not os.path.isfile(task_coco_path):
         raise FileNotFoundError(f'COCO 文件不存在: {task_coco_path}')
+
+    if _viz_coco_up_to_date(export_dir, selected_indices=selected_indices):
+        return _viz_coco_path(export_dir), export_dir
 
     clean_stale_coco_artifacts(export_dir)
     _prepare_predict_coco(export_dir)
@@ -162,7 +187,7 @@ def prepare_export_dir_for_viz(export_dir: str, *, selected_indices=None) -> tup
 
     viz_coco_path = _viz_coco_path(export_dir)
     with open(viz_coco_path, 'w', encoding='utf-8') as f:
-        json.dump(coco, f, ensure_ascii=False, indent=2)
+        json.dump(coco, f, ensure_ascii=False, separators=(',', ':'))
 
     return viz_coco_path, export_dir
 

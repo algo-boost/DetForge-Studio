@@ -33,22 +33,22 @@ export function workflowRunToGateItem(run) {
     status: HUMAN_GATE_STATUS,
     href: `/flows/runs/workflow:${runId}`,
     created_at: run.created_at || run.started_at,
-    meta: { run_id: runId, template_id: run.template_id },
+    meta: { run_id: runId, template_id: run.template_id, run_key: `workflow:${runId}` },
   };
 }
 
 /** @param {Record<string, unknown>} flow */
 export function flowRunToGateItem(flow) {
-  if (flow.source === 'kestra') {
-    const executionId = flow.run_id;
+  if (flow.source === 'workflow') {
+    const runId = flow.run_id;
     return {
-      id: `kestra-${executionId}`,
-      kind: 'kestra_pause',
-      title: `${flow.flow_id || 'flow'} · Kestra 待人工`,
-      subtitle: flow.batch_id ? `batch ${flow.batch_id}` : String(executionId),
+      id: `workflow-${runId}`,
+      kind: 'workflow_human_gate',
+      title: `${flow.flow_id || '工作流'} · 待人工处理`,
+      subtitle: `Run #${runId}`,
       status: HUMAN_GATE_STATUS,
-      href: flow.kestra_url || `/flows/runs/kestra:${executionId}`,
-      meta: { execution_id: executionId, batch_id: flow.batch_id, flow_id: flow.flow_id },
+      href: `/flows/runs/workflow:${runId}`,
+      meta: { run_id: runId, run_key: `workflow:${runId}`, flow_id: flow.flow_id },
     };
   }
   return {
@@ -58,12 +58,12 @@ export function flowRunToGateItem(flow) {
     subtitle: flow.pause_at ? `暂停于 ${flow.pause_at}` : String(flow.run_id),
     status: HUMAN_GATE_STATUS,
     href: `/flows/runs/demo:${encodeURIComponent(flow.run_id)}`,
-    meta: { run_id: flow.run_id, flow_id: flow.flow_id, pause_at: flow.pause_at },
+    meta: { run_id: flow.run_id, flow_id: flow.flow_id, pause_at: flow.pause_at, run_key: `demo:${flow.run_id}` },
   };
 }
 
 /**
- * 聚合 workflow / demo / Kestra 人工卡点，供 Home、Flows、Workflows 共用。
+ * 聚合 workflow / demo 人工卡点，供 Home、Flows、Workflows 共用。
  * @param {{ pollInterval?: number | false, enabled?: boolean }} [options]
  */
 export function useHumanGates({ pollInterval = DEFAULT_POLL_MS, enabled = true } = {}) {

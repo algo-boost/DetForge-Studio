@@ -208,3 +208,44 @@ export function profileVarsToEnv(profile) {
   }
   return out;
 }
+
+/** object → GlobalEnvEditor 行列表 */
+export function envDictToRows(env) {
+  const entries = Object.entries(env || {}).filter(
+    ([k, v]) => String(k).trim() && v != null && String(v).trim() !== '',
+  );
+  if (!entries.length) return [{ _id: '0', key: '', value: '' }];
+  return entries.map(([key, value], i) => ({
+    _id: String(i),
+    key: String(key).toUpperCase(),
+    value: String(value),
+  }));
+}
+
+/** GlobalEnvEditor 行 → env object（空行忽略） */
+export function envRowsToDict(rows) {
+  const out = {};
+  for (const row of rows || []) {
+    const k = String(row?.key || '').trim().toUpperCase();
+    const v = String(row?.value ?? '').trim();
+    if (k && v) out[k] = v;
+  }
+  return out;
+}
+
+export function patchGlobalEnvRows(rows, idx, field, value) {
+  const next = [...(rows || [])];
+  if (field === '__add') {
+    next.push({ _id: String(Date.now()), key: '', value: '' });
+    return next;
+  }
+  if (field === '__delete') {
+    next.splice(idx, 1);
+    if (!next.length) next.push({ _id: '0', key: '', value: '' });
+    return next;
+  }
+  const row = { ...(next[idx] || { _id: String(idx), key: '', value: '' }) };
+  row[field] = field === 'key' ? String(value).toUpperCase() : value;
+  next[idx] = row;
+  return next;
+}

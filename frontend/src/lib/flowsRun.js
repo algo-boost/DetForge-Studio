@@ -1,32 +1,30 @@
 import { STATUS_MAP, statusLabel } from '../components/ui/statusMap';
 
-/** @param {string} runKey e.g. demo:uuid, workflow:9, kestra:exec-id */
+/** @param {string} runKey e.g. demo:uuid, workflow:9 */
 export function flowRunPath(runKey) {
   return `/flows/runs/${encodeURIComponent(runKey)}`;
 }
 
-/** 将 Kestra 外链转为 Shell 内嵌路径（/ui/main/ 之后部分） */
-export function kestraEmbedPath(kestraUrl) {
-  if (!kestraUrl) return '';
-  const match = String(kestraUrl).match(/\/ui\/[^/]+\/(.+)$/);
-  return match ? match[1] : '';
+/** 组合编排 flow_* / custom_* 模板 */
+export function isForgeComposeFlowId(flowId) {
+  const fid = String(flowId || '');
+  return fid.startsWith('flow_') || fid.startsWith('custom_');
 }
 
-export function kestraStudioPath(kestraUrl) {
-  const path = kestraEmbedPath(kestraUrl);
-  return path ? `/flows/kestra?path=${encodeURIComponent(path)}` : '/flows/kestra';
-}
-
-/** 代理模式下 Kestra 执行页相对路径（供内嵌链接，可选） */
-export function kestraProxyPath(kestraUrl) {
-  const path = kestraEmbedPath(kestraUrl);
-  return path ? `/kestra-embed/${path}` : '/kestra-embed/ui/main/flows/iisp';
+/** 任务详情链接：custom_* / flow_* → 组合编排页（带 flow 参数） */
+export function flowTaskPath(flowId, source) {
+  if (source === 'workflow' || isForgeComposeFlowId(flowId)) {
+    const fid = String(flowId || '');
+    if (fid.startsWith('flow_') && fid !== 'flow_draft') {
+      return `/flows/compose?flow=${encodeURIComponent(fid)}`;
+    }
+    return '/flows/compose';
+  }
+  return `/flows/tasks/${encodeURIComponent(flowId)}`;
 }
 
 export function parseRunKeyFromParams(searchParams) {
   const run = searchParams.get('run');
-  const execution = searchParams.get('execution');
-  if (execution) return `kestra:${execution}`;
   if (run) return run.includes(':') ? run : `workflow:${run}`;
   return null;
 }

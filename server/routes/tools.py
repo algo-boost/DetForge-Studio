@@ -235,48 +235,6 @@ def flow_run():
     })
 
 
-@tools_bp.route('/flows/kestra/execute', methods=['POST'])
-def flows_kestra_execute():
-    from orchestration import kestra_client as kc
-    from server.services import flows as fs
-
-    if not kc.is_enabled():
-        return jsonify({'success': False, 'error': 'Kestra 未启用'}), 503
-    body = request.get_json(silent=True) or {}
-    flow_id = str(body.get('flow_id') or '').strip()
-    if not flow_id:
-        return jsonify({'success': False, 'error': '缺少 flow_id'}), 400
-    namespace = str(body.get('namespace') or '').strip() or None
-    inputs = body.get('inputs') if isinstance(body.get('inputs'), dict) else body.get('params')
-    if inputs is not None and not isinstance(inputs, dict):
-        return jsonify({'success': False, 'error': 'inputs 须为对象'}), 400
-    try:
-        data = fs.execute_kestra_flow(flow_id, namespace=namespace, inputs=inputs)
-    except FileNotFoundError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 404
-    except RuntimeError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 503
-    except Exception as exc:  # noqa: BLE001
-        from orchestration.kestra_client import KestraError
-        if isinstance(exc, KestraError):
-            return jsonify({'success': False, 'error': str(exc)}), exc.status_code or 502
-        return jsonify({'success': False, 'error': str(exc)}), 500
-    return jsonify({'success': True, 'data': data, 'status': data.get('status')})
-
-
-@tools_bp.route('/flows/kestra/studio', methods=['GET'])
-def flows_kestra_studio():
-    from orchestration import kestra_client as kc
-
-    namespace = (request.args.get('namespace') or '').strip() or 'iisp'
-    path = (request.args.get('path') or '').strip().lstrip('/')
-    data = kc.studio_config(namespace=namespace)
-    if path:
-        prefix = '/kestra-embed' if data.get('proxy_enabled') else data['ui_root']
-        data = {**data, 'embed_url': f'{prefix}/{path}'}
-    return jsonify({'success': True, 'data': data})
-
-
 @tools_bp.route('/flows/list', methods=['GET'])
 def flows_list():
     from server.services import flows as fs

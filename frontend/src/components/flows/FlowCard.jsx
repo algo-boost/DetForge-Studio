@@ -25,7 +25,7 @@ export default function FlowCard({
     }
   };
 
-  const engineLabel = flow.engine === 'kestra' ? 'Kestra' : 'Legacy';
+  const engineLabel = flow.engine === 'workflow' ? '组合编排' : 'Legacy';
   const releaseTag = flow.release_version
     ? `${flow.release_version}${flow.release_status === 'published' ? '' : ' (draft)'}`
     : null;
@@ -72,15 +72,6 @@ export default function FlowCard({
         </div>
       )}
 
-      {flow.engine === 'kestra' && flow.valid && !flow.kestra_enabled && (
-        <p className="flows-card-hint muted">
-          Kestra 未启用：请启动 Kestra 服务（platform-start）后刷新
-        </p>
-      )}
-
-      {flow.engine === 'kestra' && !flow.runnable && flow.kestra_enabled && !flow.valid && (
-        <p className="flows-card-hint muted">Flow YAML 无效，无法运行</p>
-      )}
 
       <footer className="flows-card-actions">
         <button type="button" className="btn btn-sm" onClick={() => setGraphOpen(true)}>
@@ -89,11 +80,6 @@ export default function FlowCard({
         <button type="button" className="btn btn-sm" onClick={() => setYamlOpen(true)}>
           查看 YAML
         </button>
-        {flow.engine === 'kestra' && onSync && (
-          <button type="button" className="btn btn-sm" disabled={busy} onClick={onSync}>
-            同步 Catalog
-          </button>
-        )}
       </footer>
 
       <FlowGraphDrawer

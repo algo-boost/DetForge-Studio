@@ -51,10 +51,33 @@ export function defaultParamsFromSchema(schema) {
       out[key] = { preset: 'yesterday' };
     } else if (spec?.type === 'strategy') {
       out[key] = '';
+    } else if (spec?.type === 'boolean') {
+      out[key] = false;
     }
   }
   return out;
 }
+
+export {
+  COMPOSE_MODULES,
+  COMPOSE_MODULE_GROUPS,
+  DEFAULT_COMPOSE_PIPELINE,
+  buildComposeDefinition,
+  buildLinearComposeDefinition,
+  defaultComposePipelineState,
+  defaultParamsForModule,
+  defaultComposeStepParams,
+  getComposeModule,
+  modulesForGroup,
+  newComposeStep,
+  composeStepHints,
+} from './composeModules';
+
+/** @deprecated 使用 COMPOSE_MODULES */
+export { COMPOSE_MODULES as COMPOSE_STEP_TYPES } from './composeModules';
+
+/** @deprecated 使用 DEFAULT_COMPOSE_PIPELINE */
+export { MVP_COMPOSE_STEP_IDS } from './composeModules';
 
 export function schemaForPreset(presetId) {
   if (presetId === 'daily_ng_curation') {

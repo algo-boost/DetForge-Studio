@@ -6,4 +6,5 @@ app = create_app()
 
 if __name__ == '__main__':
     use_reloader = os.environ.get('PC_RELOAD', '').lower() in ('1', 'true', 'yes')
-    app.run(debug=True, host='0.0.0.0', port=5050, use_reloader=use_reloader)
+    port = int(os.environ.get('IISP_PORT', '5050'))
+    app.run(debug=True, host='0.0.0.0', port=port, use_reloader=use_reloader)
